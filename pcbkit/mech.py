@@ -204,7 +204,7 @@ def apply(board_path, spec):
             s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.3))
             s.SetStart(P(x0_, y0_)); s.SetEnd(P(x1_, y1_)); b.Add(s)
             if d.get("label"):
-                text(d["label"], (x0_ + x1_) / 2, (y0_ + y1_) / 2 + (1.5 if y0_ >= 0 else -1.5), pcbnew.Dwgs_User, 0.8)
+                text(d["label"], (x0_ + x1_) / 2, (y0_ + y1_) / 2 - (1.5 if y0_ >= 0 else -1.5), pcbnew.Dwgs_User, 0.8)  # label on the board side
         elif "circle" in d:
             x, y, dia = d["circle"]
             s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.1))

@@ -8,7 +8,7 @@ The JSON (kept in the project, measured from the box) looks like:
    "origin": "centre of the mounting pattern, x along the long axis, mm",
    "board": {"width": 90, "height": 58, "corner_radius": 3,
              "notches": [{"corner": "+x+y", "width": 10, "height": 8}],      # optional rectangular corner cuts
-             "cutouts": [{"x": 39.15, "y": 22.3, "r": 8.5}]},                   # or concave arcs around bosses
+             "cutouts": [{"x": 22.65, "y": 39.15, "boss": 7.5, "clearance": 1.0, "fillet": 1.0}]},  # or boss notches
    "mounts":   [{"x": -31.2, "y": -14.85, "hole": 2.2, "boss": 5.0, "name": "H1"}, ...],   # NPTH holes
    "keepouts": [{"x": -39.0, "y": -22.3, "d": 7.5, "what": "lid screw boss"}, ...],       # no parts/copper, both sides
    "drawings": [{"rect": [92, 61], "label": "plateau"}, {"rect": [123.6, 67.5], "label": "plate"},
@@ -29,16 +29,44 @@ from .kicad import ensure_pcbnew, save_board
 CX, CY = 100.0, 100.0  # board-coordinate centre of the pattern, mm
 
 
+def _mirror_items(items, sx, sy):
+    """Mirror outline items of the +x+y corner into another corner, keeping the counter-clockwise walk."""
+    m = lambda p: (sx * p[0], sy * p[1])
+    out = [tuple([it[0]] + [m(p) for p in it[1:]]) for it in items]
+    if sx * sy < 0:  # one mirror flips the orientation: walk the pieces backwards
+        out = [(it[0], it[2], it[1]) if it[0] == "line" else ("arc", it[3], it[2], it[1]) for it in reversed(out)]
+    return out
+
+
+def boss_notch(hw, hh, xc, yc, R, f):
+    """Corner cut around a boss at (xc, yc) (first quadrant): straight in from the long edge along y = yc - R,
+    an arc of radius R around the boss, straight out to the short edge along x = xc - R, with convex fillets of
+    radius f where the cut meets the edges. Counter-clockwise walk, arriving up the long edge x = hw."""
+    pt = lambda cx, cy, r, a: (cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a)))
+    items = []
+    # fillet at (hw, yc - R): centre (hw - f, yc - R - f), from 0 deg to 90 deg
+    c1 = (hw - f, yc - R - f)
+    items.append(("arc", pt(*c1, f, 0), pt(*c1, f, 45), pt(*c1, f, 90)))
+    items.append(("line", pt(*c1, f, 90), (xc, yc - R)))                          # in along y = yc - R
+    items.append(("arc", (xc, yc - R), pt(xc, yc, R, 225), (xc - R, yc)))         # around the boss
+    c2 = (xc - R - f, hh - f)
+    items.append(("line", (xc - R, yc), pt(*c2, f, 0)))                           # out along x = xc - R
+    items.append(("arc", pt(*c2, f, 0), pt(*c2, f, 45), pt(*c2, f, 90)))          # fillet at (xc - R, hh)
+    return items
+
+
 def outline_points(w, h, r, notches=None, cutouts=None):
-    """Rounded rectangle with optional corner notches (rectangular) or corner cut-outs (concave arcs around a
-    boss centred at x, y with radius r), walked counter-clockwise (y up). Returns ('line', a, b) and
-    ('arc', start, mid, end) items in enclosure mm."""
+    """Rounded rectangle with optional corner notches (rectangular) or boss cut-outs, walked counter-clockwise
+    (y up). A cut-out {"x", "y", "boss", "clearance", "fillet"} (or "r" for the cut radius) is a notch that hugs
+    the boss: straight in from the long edge, an arc around the boss, straight out to the short edge, with convex
+    fillets routable by a standard cutter. Returns ('line', a, b) and ('arc', start, mid, end) in enclosure mm."""
     hw, hh = w / 2, h / 2
     cut = {n["corner"]: (n["width"], n["height"]) for n in notches or []}
-    round_ = {}
+    boss = {}
     for c in cutouts or []:
         sx, sy = (1 if c["x"] > 0 else -1), (1 if c["y"] > 0 else -1)
-        round_[f"{'+' if sx > 0 else '-'}x{'+' if sy > 0 else '-'}y"] = (c["x"], c["y"], c["r"])
+        R = c.get("r") or c["boss"] / 2 + c.get("clearance", 1.0)
+        boss[f"{'+' if sx > 0 else '-'}x{'+' if sy > 0 else '-'}y"] = (abs(c["x"]), abs(c["y"]), R, c.get("fillet", 1.0), sx, sy)
     corners = [
         ("+x+y", (hw - r, hh - r), 0, lambda nw, nh: [(hw, hh - nh), (hw - nw, hh - nh), (hw - nw, hh)]),
         ("-x+y", (-hw + r, hh - r), 90, lambda nw, nh: [(-hw + nw, hh), (-hw + nw, hh - nh), (-hw, hh - nh)]),
@@ -47,19 +75,14 @@ def outline_points(w, h, r, notches=None, cutouts=None):
     ]
     pieces = []  # per corner: (entry point, [items], exit point)
     for name, (cx, cy), a0, notch in corners:
-        sx, sy = (1 if "+x" in name else -1), (1 if "+y" in name else -1)
-        if name in round_:
-            xc, yc, rc = round_[name]
-            dx2, dy2 = rc ** 2 - (hh - abs(yc)) ** 2, rc ** 2 - (hw - abs(xc)) ** 2
-            if dx2 <= 0 or dy2 <= 0:
-                raise SystemExit(f"cut-out at {xc},{yc} r={rc} does not reach both board edges at the {name} corner")
-            dx, dy = math.sqrt(dx2), math.sqrt(dy2)
-            on_long = (xc - sx * dx, sy * hh)     # where the circle meets the long edge (y = +-hh)
-            on_short = (sx * hw, yc - sy * dy)    # where it meets the short edge (x = +-hw)
-            mid = (xc - sx * rc / math.sqrt(2), yc - sy * rc / math.sqrt(2))
-            # walk order: +x+y enters on the short edge; -x+y on the long edge; -x-y short; +x-y long
-            entry, exit_ = (on_short, on_long) if sx * sy > 0 else (on_long, on_short)
-            pieces.append((entry, [("arc", entry, mid, exit_)], exit_))
+        if name in boss:
+            xc, yc, R, f, sx, sy = boss[name]
+            if xc - R - f <= 0 or yc - R - f <= 0 or xc - R >= hw or yc - R >= hh:
+                raise SystemExit(f"boss cut-out at {name} does not fit the board: boss {xc},{yc}, cut radius {R}, fillet {f}")
+            items = _mirror_items(boss_notch(hw, hh, xc, yc, R, f), sx, sy)
+            entry = items[0][1]
+            exit_ = items[-1][2] if items[-1][0] == "line" else items[-1][3]
+            pieces.append((entry, items, exit_))
         elif name in cut:
             pts = notch(*cut[name])
             pieces.append((pts[0], [("line", pts[0], pts[1]), ("line", pts[1], pts[2])], pts[2]))
@@ -70,7 +93,7 @@ def outline_points(w, h, r, notches=None, cutouts=None):
     for i, (entry, items, exit_) in enumerate(pieces):
         out += items
         nxt_entry = pieces[(i + 1) % 4][0]
-        if nxt_entry != exit_:
+        if any(abs(a - b) > 1e-6 for a, b in zip(nxt_entry, exit_)):
             out.append(("line", exit_, nxt_entry))
     return out
 

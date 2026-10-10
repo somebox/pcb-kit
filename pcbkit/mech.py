@@ -7,7 +7,8 @@ The JSON (kept in the project, measured from the box) looks like:
   {"name": "...", "notes": ["..."],
    "origin": "centre of the mounting pattern, x along the long axis, mm",
    "board": {"width": 90, "height": 58, "corner_radius": 3,
-             "notches": [{"corner": "+x+y", "width": 10, "height": 8}]},     # optional corner cut-outs
+             "notches": [{"corner": "+x+y", "width": 10, "height": 8}],      # optional rectangular corner cuts
+             "cutouts": [{"x": 39.15, "y": 22.3, "r": 8.5}]},                   # or concave arcs around bosses
    "mounts":   [{"x": -31.2, "y": -14.85, "hole": 2.2, "boss": 5.0, "name": "H1"}, ...],   # NPTH holes
    "keepouts": [{"x": -39.0, "y": -22.3, "d": 7.5, "what": "lid screw boss"}, ...],       # no parts/copper, both sides
    "drawings": [{"rect": [92, 61], "label": "plateau"}, {"rect": [123.6, 67.5], "label": "plate"},
@@ -28,12 +29,16 @@ from .kicad import ensure_pcbnew, save_board
 CX, CY = 100.0, 100.0  # board-coordinate centre of the pattern, mm
 
 
-def outline_points(w, h, r, notches):
-    """Rounded rectangle with optional rectangular corner notches, walked counter-clockwise (y up).
-    Returns ('line', a, b) and ('arc', start, mid, end) items in enclosure mm."""
+def outline_points(w, h, r, notches=None, cutouts=None):
+    """Rounded rectangle with optional corner notches (rectangular) or corner cut-outs (concave arcs around a
+    boss centred at x, y with radius r), walked counter-clockwise (y up). Returns ('line', a, b) and
+    ('arc', start, mid, end) items in enclosure mm."""
     hw, hh = w / 2, h / 2
     cut = {n["corner"]: (n["width"], n["height"]) for n in notches or []}
-    # corners in walk order, each with: centre of its arc, start angle, and the notch points in walk order
+    round_ = {}
+    for c in cutouts or []:
+        sx, sy = (1 if c["x"] > 0 else -1), (1 if c["y"] > 0 else -1)
+        round_[f"{'+' if sx > 0 else '-'}x{'+' if sy > 0 else '-'}y"] = (c["x"], c["y"], c["r"])
     corners = [
         ("+x+y", (hw - r, hh - r), 0, lambda nw, nh: [(hw, hh - nh), (hw - nw, hh - nh), (hw - nw, hh)]),
         ("-x+y", (-hw + r, hh - r), 90, lambda nw, nh: [(-hw + nw, hh), (-hw + nw, hh - nh), (-hw, hh - nh)]),
@@ -42,10 +47,22 @@ def outline_points(w, h, r, notches):
     ]
     pieces = []  # per corner: (entry point, [items], exit point)
     for name, (cx, cy), a0, notch in corners:
-        if name in cut:
+        sx, sy = (1 if "+x" in name else -1), (1 if "+y" in name else -1)
+        if name in round_:
+            xc, yc, rc = round_[name]
+            dx2, dy2 = rc ** 2 - (hh - abs(yc)) ** 2, rc ** 2 - (hw - abs(xc)) ** 2
+            if dx2 <= 0 or dy2 <= 0:
+                raise SystemExit(f"cut-out at {xc},{yc} r={rc} does not reach both board edges at the {name} corner")
+            dx, dy = math.sqrt(dx2), math.sqrt(dy2)
+            on_long = (xc - sx * dx, sy * hh)     # where the circle meets the long edge (y = +-hh)
+            on_short = (sx * hw, yc - sy * dy)    # where it meets the short edge (x = +-hw)
+            mid = (xc - sx * rc / math.sqrt(2), yc - sy * rc / math.sqrt(2))
+            # walk order: +x+y enters on the short edge; -x+y on the long edge; -x-y short; +x-y long
+            entry, exit_ = (on_short, on_long) if sx * sy > 0 else (on_long, on_short)
+            pieces.append((entry, [("arc", entry, mid, exit_)], exit_))
+        elif name in cut:
             pts = notch(*cut[name])
-            items = [("line", pts[0], pts[1]), ("line", pts[1], pts[2])]
-            pieces.append((pts[0], items, pts[2]))
+            pieces.append((pts[0], [("line", pts[0], pts[1]), ("line", pts[1], pts[2])], pts[2]))
         else:
             pt = lambda a: (cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a)))
             pieces.append((pt(a0), [("arc", pt(a0), pt(a0 + 45), pt(a0 + 90))], pt(a0 + 90)))
@@ -130,7 +147,7 @@ def apply(board_path, spec):
     b = pcbnew.LoadBoard(str(board_path))
 
     bd = spec["board"]
-    for item in outline_points(bd["width"], bd["height"], bd.get("corner_radius", 2), bd.get("notches")):
+    for item in outline_points(bd["width"], bd["height"], bd.get("corner_radius", 2), bd.get("notches"), bd.get("cutouts")):
         s = pcbnew.PCB_SHAPE(b)
         s.SetLayer(pcbnew.Edge_Cuts)
         s.SetWidth(MM(0.1))

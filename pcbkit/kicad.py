@@ -63,14 +63,18 @@ def tools_dir():
     return os.environ.get("PCBKIT_TOOLS", os.path.expanduser("~/.local/share/pcbkit"))
 
 
-def _user_site(python):
-    r = subprocess.run([python, "-c", "import site; print(site.getusersitepackages())"], capture_output=True, text=True, check=True)
-    return r.stdout.strip()
+def _site_dir(python):
+    """Where a .pth is read by this interpreter: its user site, or its own site-packages for a venv (user site off)."""
+    r = subprocess.run([python, "-c", "import site; print(site.ENABLE_USER_SITE); print(site.getusersitepackages()); "
+                        "print(site.getsitepackages()[0])"], capture_output=True, text=True, check=True)
+    enabled, user, own = r.stdout.strip().splitlines()
+    return user if enabled == "True" else own
 
 
 def link(remove=False):
     """Make this checkout importable from KiCad's Python and from the `python3` on PATH, by writing a pcbkit.pth into
-    each one's user site-packages (nothing goes into an app bundle or a managed install; survives upgrades).
+    each one's user site-packages, or a venv's own site-packages when its user site is off (nothing goes into an app
+    bundle or a managed install; survives upgrades).
     Project scripts run under either interpreter: pcbnew ones under KiCad's, konnect/netlist ones under python3."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pythons = [("KiCad's Python", KICAD_PYTHON)]
@@ -81,7 +85,7 @@ def link(remove=False):
         if not os.path.exists(py):
             print(f"{label}: not found at {py}")
             continue
-        pth = os.path.join(_user_site(py), "pcbkit.pth")
+        pth = os.path.join(_site_dir(py), "pcbkit.pth")
         if remove:
             if os.path.exists(pth):
                 os.remove(pth)
@@ -90,7 +94,7 @@ def link(remove=False):
         os.makedirs(os.path.dirname(pth), exist_ok=True)
         with open(pth, "w") as fh:
             fh.write(root + "\n")
-        r = subprocess.run([py, "-c", "import pcbkit; print(pcbkit.__file__)"], capture_output=True, text=True)
+        r = subprocess.run([py, "-c", "import pcbkit; print(pcbkit.__file__)"], capture_output=True, text=True, cwd="/")
         ok = r.stdout.strip()
         print(f"{label} ({py}): {pth}" + (f" -> imports {ok}" if ok else " -> FAILED: " + r.stderr.strip()[-200:]))
 

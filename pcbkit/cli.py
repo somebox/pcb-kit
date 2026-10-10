@@ -3,6 +3,7 @@
 Checks:    drc, erc, nets, check, cleanup
 Release:   previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, netview, info, link
+Import:    import-easyeda
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
 """
 import sys
@@ -23,6 +24,7 @@ COMMANDS = {
     "jlc": ("pcbkit.jlc", "search konnect's JLCPCB parts cache"),
     "link": ("pcbkit.kicad", "make this checkout importable from KiCad's Python and python3 (--remove to undo)"),
     "netview": ("pcbkit.netview", "SVG of a board region coloured by net (needs pcbnew)"),
+    "import-easyeda": ("pcbkit.import_easyeda", "EasyEDA Std schematic + PCB exports -> linked KiCad project and library"),
 }
 
 

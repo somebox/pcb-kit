@@ -20,6 +20,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | `pcbkit/release/jlc_fab.py` | sign `scripts/jlc_fab.py` + `scripts/jlc/corrections.csv` | unchanged logic; corrections table in `pcbkit/data/jlc/` |
 | `pcbkit/release/panel.py` | sign `scripts/make_panel.sh` + `setup_tools.sh` | KiKit pinned to the same commit, installed once under `~/.local/share/pcbkit`; presets, `edge_tabs.py` and `panel_post.py` in `pcbkit/data/panel/`, referenced by absolute path through a generated override preset; rows is a flag |
 | `pcbkit/data/templates/blank.kicad_pcb` | `scripts/blank.kicad_pcb` (same) | |
+| `pcbkit/import_easyeda.py` | dodeca `hardware/panels/tools/easyeda_to_kicad.py` | generalised: symbols from any EasyEDA part (one per name + pin geometry, rotations baked in), power symbols named after the flag, PWR_FLAGs, loose pads become board-only, `--pin` for symbol typos, `--force` to write despite connectivity differences, library paths as flags. First used on the ESP32 HA protoboard (2026-10-10) |
 | `pcbkit/sexp.py` | dodeca `tools/sexp.py` | small s-expression helpers used by the dodeca generators; kept for the next harvest |
 
 ## Migration status

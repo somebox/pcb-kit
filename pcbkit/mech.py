@@ -321,7 +321,7 @@ def fit_check_pdf(board_path, out):
     from .kicad import KICAD_CLI
     layers = "User.1,Dwgs.User,Cmts.User,B.CrtYd,Edge.Cuts"
     r = subprocess.run([KICAD_CLI, "pcb", "export", "pdf", "--layers", layers, "--mode-single", "--drill-shape-opt", "2",
-                        "--scale", "1", "--include-border-title", "-o", str(out), str(board_path)], capture_output=True, text=True)
+                        "--scale", "1", "--black-and-white", "--include-border-title", "-o", str(out), str(board_path)], capture_output=True, text=True)
     if r.returncode:
         raise SystemExit("fit-check export failed: " + r.stderr[-500:])
     print("fit check:", out, "(print at 100 %, check the scale bar)")

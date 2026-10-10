@@ -45,6 +45,7 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
 | `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--png]` | a region of one layer coloured by net, for reviewing power stages |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
+| `pcbkit outline BOARD enclosure.json` | board outline (rounded, optional corner notches), NPTH mounting holes with standoff courtyards, keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable |
 | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic, symbols and footprints into `lib/`, PCB nets renamed, importer fixes, ERC/DRC/parity run |
 
 Library use from a project script:
@@ -60,7 +61,7 @@ from pcbkit.checks.netlist import Netlist    # netlist topology assertions
 ## Repository layout
 
 ```
-pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, netview.py, import_easyeda.py)
+pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, netview.py, import_easyeda.py, mech.py, new_project.py)
 pcbkit/data/       jlc/corrections.csv (rotations), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo

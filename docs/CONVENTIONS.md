@@ -58,5 +58,5 @@ archive/             earlier versions, kept whole
 - Lock copper that was placed deliberately (power necks, stitching vias); autorouters and cleanups leave locked
   items alone.
 - A `.kicad_dru` syntax error silently disables every custom rule; run DRC after each edit of it.
-- `BOARD.Remove()` on tracks and `FOOTPRINT.Remove(field)` corrupt the pcbnew bindings mid-run: edit the file text
-  by uuid instead, in a fresh process.
+- `BOARD.Remove()` on tracks, drawings or zones and `FOOTPRINT.Remove(field)` corrupt the pcbnew bindings mid-run:
+  edit the file text instead (by uuid, or by top-level block as `pcbkit.mech.strip_template` does), in a fresh process.

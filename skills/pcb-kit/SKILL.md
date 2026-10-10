@@ -20,6 +20,7 @@ the interpreter.
 | Review a power stage | `pcbkit netview BOARD out.svg X0 Y0 X1 Y1 --layer B.Cu --png out.png`, then look at the PNG |
 | Update the docs' pictures | `pcbkit previews BOARD docs/previews/<board>` |
 | Order files | `pcbkit fab BOARD build/fab/<board>`; panels: `pcbkit panel BOARD build/panels/<board> --style both` |
+| Start a new project | `pcbkit new ~/Documents/Projects/<name> --board <b> --title "..."`, then write DESIGN.md (requirements, constraints, candidate parts with `pcbkit jlc` stock, decisions) before any schematic |
 | Bring an EasyEDA design into KiCad | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project>`; archive the JSON under `archive/vN-easyeda/`, record findings in DESIGN.md, then `bomi init` + `bomi import kicad` in the board folder |
 | Find a part quickly | `pcbkit jlc --desc "%...%" --package "0402%" --basic`; for a researched BOM use bomi |
 

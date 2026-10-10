@@ -1,0 +1,17 @@
+// KiKit panel preset, shared part: 3 modules stacked, 5 mm rails top and bottom for JLC SMT assembly.
+// Combine with a cut style: vcut.json (Standard assembly) or mousebite.json (Economic too).
+// Used by `pcbkit panel`, which points "post.script" and the tabs plugin at this package. Comments are allowed (KiKit reads commentjson).
+{
+    "layout": {"type": "grid", "rows": 3, "cols": 1},
+    // rails on the long sides: the conveyor holds the panel there, so parts near the module edges are fine
+    "framing": {"type": "railstb", "width": "5mm"},
+    // JLC SMT tooling holes (as KiKit's :jlcTooling preset), 3-hole asymmetric layout
+    "tooling": {"type": "3hole", "hoffset": "3mm", "voffset": "2.5mm", "size": "1.152mm", "soldermaskmargin": "1.3mm"},
+    "fiducials": {"type": "3fid", "hoffset": "8mm", "voffset": "2.5mm", "coppersize": "1mm", "opening": "2mm"},
+    // JLC order-number placeholder on the top rail: it is cut off with the rails, so no number lands on a module
+    "text": {"type": "simple", "text": "JLCJLCJLCJLC", "anchor": "mt", "voffset": "2.5mm",
+             "hjustify": "center", "vjustify": "center", "layer": "B.SilkS",
+             "width": "1.5mm", "height": "1.5mm", "thickness": "0.3mm"},
+    // panel_post.py: unique references (D1 -> D1_1..D1_3, silk keeps "D1"), and only the rail order number
+    "post": {"refillzones": true, "script": "panel_post.py", "scriptarg": "5"}
+}

@@ -1,0 +1,15 @@
+// Mouse-bite style (JLC Economic or Standard): 2 mm routed gaps, tabs with stamp holes. JLC: 0.6 mm holes, 0.35 mm
+// apart edge to edge, gap 1.6-2 mm, a tab set every 50-60 mm. The holes sit centred on the module edge (offset 0),
+// biting 0.3 mm in. edge_tabs.py puts the tabs where both long edges are copper-free for 0.8 mm (0.3 mm hole +
+// 0.4 mm clearance + margin), preferring the gaps between characters.
+{
+    "layout": {"space": "2mm"},
+    "framing": {"space": "2mm"},
+    "tabs": {"type": "plugin", "code": "edge_tabs.py.EdgeTabs", "width": "4mm",
+             "arg": "depth=0.8; prefer=gaps:D; spacing=55"},
+    "cuts": {"type": "mousebites", "drill": "0.6mm", "spacing": "0.95mm", "offset": "0mm", "prolong": "0.5mm"},
+    // JLC routes outlines with a 2 mm cutter, so inside corners come out with a 1 mm radius: draw them that way.
+    // The hole line runs 0.5 mm past each tab and its end holes reach 0.8 mm, which cuts through all but ~0.02 mm of
+    // that fillet.
+    "post": {"millradius": "1mm", "reconstructarcs": true}
+}

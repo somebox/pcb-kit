@@ -1,0 +1,8 @@
+// V-cut style (JLC Standard assembly only): modules and rails butt together, V-cut on the shared edges.
+// JLC reads V-cut lines on the outline layer; copper keeps 0.4 mm from them (EDGE_CLR on the boards).
+{
+    "layout": {"space": "0mm"},
+    "framing": {"space": "0mm"},
+    "tabs": {"type": "full"},
+    "cuts": {"type": "vcuts", "layer": "Edge.Cuts", "clearance": "0.4mm"}
+}

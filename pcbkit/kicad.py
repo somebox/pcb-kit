@@ -5,6 +5,7 @@ with `pcbnew`. A command that needs pcbnew calls `ensure_pcbnew()` first; outsid
 the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP.
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -62,25 +63,36 @@ def tools_dir():
     return os.environ.get("PCBKIT_TOOLS", os.path.expanduser("~/.local/share/pcbkit"))
 
 
-def user_site_pth():
-    """The .pth file that makes this checkout importable from KiCad's Python (its user site-packages)."""
-    r = subprocess.run([KICAD_PYTHON, "-c", "import site; print(site.getusersitepackages())"], capture_output=True, text=True, check=True)
-    return os.path.join(r.stdout.strip(), "pcbkit.pth")
+def _user_site(python):
+    r = subprocess.run([python, "-c", "import site; print(site.getusersitepackages())"], capture_output=True, text=True, check=True)
+    return r.stdout.strip()
 
 
-def link_kicad(remove=False):
-    """Write (or remove) a .pth in KiCad's user site-packages pointing at this checkout, so project scripts that run
-    under KiCad's Python can `import pcbkit`. Survives KiCad upgrades; nothing is written into the app bundle."""
-    pth = user_site_pth()
-    if remove:
-        if os.path.exists(pth):
-            os.remove(pth)
-        print("removed", pth)
-        return
+def link(remove=False):
+    """Make this checkout importable from KiCad's Python and from the `python3` on PATH, by writing a pcbkit.pth into
+    each one's user site-packages (nothing goes into an app bundle or a managed install; survives upgrades).
+    Project scripts run under either interpreter: pcbnew ones under KiCad's, konnect/netlist ones under python3."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    os.makedirs(os.path.dirname(pth), exist_ok=True)
-    with open(pth, "w") as fh:
-        fh.write(root + "\n")
-    r = subprocess.run([KICAD_PYTHON, "-c", "import pcbkit, sys; print(pcbkit.__file__)"], capture_output=True, text=True)
-    print(f"{pth} -> {root}")
-    print("KiCad's Python imports pcbkit from", r.stdout.strip() or ("FAILED: " + r.stderr.strip()[-300:]))
+    pythons = [("KiCad's Python", KICAD_PYTHON)]
+    default = shutil.which("python3")
+    if default and os.path.realpath(default) != os.path.realpath(KICAD_PYTHON):
+        pythons.append(("python3 on PATH", default))
+    for label, py in pythons:
+        if not os.path.exists(py):
+            print(f"{label}: not found at {py}")
+            continue
+        pth = os.path.join(_user_site(py), "pcbkit.pth")
+        if remove:
+            if os.path.exists(pth):
+                os.remove(pth)
+            print(f"{label}: removed {pth}")
+            continue
+        os.makedirs(os.path.dirname(pth), exist_ok=True)
+        with open(pth, "w") as fh:
+            fh.write(root + "\n")
+        r = subprocess.run([py, "-c", "import pcbkit; print(pcbkit.__file__)"], capture_output=True, text=True)
+        ok = r.stdout.strip()
+        print(f"{label} ({py}): {pth}" + (f" -> imports {ok}" if ok else " -> FAILED: " + r.stderr.strip()[-200:]))
+
+
+link_kicad = link  # old name

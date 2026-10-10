@@ -2,7 +2,7 @@
 
 Checks:    drc, erc, nets, check, cleanup
 Release:   previews, print, fab, panel, setup-kikit
-Look-ups:  jlc, netview, info, link-kicad
+Look-ups:  jlc, netview, info, link
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
 """
 import sys
@@ -21,7 +21,7 @@ COMMANDS = {
     "panel": ("pcbkit.release.panel", "KiKit assembly panels, vcut and mousebite styles"),
     "setup-kikit": ("pcbkit.release.panel", "install the pinned KiKit into KiCad's Python (--target)"),
     "jlc": ("pcbkit.jlc", "search konnect's JLCPCB parts cache"),
-    "link-kicad": ("pcbkit.kicad", "make this checkout importable from KiCad's Python (--remove to undo)"),
+    "link": ("pcbkit.kicad", "make this checkout importable from KiCad's Python and python3 (--remove to undo)"),
     "netview": ("pcbkit.netview", "SVG of a board region coloured by net (needs pcbnew)"),
 }
 
@@ -58,9 +58,9 @@ def main(argv=None):
     if cmd == "setup-kikit":
         from .release.panel import setup_kikit
         return setup_kikit()
-    if cmd == "link-kicad":
-        from .kicad import link_kicad
-        return link_kicad(remove="--remove" in rest)
+    if cmd in ("link", "link-kicad"):
+        from .kicad import link
+        return link(remove="--remove" in rest)
     import importlib
     mod = importlib.import_module(COMMANDS[cmd][0])
     mod.main(rest)

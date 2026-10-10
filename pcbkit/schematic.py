@@ -5,17 +5,28 @@
     comps = [sch.R("R1", "10k", 50, 40, "SDA", "+3V3"), sch.C("C1", "100nF", 60, 40, "+3V3"), ...]
     sch.build("mcu.kicad_sch", base=100, comps=comps, hier={"SDA": "bidirectional"})
 
+A project keeps a `scripts/builder.py` that configures this module and then *becomes* it, so legacy scripts that do
+`import builder; builder.P = ...` and `from builder import *` keep working:
+
+    from pcbkit import schematic as _m
+    _m.configure(ROOT + "boards/controller/", power={...}); _m.ROOT = ROOT
+    sys.modules[__name__] = _m
+
 A component is a dict: ref, lib, val, fp, x, y, rot, lcsc, fields, pins ({pin: net}), optional unit/mirror.
 A pin's net is a power symbol (in POWER), "NC", a hierarchical label (in `hier`), a global label (in `glob`), or a
 local net, which is wired with batch_connect_to_net. Power symbols are placed once per pin position and numbered
 from `base`. Harvested from the projects' builder.py; the sign, siebenuhr and spotlight variants are merged.
 """
+import os
 import re
 
-from .konnect import Konnect
-from .parts import capacitor, resistor
+from .konnect import Konnect  # noqa: F401  (re-exported: sheet scripts open their own client for extra calls)
+from .parts import FP, capacitor, resistor
 
-P = ""  # project (sheet) directory with trailing slash; set with configure()
+# footprint names, re-exported for sheet scripts that build parts by hand
+R0402, R0603, C0402, C0603, C0805, C1206 = (FP[k] for k in ("R0402", "R0603", "C0402", "C0603", "C0805", "C1206"))
+
+P = ""  # project (sheet) directory with trailing slash; set with configure(), or assign P directly
 # net -> (symbol, value override, native rotation of the symbol's pin)
 POWER = {"GND": ("power:GND", None, 270), "+3V3": ("power:+3V3", None, 90), "+5V": ("power:+5V", None, 90),
          "+12V": ("power:+12V", None, 90), "VBUS": ("power:VBUS", None, 90)}
@@ -27,6 +38,11 @@ def configure(project_dir, power=None):
     P = project_dir if project_dir.endswith("/") else project_dir + "/"
     if power:
         POWER.update(power)
+
+
+def sheet_path(sheet):
+    """P + sheet, or the sheet itself when it is already an absolute path."""
+    return sheet if os.path.isabs(sheet) else P + sheet
 
 
 def R(ref, val, x, y, p1, p2, rot=0, pkg="0402"):
@@ -50,7 +66,7 @@ def P2(ref, lib, val, fp, lcsc, x, y, p1, p2, rot=0, fields=None, mpn=None):
 def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None):
     """Place comps on P+sheet, wire their pins, annotate LCSC and other fields. Returns pin locations."""
     glob = glob or {}
-    S = P + sheet
+    S = sheet_path(sheet)
     k = Konnect()
     k.load("sch_batch", "sch_components", "sch_wiring")
     place = []
@@ -141,7 +157,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
 
 def reset(sheet, paper="A3"):
     """Blank a child sheet in place, keeping its own uuid so hierarchy links survive."""
-    S = P + sheet
+    S = sheet_path(sheet)
     txt = open(S).read()
     uuid = re.search(r'\(uuid "?([0-9a-f-]+)"?\)', txt).group(1)
     open(S, "w").write(f'(kicad_sch\n\t(version 20260306)\n\t(generator "eeschema")\n\t(generator_version "10.0")\n'
@@ -153,7 +169,7 @@ def labels(sheet, items):
     k = Konnect()
     k.load("sch_wiring")
     for net, x, y, rot in items:
-        k.call("add_schematic_net_label", {"schematic": P + sheet, "net": net, "label_type": "net_label",
+        k.call("add_schematic_net_label", {"schematic": sheet_path(sheet), "net": net, "label_type": "net_label",
                                            "x": x, "y": y, "rotation": rot})
 
 
@@ -161,7 +177,7 @@ def mark_dnp(sheet, refs):
     """Set (dnp yes) and (in_bom no) on placed symbols by reference (text edit; run after build).
     Patches the symbol header between "(symbol" and its Reference property, so it works however the
     symbol's closing parens are laid out (add_component_annotation leaves '))' on the last field's line)."""
-    S = P + sheet
+    S = sheet_path(sheet)
     s = open(S).read()
     for ref in refs:
         i = s.index(f'(property "Reference" "{ref}"')

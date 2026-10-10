@@ -16,11 +16,11 @@ Three parts:
 uv tool install -e ~/src/pcb-kit     # gives you `pcbkit`
 pcbkit info                          # confirms where KiCad is
 pcbkit setup-kikit                   # only for panels: pins KiKit into ~/.local/share/pcbkit
-pcbkit link-kicad                    # lets project scripts run under KiCad's Python `import pcbkit`
+pcbkit link                          # lets project scripts `import pcbkit` under KiCad's Python and python3
 ```
 
-`link-kicad` writes one `.pth` file into KiCad's user site-packages (`~/Library/Python/3.9/...`), so nothing goes
-into the app bundle and it survives KiCad upgrades; `pcbkit link-kicad --remove` undoes it.
+`link` writes one `pcbkit.pth` into the user site-packages of KiCad's Python and of the `python3` on PATH, so nothing
+goes into an app bundle and it survives upgrades; `pcbkit link --remove` undoes it.
 
 Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that need `pcbnew` re-execute themselves
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set
@@ -76,4 +76,4 @@ docs/              CONVENTIONS.md (how a project is laid out and documented), HA
 
 Harvested on 2026-10-10 from the rp2354-messages-sign, siebenuhr controller-v2, rgb-spotlight and dodeca-v2-hardware
 repos; see [docs/HARVEST.md](docs/HARVEST.md) for the provenance of each piece and what is still in the projects.
-siebenuhr is migrated; the sign, spotlight and dodeca still run their own copies until each is switched over.
+siebenuhr and the message sign are migrated; the spotlight and dodeca still run their own copies until each is switched over.

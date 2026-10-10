@@ -27,7 +27,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | Project | State |
 | --- | --- |
 | siebenuhr controller-v2 | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `scripts/builder.py` is a 15-line glue module, the copied scripts are gone, README lists the pcbkit commands. Its own routing chain (`scripts/route/`, built on KiCadRoutingTools) is untouched |
-| rp2354-messages-sign | not yet; still runs its own copies (the originals of most of the kit) |
+| rp2354-messages-sign | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `builder.py` is glue that becomes `pcbkit.schematic` (its module/archive scripts set `builder.P`), the three `make_*.sh` wrappers call `pcbkit previews/panel/fab`, `netcheck.py` sits on the kit's parser. Kept: `char_variants.py`, the generators, `route_strip.py`, `route_controller.py`, `resilk.py`, `renumber_controller.py`, `check_char_netlist.py` |
 | rgb-spotlight | not yet |
 | dodeca-v2-hardware | not yet; v1.3 stays as is until it is ordered |
 
@@ -40,8 +40,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
   placement and zone/stackup setup in dodeca's `pcb_build.py`.
 - dodeca `tools/pcb_build.py`, `pcb_update.py`, `power_stage.py` (engine parts), `plane_vias.py`, `maze_route.py`,
   `route.py` (Freerouting driver), `assemble.py` (schematic from `design/*.json`), `silkscreen.py`, `guide_images.py`.
+- `scripts/make_fab.sh` is still per project (board list, which boards get panels); the DRC gate and the exports are the kit's.
 - siebenuhr `scripts/route/` (`route_board.sh` drives KiCadRoutingTools: power copper, guards, gap router, cleanup, GND fill) is the
   first project chain on that router and the model for a `pcbkit route` wrapper; `enclosure_check.py`, `enclosure_heightmap.py`, `placement_plan.py`; spotlight `mech.py`,
   `set_outline.py`, `ratsnest.py`; sign `resilk.py`, `renumber_controller.py`, `build_matrix.py`.
-- `scripts/make_fab.sh`: the per-project wrapper (DRC gate, then `fab` on the board and its panels). Becomes a few
-  lines calling `pcbkit drc`, `pcbkit panel` and `pcbkit fab`.

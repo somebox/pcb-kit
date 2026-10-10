@@ -11,7 +11,7 @@ The JSON (kept in the project, measured from the box) looks like:
    "mounts":   [{"x": -31.2, "y": -14.85, "hole": 2.2, "boss": 5.0, "name": "H1"}, ...],   # NPTH holes
    "keepouts": [{"x": -39.0, "y": -22.3, "d": 7.5, "what": "lid screw boss"}, ...],       # no parts/copper, both sides
    "drawings": [{"rect": [92, 61], "label": "plateau"}, {"rect": [123.6, 67.5], "label": "plate"},
-                {"circle": [x, y, d], "label": "..."}]}                                      # reference geometry on Dwgs.User
+                {"circle": [x, y, d], "label": "..."}, {"line": [x0, y0, x1, y1], "label": "..."}]}   # reference geometry on Dwgs.User
 
 Writes into BOARD: the outline on Edge.Cuts (lines and arcs, centred at 100,100 mm), one board-only footprint per
 mount with an NPTH pad, a rule area per keep-out (no tracks, vias, pads, footprints or fills on F.Cu and B.Cu,
@@ -199,6 +199,12 @@ def apply(board_path, spec):
                 s.SetStart(P(*a)); s.SetEnd(P(*c)); b.Add(s)
             if d.get("label"):
                 text(d["label"], 0, h / 2 + 1.2, pcbnew.Dwgs_User)
+        elif "line" in d:
+            x0_, y0_, x1_, y1_ = d["line"]
+            s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.3))
+            s.SetStart(P(x0_, y0_)); s.SetEnd(P(x1_, y1_)); b.Add(s)
+            if d.get("label"):
+                text(d["label"], (x0_ + x1_) / 2, (y0_ + y1_) / 2 + (1.5 if y0_ >= 0 else -1.5), pcbnew.Dwgs_User, 0.8)
         elif "circle" in d:
             x, y, dia = d["circle"]
             s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.1))

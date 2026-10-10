@@ -78,4 +78,4 @@ docs/              CONVENTIONS.md (how a project is laid out and documented), HA
 
 Harvested on 2026-10-10 from the rp2354-messages-sign, siebenuhr controller-v2, rgb-spotlight and dodeca-v2-hardware
 repos; see [docs/HARVEST.md](docs/HARVEST.md) for the provenance of each piece and what is still in the projects.
-siebenuhr and the message sign are migrated; the spotlight and dodeca still run their own copies until each is switched over.
+siebenuhr, the message sign and the spotlight are migrated (the spotlight in its working tree, pending the user's commit of its v2 files); dodeca still runs its own tools until v1.3 is ordered.

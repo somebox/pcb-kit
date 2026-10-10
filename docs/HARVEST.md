@@ -28,7 +28,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | --- | --- |
 | siebenuhr controller-v2 | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `scripts/builder.py` is a 15-line glue module, the copied scripts are gone, README lists the pcbkit commands. Its own routing chain (`scripts/route/`, built on KiCadRoutingTools) is untouched |
 | rp2354-messages-sign | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `builder.py` is glue that becomes `pcbkit.schematic` (its module/archive scripts set `builder.P`), the three `make_*.sh` wrappers call `pcbkit previews/panel/fab`, `netcheck.py` sits on the kit's parser. Kept: `char_variants.py`, the generators, `route_strip.py`, `route_controller.py`, `resilk.py`, `renumber_controller.py`, `check_char_netlist.py` |
-| rgb-spotlight | not yet |
+| rgb-spotlight | migrated 2026-10-10 in the working tree only: the whole v2 tree (`scripts/`, `boards/`, `lib/`, DESIGN.md, previews) was untracked in its git repo, so the change is not committed. `builder.py` is glue that becomes `pcbkit.schematic` (power symbols GND, +5V, +12V), `netcheck.py` keeps its driver-board assertions on the kit's parser (output identical to before), `set_outline.py` and the two `make_*_pcb.sh` use `pcbkit drc`, `make_previews.sh` wraps `pcbkit previews`. Kept: `mech.py`, `make_lib.py`, `ratsnest.py`, `route_driver.py`, `route_strip.py`, the generators |
 | dodeca-v2-hardware | not yet; v1.3 stays as is until it is ordered |
 
 ## Still in the projects (candidates for the next pass)

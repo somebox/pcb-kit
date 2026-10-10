@@ -20,7 +20,9 @@ pcbkit link                          # lets project scripts `import pcbkit` unde
 ```
 
 `link` writes one `pcbkit.pth` into the user site-packages of KiCad's Python and of the `python3` on PATH, so nothing
-goes into an app bundle and it survives upgrades; `pcbkit link --remove` undoes it.
+goes into an app bundle and it survives upgrades; `pcbkit link --remove` undoes it. Because `python3` can differ per
+directory (asdf, direnv, venvs), project scripts also carry a four-line fallback to `~/src/pcb-kit` (or `PCBKIT_ROOT`);
+see docs/CONVENTIONS.md.
 
 Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that need `pcbnew` re-execute themselves
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set

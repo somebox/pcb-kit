@@ -44,6 +44,16 @@ archive/             earlier versions, kept whole
 ## Scripting rules
 
 - Scripts that touch `pcbnew` run under KiCad's Python and stay 3.9-compatible.
+- `pcbkit link` makes the kit importable from KiCad's Python and the `python3` on PATH, but `python3` varies per
+  directory on a machine with asdf, direnv or a PlatformIO venv. Every project entry script that imports pcbkit
+  therefore starts with the fallback, so it runs under any interpreter:
+
+  ```python
+  try:
+      import pcbkit  # noqa: F401
+  except ImportError:  # an interpreter pcbkit is not linked into: use the checkout
+      sys.path.insert(0, os.path.expanduser(os.environ.get("PCBKIT_ROOT", "~/src/pcb-kit")))
+  ```
 - Once a board is routed, never regenerate it from scratch: update incrementally and keep UUIDs.
 - Lock copper that was placed deliberately (power necks, stitching vias); autorouters and cleanups leave locked
   items alone.

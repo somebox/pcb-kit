@@ -136,8 +136,8 @@ def strip_template(board_path):
     drop = []
     for s, e, head in top_level_blocks(text):
         blk = text[s:e]
-        if head in ("gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly", "gr_text") and \
-                any(f'(layer "{l}")' in blk for l in ("Edge.Cuts", "Dwgs.User", "Cmts.User")):
+        if head in ("gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly", "gr_text", "dimension") and \
+                any(f'(layer "{l}")' in blk for l in ("Edge.Cuts", "Dwgs.User", "Cmts.User", "User.1")):
             drop.append((s, e))
         elif head == "zone" and '(name "keepout:' in blk:
             drop.append((s, e))
@@ -181,6 +181,32 @@ def apply(board_path, spec):
             s.SetShape(pcbnew.SHAPE_T_ARC)
             s.SetArcGeometry(P(*item[1]), P(*item[2]), P(*item[3]))
         b.Add(s)
+
+    print_layer = getattr(pcbnew, "User_1", None)
+    if print_layer is not None:  # a thick copy of the outline for 1:1 prints (Edge.Cuts stays thin for the fab)
+        for item in outline_points(bd["width"], bd["height"], bd.get("corner_radius", 2), bd.get("notches"), bd.get("cutouts")):
+            s = pcbnew.PCB_SHAPE(b)
+            s.SetLayer(print_layer)
+            s.SetWidth(MM(0.5))
+            if item[0] == "line":
+                s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetStart(P(*item[1])); s.SetEnd(P(*item[2]))
+            else:
+                s.SetShape(pcbnew.SHAPE_T_ARC); s.SetArcGeometry(P(*item[1]), P(*item[2]), P(*item[3]))
+            b.Add(s)
+
+    def dimension(a, c, offset, layer, size=1.2):
+        """Aligned dimension between enclosure points a and c, drawn `offset` mm to the side."""
+        d = pcbnew.PCB_DIM_ALIGNED(b, pcbnew.PCB_DIM_ALIGNED_T)
+        d.SetLayer(layer)
+        d.SetStart(P(*a)); d.SetEnd(P(*c))
+        d.SetHeight(MM(offset))
+        d.SetLineThickness(MM(0.2))
+        d.SetUnitsMode(pcbnew.DIM_UNITS_MODE_MM)
+        d.SetPrecision(pcbnew.DIM_PRECISION_X_X)
+        d.SetTextSize(pcbnew.VECTOR2I(MM(size), MM(size)))
+        d.SetTextThickness(MM(size * 0.15))
+        d.Update()
+        b.Add(d)
 
     for i, m in enumerate(spec.get("mounts", [])):
         fp = pcbnew.FOOTPRINT(b)
@@ -235,7 +261,7 @@ def apply(board_path, spec):
         if "rect" in d:
             w, h = d["rect"]
             for a, c in (((-w / 2, -h / 2), (w / 2, -h / 2)), ((w / 2, -h / 2), (w / 2, h / 2)), ((w / 2, h / 2), (-w / 2, h / 2)), ((-w / 2, h / 2), (-w / 2, -h / 2))):
-                s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.1))
+                s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.3))
                 s.SetStart(P(*a)); s.SetEnd(P(*c)); b.Add(s)
             if d.get("label"):
                 text(d["label"], 0, h / 2 + 1.2, pcbnew.Dwgs_User)
@@ -247,17 +273,40 @@ def apply(board_path, spec):
                 text(d["label"], (x0_ + x1_) / 2, (y0_ + y1_) / 2 - (1.5 if y0_ >= 0 else -1.5), pcbnew.Dwgs_User, 0.8)  # label on the board side
         elif "circle" in d:
             x, y, dia = d["circle"]
-            s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.1))
+            s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.3))
             s.SetCenter(P(x, y)); s.SetEnd(P(x + dia / 2, y)); b.Add(s)
             if d.get("label"):
                 text(d["label"], x, y + dia / 2 + 1.2, pcbnew.Dwgs_User, 0.8)
     for k in spec.get("keepouts", []):
-        s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.1))
+        s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_CIRCLE); s.SetLayer(pcbnew.Dwgs_User); s.SetWidth(MM(0.4))
         s.SetCenter(P(k["x"], k["y"])); s.SetEnd(P(k["x"] + k["d"] / 2, k["y"])); b.Add(s)
+    # dimensions for a 1:1 print check: the mounting pattern, the board, and the boss pattern (to compare with the box)
+    dl = print_layer if print_layer is not None else pcbnew.Dwgs_User
+    ms = spec.get("mounts", [])
+    if len(ms) >= 4:
+        xs = sorted({m["x"] for m in ms}); ys = sorted({m["y"] for m in ms})
+        dimension((xs[0], ys[0]), (xs[-1], ys[0]), -(ys[0] - (-bd["height"] / 2)) + 6, dl)      # across, inside the board
+        dimension((xs[-1], ys[0]), (xs[-1], ys[-1]), -4, dl)                                   # along
+    W, H = bd["width"], bd["height"]
+    dimension((-W / 2, -H / 2), (W / 2, -H / 2), -8, dl)                                       # board width, below
+    dimension((W / 2, -H / 2), (W / 2, H / 2), -10, dl)                                        # board height, right
+    ks = spec.get("keepouts", [])
+    if len(ks) >= 4:
+        kx = sorted({k["x"] for k in ks}); ky = sorted({k["y"] for k in ks})
+        dimension((kx[0], ky[-1]), (kx[-1], ky[-1]), 7, dl)                                     # boss pattern across, above
+        dimension((kx[0], ky[0]), (kx[0], ky[-1]), 14, dl)                                      # boss pattern along, left
+    # 50 mm scale bar
+    sb = -H / 2 - 16
+    s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(dl); s.SetWidth(MM(0.6))
+    s.SetStart(P(-25, sb)); s.SetEnd(P(25, sb)); b.Add(s)
+    for xx in (-25, 25):
+        s = pcbnew.PCB_SHAPE(b); s.SetShape(pcbnew.SHAPE_T_SEGMENT); s.SetLayer(dl); s.SetWidth(MM(0.6))
+        s.SetStart(P(xx, sb - 2)); s.SetEnd(P(xx, sb + 2)); b.Add(s)
+    text("50.0 mm scale bar: measure this first", 0, sb - 3.5, dl, 1.2)
     y = -bd["height"] / 2 - 4
-    text(spec.get("name", "enclosure template"), 0, y, pcbnew.Cmts_User, 1.2)
+    text(spec.get("name", "enclosure template"), 0, y - 18, pcbnew.Cmts_User, 1.2)
     for i, n_ in enumerate(spec.get("notes", [])):
-        text(n_, 0, y - 2.2 * (i + 1), pcbnew.Cmts_User, 0.9)
+        text(n_, 0, y - 18 - 2.2 * (i + 1), pcbnew.Cmts_User, 0.9)
     ds = b.GetDesignSettings()
     ds.SetAuxOrigin(P(-bd["width"] / 2, -bd["height"] / 2))
     save_board(b, board_path)
@@ -265,12 +314,28 @@ def apply(board_path, spec):
           f"{len(spec.get('keepouts', []))} keep-outs, {len(spec.get('drawings', []))} reference drawings")
 
 
+def fit_check_pdf(board_path, out):
+    """1:1 A4 PDF of the template: the thick outline copy and dimensions (User.1), the reference drawings,
+    notes, standoff rings and the holes at actual size."""
+    import subprocess
+    from .kicad import KICAD_CLI
+    layers = "User.1,Dwgs.User,Cmts.User,B.CrtYd,Edge.Cuts"
+    r = subprocess.run([KICAD_CLI, "pcb", "export", "pdf", "--layers", layers, "--mode-single", "--drill-shape-opt", "2",
+                        "--scale", "1", "--include-border-title", "-o", str(out), str(board_path)], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit("fit-check export failed: " + r.stderr[-500:])
+    print("fit check:", out, "(print at 100 %, check the scale bar)")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("board")
     ap.add_argument("enclosure", help="JSON description (see the module docstring)")
+    ap.add_argument("--fit-check", metavar="PDF", help="also export a 1:1 PDF (thick outline, dimensions, scale bar) to print and cut")
     a = ap.parse_args(argv)
     apply(a.board, json.load(open(a.enclosure)))
+    if a.fit_check:
+        fit_check_pdf(a.board, a.fit_check)
 
 
 if __name__ == "__main__":

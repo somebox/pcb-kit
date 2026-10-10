@@ -16,7 +16,11 @@ Three parts:
 uv tool install -e ~/src/pcb-kit     # gives you `pcbkit`
 pcbkit info                          # confirms where KiCad is
 pcbkit setup-kikit                   # only for panels: pins KiKit into ~/.local/share/pcbkit
+pcbkit link-kicad                    # lets project scripts run under KiCad's Python `import pcbkit`
 ```
+
+`link-kicad` writes one `.pth` file into KiCad's user site-packages (`~/Library/Python/3.9/...`), so nothing goes
+into the app bundle and it survives KiCad upgrades; `pcbkit link-kicad --remove` undoes it.
 
 Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that need `pcbnew` re-execute themselves
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set

@@ -60,3 +60,27 @@ def data_path(*parts):
 def tools_dir():
     """Where pinned external tools (KiKit) are installed, shared by every project."""
     return os.environ.get("PCBKIT_TOOLS", os.path.expanduser("~/.local/share/pcbkit"))
+
+
+def user_site_pth():
+    """The .pth file that makes this checkout importable from KiCad's Python (its user site-packages)."""
+    r = subprocess.run([KICAD_PYTHON, "-c", "import site; print(site.getusersitepackages())"], capture_output=True, text=True, check=True)
+    return os.path.join(r.stdout.strip(), "pcbkit.pth")
+
+
+def link_kicad(remove=False):
+    """Write (or remove) a .pth in KiCad's user site-packages pointing at this checkout, so project scripts that run
+    under KiCad's Python can `import pcbkit`. Survives KiCad upgrades; nothing is written into the app bundle."""
+    pth = user_site_pth()
+    if remove:
+        if os.path.exists(pth):
+            os.remove(pth)
+        print("removed", pth)
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.makedirs(os.path.dirname(pth), exist_ok=True)
+    with open(pth, "w") as fh:
+        fh.write(root + "\n")
+    r = subprocess.run([KICAD_PYTHON, "-c", "import pcbkit, sys; print(pcbkit.__file__)"], capture_output=True, text=True)
+    print(f"{pth} -> {root}")
+    print("KiCad's Python imports pcbkit from", r.stdout.strip() or ("FAILED: " + r.stderr.strip()[-300:]))

@@ -314,12 +314,13 @@ def apply(board_path, spec):
           f"{len(spec.get('keepouts', []))} keep-outs, {len(spec.get('drawings', []))} reference drawings")
 
 
-def fit_check_pdf(board_path, out):
+def fit_check_pdf(board_path, out, parts=False):
     """1:1 A4 PDF of the template: the thick outline copy and dimensions (User.1), the reference drawings,
-    notes, standoff rings and the holes at actual size."""
+    notes, standoff rings and the holes at actual size. parts=True adds the placed parts' body outlines and
+    references (F.Fab, F.Silkscreen), for checking a placement against the enclosure."""
     import subprocess
     from .kicad import KICAD_CLI
-    layers = "User.1,Dwgs.User,Cmts.User,B.CrtYd,Edge.Cuts"
+    layers = "User.1,Dwgs.User,Cmts.User,B.CrtYd,Edge.Cuts" + (",F.Fab,F.Silkscreen" if parts else "")
     r = subprocess.run([KICAD_CLI, "pcb", "export", "pdf", "--layers", layers, "--mode-single", "--drill-shape-opt", "2",
                         "--scale", "1", "--black-and-white", "--include-border-title", "-o", str(out), str(board_path)], capture_output=True, text=True)
     if r.returncode:
@@ -332,10 +333,11 @@ def main(argv=None):
     ap.add_argument("board")
     ap.add_argument("enclosure", help="JSON description (see the module docstring)")
     ap.add_argument("--fit-check", metavar="PDF", help="also export a 1:1 PDF (thick outline, dimensions, scale bar) to print and cut")
+    ap.add_argument("--parts", action="store_true", help="with --fit-check: include the placed parts' outlines and references")
     a = ap.parse_args(argv)
     apply(a.board, json.load(open(a.enclosure)))
     if a.fit_check:
-        fit_check_pdf(a.board, a.fit_check)
+        fit_check_pdf(a.board, a.fit_check, parts=a.parts)
 
 
 if __name__ == "__main__":

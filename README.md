@@ -80,6 +80,14 @@ order, the cheap swaps, and any part whose stock is low enough to worry about.
 
 <img src="docs/images/bom-cost-drivers.png" width="560" alt="BOM.md excerpt: cost drivers table with LCSC codes, unit cost at 1 and 100 boards, and notes on Extended-part fees">
 
+### Reuse parts that worked
+
+[library/PARTS.md](library/PARTS.md) collects the ICs and drivers that have been on built boards, with the circuit
+notes that made them work and the ones that went wrong: level shifters that isolate an unpowered rail versus ones that
+back-power it, LED drivers that need only a resistor, the USB-PD sink whose 5 V contract couldn't carry a clock's LEDs.
+`pcbkit parts` lists the catalog with current stock and price from the parts cache and flags anything that has run low.
+Two of the proven parts show zero stock in the 2026-09-29 cache, which is the reason to check when a design starts.
+
 ### Order it
 
 `pcbkit previews` makes the schematic PDF, copper PNGs, a hand-assembly map, a 1:1 print and 3-D renders.
@@ -94,7 +102,7 @@ panels with rails, fiducials and tooling holes, and runs DRC on each.
 | [visual-review](skills/visual-review/SKILL.md) | which picture answers which question, and how to read it before drawing conclusions |
 | [enclosure-fit](skills/enclosure-fit/SKILL.md) | measuring a box, the outline JSON, the print-and-cut loop and what went wrong in it |
 | [power-sim](skills/power-sim/SKILL.md) | one ngspice script per design question; averaged models when vendor models stall |
-| [bom-cost](skills/bom-cost/SKILL.md) | bomi, stock checks, Extended-part fees, what goes into BOM.md |
+| [bom-cost](skills/bom-cost/SKILL.md) | the proven-parts catalog first, then bomi: stock checks, Extended-part fees, what goes into BOM.md |
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the project layout and writing style they all assume: dated status
 lines, numbered decisions, generated files that say what made them.
@@ -144,6 +152,7 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 | `pcbkit fab BOARD OUT` | JLC Gerber zip, BOM and CPL (front-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table |
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
+| `pcbkit parts [TEXT] [--low N]` | the proven-parts catalog (library/PARTS.md) with current stock and price; flags low stock |
 | `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--png]` | a region of one layer coloured by net, for reviewing power stages |
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
@@ -155,7 +164,7 @@ Library use from a project script:
 ```python
 from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect
 from pcbkit.konnect import Konnect           # the MCP client itself
-from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers
+from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box
 from pcbkit.checks.netlist import Netlist    # netlist topology assertions
 from pcbkit.spice import run                 # ngspice deck -> measurements, wrdata files, aborted flag
@@ -168,7 +177,7 @@ pcbkit/            the package (checks/, release/, schematic.py, konnect.py, par
 pcbkit/data/       jlc/corrections.csv (rotations), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo
-library/           shared symbols, footprints and design-pattern blocks (empty until the first ones are harvested)
+library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
 docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), images/
 ```
 
@@ -185,5 +194,5 @@ docs/              CONVENTIONS.md (how a project is laid out and documented), HA
 Harvested on 2026-10-10 from the rp2354-messages-sign, siebenuhr controller-v2, rgb-spotlight and dodeca-v2-hardware
 repos; see [docs/HARVEST.md](docs/HARVEST.md) for where each piece came from and what is still in the projects.
 siebenuhr, the message sign and the spotlight use the kit; dodeca still runs its own tools until v1.3 is ordered.
-Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), and `pcbkit spice` (2026-10-11,
-from the dodeca v1.3 simulations).
+Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), `pcbkit spice` (2026-10-11,
+from the dodeca v1.3 simulations) and the proven-parts catalog (2026-10-11).

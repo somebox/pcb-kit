@@ -22,6 +22,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | `pcbkit/data/templates/blank.kicad_pcb` | `scripts/blank.kicad_pcb` (same) | |
 | `pcbkit/import_easyeda.py` | dodeca `hardware/panels/tools/easyeda_to_kicad.py` | generalised: symbols from any EasyEDA part (one per name + pin geometry, rotations baked in), power symbols named after the flag, PWR_FLAGs, loose pads become board-only, `--pin` for symbol typos, `--force` to write despite connectivity differences, library paths as flags. First used on the ESP32 HA protoboard (2026-10-10) |
 | `pcbkit/sexp.py` | dodeca `tools/sexp.py` | small s-expression helpers used by the dodeca generators; kept for the next harvest |
+| `library/PARTS.md`, `pcbkit parts` | design notes and BOMs of the candle (ESP32Candle, espcandle-demo), rgb-spotlight, siebenuhr controller-v2, esphome-dimmer-switch, esp32-ha-protoboard, motion-sound, dodeca v1.2/v1.3 parts research | the user's list of parts that worked (2026-10-11), each checked against the project that used it and the parts cache; notes cite the project |
 | `pcbkit/spice.py` | dodeca `hardware/control-board/v1.3/sim/spice.py` | same idea (scratch directory, `-D ngbehavior=psa`, @SIM@/@VENDOR@ placeholders, measurements and wrdata files); adds an `aborted` flag from ngspice's own messages, an optional gear-integration retry and the `pcbkit spice` CLI. The decks and averaged models stay in dodeca |
 
 ## Migration status

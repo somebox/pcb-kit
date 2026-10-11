@@ -3,7 +3,15 @@
 All JLC Basic or Preferred (no extended-part fee) unless noted. Harvested from the projects' builder.py tables;
 check stock with `pcbkit jlc --lcsc C25744 ...` or bomi before an order. Add a part here only once it has been
 ordered and worked.
+
+The catalog of proven ICs, drivers and connectors is library/PARTS.md (written for people, with the notes);
+`pcbkit parts [TEXT]` lists its parts with the current stock from the JLC parts cache.
 """
+import os
+import re
+import sys
+
+CATALOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "library", "PARTS.md")
 FP = {
     "R0402": "Resistor_SMD:R_0402_1005Metric",
     "R0603": "Resistor_SMD:R_0603_1608Metric",
@@ -38,3 +46,50 @@ def capacitor(value, pkg=None):
     if pkg == "0603" and fpkey != "C0603":
         lcsc, fpkey = CAP0603[value], "C0603"
     return FP[fpkey], lcsc
+
+
+def catalog(path=CATALOG):
+    """Parts from the tables in library/PARTS.md: dicts with section, part, lcsc, package, use."""
+    rows, section = [], ""
+    with open(path) as f:
+        for line in f:
+            if line.startswith("## "):
+                section = line[3:].strip()
+            cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.startswith("|") else []
+            if len(cells) >= 5 and re.fullmatch(r"C\d{3,9}", cells[1]):
+                rows.append(dict(section=section, part=cells[0], lcsc=cells[1], package=cells[2], use=cells[4]))
+    return rows
+
+
+def main(argv=None):
+    """pcbkit parts [TEXT] [--low N]: the catalog with current stock; TEXT filters by part or use."""
+    import argparse
+    import sqlite3
+    from .jlc import DB
+    ap = argparse.ArgumentParser(prog="pcbkit parts", description=main.__doc__)
+    ap.add_argument("text", nargs="?", help="filter on part number or use (case-insensitive)")
+    ap.add_argument("--low", type=int, default=5000, help="flag stock below this (default 5000)")
+    a = ap.parse_args(argv)
+    rows = [r for r in catalog() if not a.text or a.text.lower() in (r["part"] + " " + r["use"]).lower()]
+    live = {}
+    if os.path.exists(DB):
+        db = sqlite3.connect(DB)
+        q = "select LCSC, Stock, Library_Type, Price from components where LCSC in (%s)" % ",".join("?" * len(rows))
+        live = {r[0]: r[1:] for r in db.execute(q, [r["lcsc"] for r in rows])} if rows else {}
+        import time
+        print("stock from %s (cache of %s)" % (DB, time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(DB)))))
+    else:
+        print("no parts cache at %s; showing the catalog only" % DB)
+    section = None
+    for r in rows:
+        if r["section"] != section:
+            section = r["section"]
+            print("\n" + section)
+        stock, kind, price = live.get(r["lcsc"], (None, "", None))
+        flag = "  LOW" if stock is not None and stock < a.low else ("  not in cache" if live and stock is None else "")
+        print("  %-20s %-10s %-12s %8s %-9s %-7s %s%s" % (r["part"], r["lcsc"], r["package"],
+              "-" if stock is None else stock, kind, "" if price is None else "$%.3f" % price, r["use"], flag))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

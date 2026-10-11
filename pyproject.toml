@@ -1,6 +1,6 @@
 [project]
 name = "pcbkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared KiCad workflow tooling for somebox hardware projects: checks, release files, schematic building, agent skills"
 license = { text = "MIT" }
 authors = [{ name = "Jeremy Seitz", email = "7750+somebox@users.noreply.github.com" }]

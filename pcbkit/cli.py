@@ -2,7 +2,7 @@
 
 Checks:    drc, erc, nets, check, cleanup
 Release:   previews, print, fab, panel, setup-kikit
-Look-ups:  jlc, netview, info, link
+Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice
 Projects:  new, import-easyeda, outline
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
@@ -23,6 +23,7 @@ COMMANDS = {
     "panel": ("pcbkit.release.panel", "KiKit assembly panels, vcut and mousebite styles"),
     "setup-kikit": ("pcbkit.release.panel", "install the pinned KiKit into KiCad's Python (--target)"),
     "jlc": ("pcbkit.jlc", "search konnect's JLCPCB parts cache"),
+    "parts": ("pcbkit.parts", "the proven-parts catalog (library/PARTS.md) with current stock"),
     "link": ("pcbkit.kicad", "make this checkout importable from KiCad's Python and python3 (--remove to undo)"),
     "netview": ("pcbkit.netview", "SVG of a board region coloured by net (needs pcbnew)"),
     "spice": ("pcbkit.spice", "run an ngspice deck (PSpice-compatible), print its measurements, flag aborted runs"),

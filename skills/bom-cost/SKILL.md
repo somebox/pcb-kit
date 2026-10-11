@@ -8,6 +8,13 @@ description: Keep a board's BOM, stock and cost honest with bomi and the JLC par
 Two tools: `pcbkit jlc` for quick look-ups in konnect's JLCPCB cache (no network), and **bomi** for the project BOM
 (a `.bomi/` project per board folder, synced from the KiCad schematic, refreshed from the JLC/LCSC API).
 
+## Start from what worked
+
+`library/PARTS.md` in the kit lists the parts that have been on built boards, with their circuit notes and the
+lessons from them. Check it before searching, and run `pcbkit parts` for their current stock. When a new part has
+been built and works, add it there with the project and what to watch for; parts in a design that isn't built yet go
+in its second section.
+
 ## Commands
 
 ```bash

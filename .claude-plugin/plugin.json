@@ -1,6 +1,6 @@
 {
   "name": "pcb-kit",
   "description": "Shared KiCad workflow tooling and skills for the somebox hardware projects",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Jeremy Seitz" }
 }

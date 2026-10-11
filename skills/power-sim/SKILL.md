@@ -32,6 +32,16 @@ measurements, ngspice's output, the `wrdata` files and an `aborted` flag. Keep v
 5. Write the result into the design note with the plot link, and add the simulated deviation to the tolerance
    analysis for worst cases. Say what the model leaves out (switching ripple, temperature).
 
+## Parts with no model
+
+A controller with a simple control law can be written from its datasheet. Example: rgb-spotlight `sim/channel.py`, a PT4115 hysteretic LED buck.
+- **Switch:** use ngspice's `SW` element. Its `VT`/`VH` give the comparator hysteresis (e.g. on below 85 mV, off above 115 mV across Rs).
+- **Control:** drive it from a B-source of the sense voltage, gated by the enable/DIM pin with `u()`.
+- **Delay:** add an RC on the control node for the comparator delay; state it as an assumption.
+- **Around it:** the board's real L with DCR, a fitted diode model (`IS`, `N`, `RS` from two datasheet VF points), the caps at their DC-bias capacitance, and the supply cable.
+- **Loads:** an LED is an ideal diode + knee voltage + series R, at the datasheet VF.
+- **Checks:** in-loop powers (`let p = v(a,b)*i(vsense)`, then `meas avg`) should add up to the input power. If they don't, the model is wrong.
+
 ## What has gone wrong before
 
 - Switch-level TI models (TPS61178, TPS2121) stall within nanoseconds ("timestep too small"). Averaged models fix it.

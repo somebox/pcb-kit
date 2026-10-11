@@ -66,9 +66,9 @@ DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power
 `pcbkit spice` runs an ngspice deck with PSpice compatibility on, which vendor models need, and returns its
 measurements. It reports a run as aborted when ngspice gives up, because a failed run still prints zeros. The
 dodeca control board used this to size a boost converter's load-step margin and to find a supply-mux case where a
-firmware test would have given the wrong answer, which changed the part. The plot below is from a related
-controller: an averaged buck-boost model, LED rail voltage and inductor current through load steps, an overload
-and start-up.
+firmware test would have given the wrong answer, which changed the part. siebenuhr's controller
+followed the same approach for its LED converter. The plot below shows its averaged TPS55288 buck-boost model, with
+LED rail voltage and inductor current through load steps, an overload and start-up.
 
 <img src="docs/images/sim-load-steps.png" width="720" alt="Six panels of simulated LED rail voltage and inductor current for load steps, overload and start-up">
 

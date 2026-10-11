@@ -24,6 +24,10 @@ the interpreter.
 | Fit a board to an enclosure | measure the box (calipers, or a photo against a ruler), write `boards/<b>/enclosure.json`, then `pcbkit outline boards/<b>/<b>.kicad_pcb boards/<b>/enclosure.json`; record the numbers and their accuracy in LAYOUT.md |
 | Bring an EasyEDA design into KiCad | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project>`; archive the JSON under `archive/vN-easyeda/`, record findings in DESIGN.md, then `bomi init` + `bomi import kicad` in the board folder |
 | Find a part quickly | `pcbkit jlc --desc "%...%" --package "0402%" --basic`; for a researched BOM use bomi |
+| Does a rail survive a load step, does reset trip? | `pcbkit spice deck.cir --gear-retry`; see the power-sim skill |
+
+Related skills in this kit: **visual-review** (which picture answers which question), **power-sim** (ngspice),
+**bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test).
 
 ## Rules
 

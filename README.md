@@ -14,6 +14,14 @@ Three parts:
 - **`skills/`**, agent skills in SKILL.md form, used by Claude Code and pi.
 - **`templates/`** and **`library/`**: the project skeleton, conventions and trusted parts.
 
+## Using it from an agent
+
+- **Claude Code:** `claude --plugin-dir /path-to/pcb-kit` or add this folder to a local marketplace; the skills in `skills/`
+  are then invocable. A project can also symlink `skills/pcb-kit` into its own `.claude/skills/`.
+- **pi:** `pi install /path-to/pcb-kit` (the `package.json` here declares the skills), or `pi --skill /path-to/pcb-kit/skills/pcb-kit`.
+- **KiCad:** nothing to install; the commands drive `kicad-cli` and KiCad's Python, and konnect (the KiCad MCP server) is
+  used from both agents and `pcbkit.schematic`.
+
 ## What it does
 
 ### Start or import a project
@@ -180,14 +188,6 @@ templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for 
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
 docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), images/
 ```
-
-## Using it from an agent
-
-- **Claude Code:** `claude --plugin-dir ~/src/pcb-kit` or add this folder to a local marketplace; the skills in `skills/`
-  are then invocable. A project can also symlink `skills/pcb-kit` into its own `.claude/skills/`.
-- **pi:** `pi install /Users/foz/src/pcb-kit` (the `package.json` here declares the skills), or `pi --skill ~/src/pcb-kit/skills/pcb-kit`.
-- **KiCad:** nothing to install; the commands drive `kicad-cli` and KiCad's Python, and konnect (the KiCad MCP server) is
-  used from both agents and `pcbkit.schematic`.
 
 ## Status
 

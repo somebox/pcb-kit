@@ -166,6 +166,7 @@ from pcbkit import schematic as sch          # schematic sheets from Python data
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box
+from pcbkit.route import complete_nets      # maze router, plane vias, neck-down, track-end audit (KiCad's Python)
 from pcbkit.checks.netlist import Netlist    # netlist topology assertions
 from pcbkit.spice import run                 # ngspice deck -> measurements, wrdata files, aborted flag
 ```
@@ -173,7 +174,7 @@ from pcbkit.spice import run                 # ngspice deck -> measurements, wrd
 ## Repository layout
 
 ```
-pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
+pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, route.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
 pcbkit/data/       jlc/corrections.csv (rotations), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo

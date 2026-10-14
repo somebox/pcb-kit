@@ -1,13 +1,17 @@
 """Tidy the track work left by an autorouter import or a grid router.
 
-  pcbkit cleanup BOARD.kicad_pcb [--dry-run]
+  pcbkit cleanup BOARD.kicad_pcb [--dry-run] [--dangling]
 
 Unlocked track segments only (scripted power necks are locked and untouched):
   * zero-length segments are removed;
   * exact duplicates (same layer, net, width and end points) are reduced to one;
   * a segment lying entirely within a collinear same-net, same-layer segment of the same or larger width is removed;
   * two collinear segments of the same net, layer and width that meet end to end and continue in the same
-    direction are merged into one.
+    direction are merged into one;
+  * with --dangling, router leftovers go too: a segment with an end that touches nothing of its net on its layer
+    (no pad, via, other track, or pour outline), whose other neighbours all meet at its other end, so removing it
+    never splits a net; such leaves are peeled until none is left, so a dead-end chain goes whole. Net-less copper
+    stays.
 Nothing changes the copper that connects: every merged or removed piece is covered by what stays. Refill and run
 DRC and `pcbkit check` afterwards, as for any board edit. Note that a zero-length segment can be the only thing
 bridging a near-miss joint; DRC then reports a dangling track, which is the real defect.
@@ -105,6 +109,67 @@ def plan(segs):
     return gone, [s for s in segs if s.changed and s.uuid not in gone]
 
 
+def dangling(board, pcbnew):
+    """uuid -> "dangling" for unlocked segments that are leaves: one end touches no other copper of the net on the
+    segment's layer (pad, via, track, or a pour's outline, filled or not), and everything else of the net that
+    touches the segment also holds its other end, so those pieces stay joined there without it. Removing such a
+    segment cannot split a net; they are taken one at a time, so a dead-end chain goes whole."""
+    by = collections.defaultdict(list)                 # (net, layer) -> [(kind, item, box)]
+
+    def box(o):
+        bb = o.GetBoundingBox()
+        return (bb.GetLeft(), bb.GetTop(), bb.GetRight(), bb.GetBottom())
+    layers = list(board.GetEnabledLayers().CuStack())
+    tracks = [t for t in board.GetTracks() if t.GetNetCode() > 0]
+    for t in tracks:
+        if t.Type() == pcbnew.PCB_VIA_T:
+            for L in layers:
+                by[(t.GetNetCode(), L)].append(("via", t, box(t)))
+        else:
+            by[(t.GetNetCode(), t.GetLayer())].append(("track", t, box(t)))
+    for f in board.GetFootprints():
+        for q in f.Pads():
+            for L in layers:
+                if q.GetNetCode() > 0 and q.IsOnLayer(L):
+                    by[(q.GetNetCode(), L)].append(("pad", q, box(q)))
+    for z in board.Zones():
+        if not z.GetIsRuleArea() and z.GetNetCode() > 0:
+            for L in z.GetLayerSet().CuStack():
+                by[(z.GetNetCode(), L)].append(("zone", z, box(z)))
+    shapes = {}
+
+    def shape(kind, o, L):
+        k = (id(o), L)
+        if k not in shapes:
+            shapes[k] = o.Outline() if kind == "zone" else o.GetEffectiveShape() if kind == "track" else o.GetEffectiveShape(L)
+        return shapes[k]
+
+    def holds(kind, o, L, pt):
+        return o.Outline().Contains(pt) if kind == "zone" else shape(kind, o, L).Collide(pt, 0)
+
+    gone, cut = {}, True
+    candidates = [t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()]
+    while cut:
+        cut = False
+        for t in candidates:
+            u = t.m_Uuid.AsString()
+            if u in gone:
+                continue
+            L, tb, ts = t.GetLayer(), box(t), shape("track", t, t.GetLayer())
+            touching = [(k, o) for k, o, ob in by[(t.GetNetCode(), L)]
+                        if o is not t and not (k == "track" and o.m_Uuid.AsString() in gone)
+                        and ob[0] <= tb[2] and tb[0] <= ob[2] and ob[1] <= tb[3] and tb[1] <= ob[3]
+                        and (o.Outline().Collide(ts, 0) if k == "zone" else shape(k, o, L).Collide(ts, 0))]
+            ends = (t.GetStart(), t.GetEnd())
+            for i in (0, 1):
+                if not any(holds(k, o, L, ends[i]) for k, o in touching) and \
+                        all(holds(k, o, L, ends[1 - i]) for k, o in touching):
+                    gone[u] = "dangling"
+                    cut = True
+                    break
+    return gone
+
+
 def mm(v):
     return f"{v / 1e6:.6f}".rstrip("0").rstrip(".")
 
@@ -139,13 +204,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("board")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dangling", action="store_true", help="also remove segments with a free end (router leftovers)")
     a = ap.parse_args(argv)
     ensure_pcbnew()
     import pcbnew
     path = Path(a.board)
     board = pcbnew.LoadBoard(str(path))
-    segs = [Seg(t) for t in board.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()]
+    loose = dangling(board, pcbnew) if a.dangling else {}
+    segs = [Seg(t) for t in board.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()
+            and t.m_Uuid.AsString() not in loose]
     gone, merged = plan(segs)
+    gone.update(loose)
     print(f"{'would change' if a.dry_run else 'changed'}:", dict(collections.Counter(gone.values())) or "nothing")
     if a.dry_run or not gone:
         return

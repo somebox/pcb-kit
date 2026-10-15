@@ -12,7 +12,7 @@ Parameters (dict P): CLEARANCE, EDGE_CLR, VIA (diameter, drill), VIA_PAD_CLR, QU
 centres), HWEIGHT (greedier A*), LAYER_COST ({layer id: cost}, e.g. make B.Cu dear to keep a GND pour whole),
 IN1_COST (old name for the In1 cost). `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
-and via edges stay out (keepout_hit tests a disc against them, e.g. for hand-placed vias).
+and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).
 
 Harvested 2026-10-12 from scripts/route_strip.py of rp2354-messages-sign and rgb-spotlight (identical apart from
 spotlight's round outlines) and the plane-via, neck-down and audit steps of the sign's scripts/route_controller.py;
@@ -24,11 +24,10 @@ import os as _os
 import re as _re
 import time as _time
 
-import pcbnew
-
 
 def writer(b, via_size=(0.6, 0.3)):
     """track(a, z, width, layer, net) and via(xy, net, size=None) that add copper to board b (mm, board frame)."""
+    import pcbnew
     mm = pcbnew.FromMM
 
     def track(a, z, w, layer, net):
@@ -74,14 +73,29 @@ def _shape_dist(p, shape):
     return _rect_dist(p, shape)
 
 
-def keepout_hit(keepouts, c, r, layers, net=None):
-    """True if a disc (centre c, radius r) touches a keep-out [(shape, allowed net or None, layer)] on any of
-    `layers` ("all" for every layer)."""
+def _poly_seg_dist(a, z, poly):
+    """Distance from segment az to a polygon's edges (0 if it crosses one)."""
+    return min(_seg_seg(a, z, e0, e1) for e0, e1 in zip(poly, poly[1:] + poly[:1]))
+
+
+def _seg_shape_dist(a, z, shape):
+    """Distance from segment az to a keep-out shape: 0 if it touches or enters it."""
+    if isinstance(shape, list):
+        return 0.0 if _in_poly(a, shape) or _in_poly(z, shape) else _poly_seg_dist(a, z, shape)
+    return _seg_rect(a, z, shape)
+
+
+def keepout_hit(keepouts, c, r, layers, net=None, end=None):
+    """True if a disc (centre c, radius r), or with `end` the capsule from c to end, touches a keep-out
+    [(shape, allowed net or None, layer)] on any of `layers` ("all" for every layer)."""
+    z = c if end is None else end
     for shape, allowed, L in keepouts:
         if (net is not None and allowed == net) or (layers != "all" and L not in layers):
             continue
         x0, y0, x1, y1 = _shape_bbox(shape)
-        if x0 - r <= c[0] <= x1 + r and y0 - r <= c[1] <= y1 + r and _shape_dist(c, shape) < r:
+        if min(c[0], z[0]) > x1 + r or max(c[0], z[0]) < x0 - r or min(c[1], z[1]) > y1 + r or max(c[1], z[1]) < y0 - r:
+            continue
+        if (_shape_dist(c, shape) if end is None else _seg_shape_dist(c, end, shape)) < r:
             return True
     return False
 
@@ -148,6 +162,7 @@ class Copper:
     B = 1.0
 
     def __init__(self, b, hole_pitch=0.55):
+        import pcbnew
         mm = pcbnew.ToMM
         self.hole_pitch = hole_pitch                         # drill 0.25 + hole-to-hole 0.25, plus margin
         self.via_pad_clr = 0.15
@@ -236,6 +251,7 @@ class Copper:
 def stitch_gnd(b, fps, p, area, track, via, skip=lambda ref: False):
     """Give every GND pad (outside `skip`) a via to the GND plane or pour: try spots around the pad, outward
     from its footprint first, and keep the first one clear of other-net copper on every layer and inside `area`."""
+    import pcbnew
     mm = pcbnew.ToMM
     cu = Copper(b)
     cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
@@ -289,6 +305,7 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
     """A via for every escape pin: the nearest grid spot within `radius` whose via is clear of other-net copper
     on all layers and whose straight F.Cu stub from the pad is clear. The most constrained pin goes first;
     after each placement only the neighbours' candidate lists are re-checked. Returns (placed, failed)."""
+    import pcbnew
     mm = pcbnew.ToMM
     cu = Copper(b)
     cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
@@ -334,10 +351,16 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
 _VERBOSE, _T0 = bool(_os.environ.get("ROUTE_VERBOSE")), _time.time()
 
 
+def _reach(clr, *radii):
+    """Grid reach for a clearance and the widest half-track or via radius routed on it: copper farther from a cell
+    than this is not recorded, so it must cover the largest clearance + radius that blocked() is asked about."""
+    return max(0.8, clr + max(radii) + 0.05)
+
+
 class Grid:
-    """0.1 mm routing grid over `area` for one copper layer. Each cell keeps (net, distance) for nearby copper,
-    so one raster serves every track width: a cell is blocked for (net, half-width) if other-net copper is closer
-    than clearance + half-width."""
+    """0.1 mm routing grid over `area` for one copper layer. Each cell keeps (net, distance) for copper within
+    `reach`, so one raster serves every track width up to it (see _reach): a cell is blocked for (net, half-width)
+    if other-net copper is closer than clearance + half-width."""
     def __init__(self, cu, layer, area, g=0.1, reach=0.8, outline=None, edge_clr=0.3):
         self.layer, self.area, self.g, self.reach = layer, area, g, reach
         self.outline, self.edge_clr = outline, edge_clr
@@ -423,6 +446,8 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
     i0, j0, i1, j1 = corridor or (0, 0, G0.nx - 1, G0.ny - 1)
     openq, best, parent = [], {}, {}
     for s_ in sources:
+        if grids[s_[1]].blocked(s_[0], net, need, hw):       # the track starts here too: its first cap must clear
+            continue
         best[(s_, -1)] = 0.0
         heapq.heappush(openq, (h(s_[0]), 0.0, s_, -1))
     n = 0
@@ -469,6 +494,7 @@ def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p):
     """p["QUICK"]: give up early (corridors of 4 and 12 mm, 250k expansions each, no whole-board search), so a hard
     connection fails in seconds and is left for hand routing. p["HWEIGHT"] > 1 makes the A* greedier (weighted
     heuristic): far fewer expansions, paths slightly longer than optimal."""
+    import pcbnew
     allc = [s_[0] for s_ in src] + [t[0] for t in tgt]
     quick = p.get("QUICK", False)
     for m in ((40, 120) if quick else (40, 120, None)):  # corridor margin in cells, widening on failure
@@ -496,6 +522,7 @@ def _simplify(path):
 
 def net_components(b, net_name, exclude):
     """Connected groups of a net's copper (pads, vias, tracks); zones ignored. Returns list of item lists."""
+    import pcbnew
     mm = pcbnew.ToMM
     items = []
     for fp in b.GetFootprints():
@@ -513,7 +540,12 @@ def net_components(b, net_name, exclude):
             items.append(({t.GetLayer()}, "seg", ((mm(t.GetStart().x), mm(t.GetStart().y)),
                                                   (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth()) / 2)))
     par = list(range(len(items)))
-    find = lambda k: k if par[k] == k else find(par[k])
+
+    def find(k):                                         # iterative: a net's chain of tracks can be thousands long
+        while par[k] != k:
+            par[k] = par[par[k]]
+            k = par[k]
+        return k
 
     def dist(a, z):
         (la, ka, ga), (lz, kz, gz) = a, z
@@ -550,10 +582,11 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
     clr = p["CLEARANCE"]
     grids = {}
+    reach = _reach(clr, p["VIA"][0] / 2, *(w / 2 for _, _, w in plan))
 
     def grid(layer):
         if layer not in grids:
-            grids[layer] = Grid(cu, layer, area, outline=outline, edge_clr=p["EDGE_CLR"])
+            grids[layer] = Grid(cu, layer, area, reach=reach, outline=outline, edge_clr=p["EDGE_CLR"])
             for shape, allowed, lyr in keepouts:
                 if lyr == layer:
                     grids[layer].add_keepout(shape, allowed)
@@ -691,11 +724,13 @@ def _cells(G, it, axial=False):
 def tie_pads(b, p, area, pads, net, layers, width, track, via_fn, outline=None):
     """Route each (ref, pad) of `net` to the nearest existing via of that net (e.g. GND pads the stitcher could not
     serve): one A* per pad, from the pad to any via of the net. Returns (tied, failed)."""
+    import pcbnew
     mm = pcbnew.ToMM
     cu = Copper(b)
     cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
     clr, vr = p["CLEARANCE"], p["VIA"][0] / 2
-    Gs = {L: Grid(cu, L, area, outline=outline, edge_clr=p["EDGE_CLR"]) for L in layers}
+    reach = _reach(clr, width / 2)
+    Gs = {L: Grid(cu, L, area, reach=reach, outline=outline, edge_clr=p["EDGE_CLR"]) for L in layers}
     G0 = Gs[layers[0]]
     netobj = b.FindNet(net)
     vias = [(("all", "disc", ((mm(t.GetPosition().x), mm(t.GetPosition().y)), mm(t.GetWidth(pcbnew.F_Cu)) / 2)))
@@ -731,6 +766,7 @@ def plane_vias(b, p, area, net_name, size, track, via, per_pad=lambda q: 1, radi
     within `radius`, joined by a straight stub as wide as the pad's narrow side (0.5 mm at most).
     skip: (ref, pad) pairs to leave out. keepouts/outline as for complete_nets (a polygon outline is honoured with
     EDGE_CLR). Returns (placed, [ref.pad without a via])."""
+    import pcbnew
     T = pcbnew.ToMM
     layer = pcbnew.F_Cu if layer is None else layer
     cu = Copper(b)
@@ -750,10 +786,11 @@ def plane_vias(b, p, area, net_name, size, track, via, per_pad=lambda q: 1, radi
         for d, c in cands:
             if not (area[0] + 0.6 <= c[0] <= area[2] - 0.6 and area[1] + 0.6 <= c[1] <= area[3] - 0.6):
                 continue
-            if isinstance(outline, list) and (not _in_poly(c, outline) or _poly_edge_dist(c, outline) < vr + p["EDGE_CLR"]):
-                continue
-            stub = [((c0[0] * (8 - t) + c[0] * t) / 8, (c0[1] * (8 - t) + c[1] * t) / 8) for t in range(1, 9)]
-            if keepout_hit(keepouts, c, vr + 0.02, "all") or any(keepout_hit(keepouts, q, sw / 2 + 0.02, {layer}) for q in stub):
+            if isinstance(outline, list) and (not _in_poly(c, outline) or _poly_edge_dist(c, outline) < vr + p["EDGE_CLR"]
+                                              or _poly_seg_dist(c0, c, outline) < sw / 2 + p["EDGE_CLR"]):
+                continue                                 # the stub too: it can cut across a notch
+            if keepout_hit(keepouts, c, vr + 0.02, "all", net_name) or \
+                    keepout_hit(keepouts, c0, sw / 2 + 0.02, {layer}, net_name, end=c):
                 continue
             if cu.clear(("disc", (c, vr)), "all", net_name, clr) and cu.clear(("seg", (c0, c, sw / 2)), {layer}, net_name, clr):
                 via(c, netobj, size); track(c0, c, sw, layer, netobj)
@@ -769,13 +806,15 @@ def plane_vias(b, p, area, net_name, size, track, via, per_pad=lambda q: 1, radi
 
 def neckdown(b, fine_refs=(), min_w=0.2, clr=0.2):
     """Tracks touching a pad of a fine-pitch footprint (fine_refs) become min_w; any other track closer than clr to
-    another net's pad is narrowed in 0.1 mm steps until it clears (down to min_w). Returns the number of changes."""
+    another net's pad is narrowed in 0.1 mm steps until it clears (down to min_w). Locked tracks keep their width.
+    Returns the number of changes."""
+    import pcbnew
     mm = pcbnew.FromMM
     fine = [q for f in b.GetFootprints() if f.GetReference() in fine_refs for q in f.Pads()]
     allpads = [q for f in b.GetFootprints() for q in f.Pads()]
     fixed = 0
     for t in b.GetTracks():
-        if t.Type() == pcbnew.PCB_VIA_T or t.GetWidth() <= mm(min_w):
+        if t.Type() == pcbnew.PCB_VIA_T or t.IsLocked() or t.GetWidth() <= mm(min_w):
             continue
         if any(q.GetNetname() == t.GetNetname() and (q.HitTest(t.GetStart()) or q.HitTest(t.GetEnd())) for q in fine):
             t.SetWidth(mm(min_w)); fixed += 1
@@ -791,6 +830,7 @@ def neckdown(b, fine_refs=(), min_w=0.2, clr=0.2):
 def audit_track_ends(b):
     """Classify every track end: pad centre, via, track joint, T-junction; or inside a pad but off its centre, or
     dangling. Returns (counts, [off-centre], [dangling]) with net and position (board mm) for the last two."""
+    import pcbnew
     T = pcbnew.ToMM
     key = lambda x, y: (round(x / 2000), round(y / 2000))   # 2 um buckets: pads and tracks round mm -> nm differently
     cu = list(b.GetEnabledLayers().CuStack())

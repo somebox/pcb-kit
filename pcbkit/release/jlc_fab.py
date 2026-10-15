@@ -9,7 +9,9 @@ Writes into OUT_DIR:
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
 
 A part goes into the BOM and CPL if it has an LCSC number and is neither DNP nor excluded from BOM / position files.
-That leaves out KiKit's fiducials and tooling holes.
+That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for every
+BOM line. A hand-soldered part with an LCSC number, marked "Exclude from position files" on the board, stays in KiCad's
+BOM but leaves both files; the summary counts it as left out for hand assembly.
 - BOM rows are grouped by value, footprint and LCSC number. A group whose designator list would exceed JLC's
   2048-character cell limit (a panel's LEDs) is split over several rows of the same part.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
@@ -106,10 +108,11 @@ def fab(src, out):
     parts = [fp for fp in sorted(b.GetFootprints(), key=lambda f: f.GetReference()) if field(fp, "LCSC") and not fp.IsDNP()]
     for variant, sides in (("front", {"top"}), ("both", {"top", "bottom"})):
         sel = [fp for fp in parts if ("bottom" if fp.IsFlipped() else "top") in sides]
+        # one list for both files, so every BOM line has a CPL placement; hand-soldered parts leave both
+        placed = [fp for fp in sel if not fp.IsExcludedFromBOM() and not fp.IsExcludedFromPosFiles()]
         groups = {}
-        for fp in sel:
-            if not fp.IsExcludedFromBOM():
-                groups.setdefault((fp.GetValue(), str(fp.GetFPID().GetLibItemName()), field(fp, "LCSC")), []).append(fp.GetReference())
+        for fp in placed:
+            groups.setdefault((fp.GetValue(), str(fp.GetFPID().GetLibItemName()), field(fp, "LCSC")), []).append(fp.GetReference())
         with open(os.path.join(out, f"BOM-{name}-{variant}.csv"), "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             # JLC's own column name: with "LCSC" its BOM tool ignored the numbers and matched by value ("Select by System")
@@ -125,13 +128,13 @@ def fab(src, out):
         with open(os.path.join(out, f"CPL-{name}-{variant}.csv"), "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
             w.writerow(["Designator", "Val", "Package", "Mid X", "Mid Y", "Rotation", "Layer"])
-            for fp in sel:
-                if fp.IsExcludedFromPosFiles():
-                    continue
+            for fp in placed:
                 x, y, rot, layer = placement(fp)
                 w.writerow([fp.GetReference(), fp.GetValue(), str(fp.GetFPID().GetLibItemName()),
                             f"{x:.4f}", f"{y:.4f}", f"{rot:g}", layer])
-        print(f"{variant:5s}: {len(sel)} placements, {len(groups)} BOM lines ({len({g[2] for g in groups})} distinct LCSC parts)")
+        hand = len(sel) - len(placed)
+        print(f"{variant:5s}: {len(placed)} placements, {len(groups)} BOM lines ({len({g[2] for g in groups})} distinct LCSC "
+              f"parts)" + (f", {hand} left out for hand assembly" if hand else ""))
     print(f"{gz}: {n_files} files")
 
 

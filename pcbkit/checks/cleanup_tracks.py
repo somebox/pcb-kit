@@ -9,9 +9,9 @@ Unlocked track segments only (scripted power necks are locked and untouched):
   * two collinear segments of the same net, layer and width that meet end to end and continue in the same
     direction are merged into one;
   * with --dangling, router leftovers go too: a segment with an end that touches nothing of its net on its layer
-    (no pad, via, other track, or pour outline), whose other neighbours all meet at its other end, so removing it
-    never splits a net; such leaves are peeled until none is left, so a dead-end chain goes whole. Net-less copper
-    stays.
+    (no pad, via, other track, or island of a pour, refilled in memory), whose other neighbours all meet at its
+    other end, so removing it never splits a net; such leaves are peeled until none is left, so a dead-end chain
+    goes whole. Net-less copper stays.
 Nothing changes the copper that connects: every merged or removed piece is covered by what stays. Refill and run
 DRC and `pcbkit check` afterwards, as for any board edit. Note that a zero-length segment can be the only thing
 bridging a near-miss joint; DRC then reports a dangling track, which is the real defect.
@@ -111,9 +111,11 @@ def plan(segs):
 
 def dangling(board, pcbnew):
     """uuid -> "dangling" for unlocked segments that are leaves: one end touches no other copper of the net on the
-    segment's layer (pad, via, track, or a pour's outline, filled or not), and everything else of the net that
-    touches the segment also holds its other end, so those pieces stay joined there without it. Removing such a
-    segment cannot split a net; they are taken one at a time, so a dead-end chain goes whole."""
+    segment's layer (pad, via, track, or an island of a pour), and everything else of the net that touches the
+    segment also holds its other end, so those pieces stay joined there without it. Removing such a segment cannot
+    split a net; they are taken one at a time, so a dead-end chain goes whole. The pours are refilled in memory
+    first (the file keeps its own fill) and each island counts on its own, since a segment can be what joins two;
+    a segment touching a pour that has no fill stays."""
     by = collections.defaultdict(list)                 # (net, layer) -> [(kind, item, box)]
 
     def box(o):
@@ -132,20 +134,33 @@ def dangling(board, pcbnew):
             for L in layers:
                 if q.GetNetCode() > 0 and q.IsOnLayer(L):
                     by[(q.GetNetCode(), L)].append(("pad", q, box(q)))
+    pcbnew.ZONE_FILLER(board).Fill(board.Zones())     # the islands of the copper as it stands
     for z in board.Zones():
-        if not z.GetIsRuleArea() and z.GetNetCode() > 0:
-            for L in z.GetLayerSet().CuStack():
+        if z.GetIsRuleArea() or z.GetNetCode() <= 0:
+            continue
+        for L in z.GetLayerSet().CuStack():
+            if not z.IsFilled():                       # its islands are unknown: what touches it stays
                 by[(z.GetNetCode(), L)].append(("zone", z, box(z)))
+                continue
+            fill = z.GetFilledPolysList(L)
+            for i in range(fill.OutlineCount()):
+                isl = pcbnew.SHAPE_POLY_SET()
+                isl.AddOutline(fill.Outline(i))
+                for h in range(fill.HoleCount(i)):
+                    isl.AddHole(fill.Hole(i, h))
+                bb = isl.BBox()
+                by[(z.GetNetCode(), L)].append(("island", isl, (bb.GetLeft(), bb.GetTop(), bb.GetRight(), bb.GetBottom())))
     shapes = {}
 
     def shape(kind, o, L):
         k = (id(o), L)
         if k not in shapes:
-            shapes[k] = o.Outline() if kind == "zone" else o.GetEffectiveShape() if kind == "track" else o.GetEffectiveShape(L)
+            shapes[k] = o if kind == "island" else o.Outline() if kind == "zone" else \
+                o.GetEffectiveShape() if kind == "track" else o.GetEffectiveShape(L)
         return shapes[k]
 
     def holds(kind, o, L, pt):
-        return o.Outline().Contains(pt) if kind == "zone" else shape(kind, o, L).Collide(pt, 0)
+        return shape(kind, o, L).Contains(pt) if kind in ("island", "zone") else shape(kind, o, L).Collide(pt, 0)
 
     gone, cut = {}, True
     candidates = [t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()]
@@ -159,7 +174,9 @@ def dangling(board, pcbnew):
             touching = [(k, o) for k, o, ob in by[(t.GetNetCode(), L)]
                         if o is not t and not (k == "track" and o.m_Uuid.AsString() in gone)
                         and ob[0] <= tb[2] and tb[0] <= ob[2] and ob[1] <= tb[3] and tb[1] <= ob[3]
-                        and (o.Outline().Collide(ts, 0) if k == "zone" else shape(k, o, L).Collide(ts, 0))]
+                        and shape(k, o, L).Collide(ts, 0)]
+            if any(k == "zone" for k, _ in touching):
+                continue
             ends = (t.GetStart(), t.GetEnd())
             for i in (0, 1):
                 if not any(holds(k, o, L, ends[i]) for k, o in touching) and \

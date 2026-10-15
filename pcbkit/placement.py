@@ -10,7 +10,8 @@ only the winner is routed. BOARD is a placed board, routed or not (tracks are ig
     pads; through-hole pads, and edges that change sides, meet everything (--any-side counts every crossing);
   * the ratsnest length, mm;
   * zones: courtyard area (mm^2) over the study's penalty polygons, e.g. where the other side's vias will go;
-  * the study's free choices (gate or pin assignments), each solved per candidate (see assign()).
+  * the study's free choices (gate or pin assignments), each solved per candidate (see assign()), in order, so a
+    crossing between two choices is priced once.
 Plane nets (--planes, or the study's) stay out: their pads only need a via. A placement is invalid when courtyards
 on one side overlap (a through-hole pad counts on both sides), a pad's copper comes closer than edge_clr to the
 board outline (a connector body may overhang), or a courtyard enters a forbidden zone or a rule area that keeps
@@ -34,7 +35,8 @@ function study(board) returning one:
 A rigid group moves by (dx, dy, rot) from where the board has it, rotating about its first footprint. A group with
 place= calls the project's code with the candidate and gets {ref: (x, y, orientation)} back, so the board follows
 the project's own generator; home= is its current parameter. --search runs coordinate descent: every candidate of
-one group with the others held, group after group, until a round improves nothing. --write saves
+one group with the others held, group after group, until a round improves nothing. An invalid start is repaired
+first: each group that breaks a rule takes its best valid candidate. --write saves
 {"groups": {name: params}, "choices": {perm: choice}, "score": {...}} for the project's generator to read;
 --start reads one back. The board file is never written. Runs under KiCad's Python (re-runs itself there).
 
@@ -99,7 +101,8 @@ class Zone:
 class Perm:
     """A free choice solved for every candidate, e.g. which register output drives which gate: solve(ctx) returns
     (cost, choice) or (cost, choice, edges). nets: the nets the choice decides, kept out of the base ratsnest (the
-    solver prices their edges itself, usually with assign())."""
+    solver prices their edges itself, usually with assign()). Perms are solved in order, and the edges returned by
+    the ones before are in ctx's base, so a crossing between two choices is priced once, in the later one."""
 
     def __init__(self, name, solve, nets=()):
         self.name, self.solve, self.nets = name, solve, set(nets)
@@ -284,12 +287,12 @@ class Ctx:
 def assign(slots, options, edges, ctx, exact_up_to=9):
     """Best one-to-one choice of an option per slot (more options than slots is fine). edges(slot, option) -> the
     ratsnest edges that choice makes. Cost: length weight x mm + crossing weight x (crossings with the base ratsnest
-    and among the chosen edges). Exact branch and bound up to exact_up_to slots, else a greedy start improved by
-    swaps. Returns (cost, {slot: option}, [chosen edges])."""
+    and among the chosen edges, those within one choice included). Exact branch and bound up to exact_up_to slots,
+    else a greedy start improved by swaps. Returns (cost, {slot: option}, [chosen edges])."""
     wc, wl = ctx.weights["cross"], ctx.weights["length"]
     slots, options = list(slots), list(options)
     es = {(s, o): edges(s, o) for s in slots for o in options}
-    single = {k: wl * length(v) + wc * ctx.cross(v) for k, v in es.items()}
+    single = {k: wl * length(v) + wc * (ctx.cross(v) + count_among(v, ctx.any_side)) for k, v in es.items()}
     pair_cache = {}
 
     def pair(a, b):
@@ -516,8 +519,9 @@ class Scorer:
                 if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                     continue
                 L = pcbnew.B_Cu if q.IsOnLayer(pcbnew.B_Cu) and not q.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu
-                ol = q.GetEffectivePolygon(L).Outline(0)
-                if not all(self.inner.Contains(ol.CPoint(i)) for i in range(ol.PointCount())):
+                out = pcbnew.SHAPE_POLY_SET(q.GetEffectivePolygon(L))
+                out.BooleanSubtract(self.inner)           # all its copper: corners inside can still bridge a notch
+                if out.Area() > 1e8:                      # nm^2, 1e-4 mm^2
                     return f"{ref} pad {q.GetNumber()} off the board"
         refs = set(refs)
         checked = set()
@@ -564,9 +568,9 @@ class Scorer:
         zc = self.zone_cost()
         perms, choices, perm_edges = {}, {}, []
         if s.perms:
-            ctx = Ctx(NetDict(self.net_pads(list(self.net_refs))), base_index, extra, w, s.any_side, self.pad)
-            for p in s.perms:
-                r = p.solve(ctx)
+            pads = NetDict(self.net_pads(list(self.net_refs)))
+            for p in s.perms:                             # each sees the edges of the choices made before it
+                r = p.solve(Ctx(pads, base_index, extra + perm_edges, w, s.any_side, self.pad))
                 perms[p.name], choices[p.name] = r[0], r[1]
                 if len(r) > 2:
                     perm_edges += r[2]
@@ -605,12 +609,40 @@ class Scorer:
         return self._finish(cross, self._fixed_len + length(moved), self._fixed, moved), ""
 
 
+def repair(sc, params, log=print):
+    """Make an invalid placement valid group by group: a group whose footprints break a rule moves to its best valid
+    candidate, the others held where they are; passes repeat while one changes something. Returns (params, result,
+    '') or (params, None, reason)."""
+    for _ in range(max(1, len(sc.s.groups))):
+        changed = False
+        for g in sc.s.groups:
+            sc.apply(params)
+            why = sc.check(set(g.refs))
+            if not why:
+                continue
+            sc.begin(g)
+            fits = [(res["total"], v) for v in g.options(params[g.name]) for res in [sc.trial(v)[0]] if res is not None]
+            if fits:
+                v = min(fits, key=lambda t: t[0])[1]
+                params, changed = dict(params, **{g.name: v}), True
+            log(f"repair {g.name} ({why}): {v if fits else 'no valid candidate'}")
+        best, why = sc.full(params)
+        if best is not None or not changed:
+            return params, best, why
+    return (params,) + sc.full(params)
+
+
 def search(sc, params, rounds=3, log=print):
-    """Coordinate descent over the study's groups. Returns (params, result, [the best few (total, params)])."""
+    """Coordinate descent over the study's groups, from a valid placement (an invalid start is repaired first: a
+    group's trial checks only its own footprints, so it cannot tell whether the rest is valid). Returns (params,
+    result, [the best few (total, params)]); result is None if no valid placement was found."""
     best, why = sc.full(params)
     if best is None:
-        log(f"start is invalid ({why}); searching anyway")
-        best = dict(total=math.inf)
+        log(f"start is invalid ({why}); repairing it")
+        params, best, why = repair(sc, params, log)
+        if best is None:
+            log(f"no valid placement found ({why})")
+            return params, None, []
     seen = {}
     for rnd in range(rounds):
         improved = False
@@ -671,6 +703,8 @@ def draw(sc, path, label=""):
     idx = EdgeIndex(edges, sc.s.any_side)
     n = idx.count_within(pts)
     res = sc._finish(n, length(edges), idx, [])
+    idx.count(res["perm_edges"], pts)                     # the choices' crossings, with the rest and each other
+    count_among(res["perm_edges"], sc.s.any_side, pts)
     out.insert(2, f'<text x="10" y="26" font-size="18">{_esc(label)}{": " if label else ""}{_esc(_fmt(res))}</text>')
     for e in edges + res["perm_edges"]:
         out.append(f'<line x1="{X(e[1][0])}" y1="{Y(e[1][1])}" x2="{X(e[2][0])}" y2="{Y(e[2][1])}" '

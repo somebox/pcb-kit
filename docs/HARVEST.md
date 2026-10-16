@@ -24,6 +24,7 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | `pcbkit/sexp.py` | dodeca `tools/sexp.py` | small s-expression helpers used by the dodeca generators; kept for the next harvest |
 | `library/PARTS.md`, `pcbkit parts` | design notes and BOMs of the candle (ESP32Candle, espcandle-demo), rgb-spotlight, siebenuhr controller-v2, esphome-dimmer-switch, esp32-ha-protoboard, motion-sound, dodeca v1.2/v1.3 parts research | the user's list of parts that worked (2026-10-11), each checked against the project that used it and the parts cache; notes cite the project |
 | `pcbkit/spice.py` | dodeca `hardware/control-board/v1.3/sim/spice.py` | same idea (scratch directory, `-D ngbehavior=psa`, @SIM@/@VENDOR@ placeholders, measurements and wrdata files); adds an `aborted` flag from ngspice's own messages, an optional gear-integration retry and the `pcbkit spice` CLI. The decks and averaged models stay in dodeca |
+| `pcbkit/route.py` | `scripts/route_strip.py` of rp2354-messages-sign and rgb-spotlight (identical but for spotlight's round outline) + the plane-via, neck-down and track-end audit steps of the sign's `scripts/route_controller.py` | the generic part only: `Copper`, `Grid`, `astar_ml`, `complete_nets`, `tie_pads`, `stitch_gnd`, `escape_vias` (pins now required), `chamfer`; `plane_vias`, `neckdown` (fine-pitch footprints a parameter), `audit_track_ends`, and a `writer(board)` for the track/via helpers. Added: polygon outlines (edge distance cached per cell: uncached, a 156-point outline made a run 3.5 h instead of 2 min), polygon keep-outs tested against the copper edge, not the centre line (`keepout_hit` for hand-placed copper too; `plane_vias` honours them and the outline), copper layers taken from the board instead of F/In1/In2/B, per-layer cost (`LAYER_COST`). Fixed: `HWEIGHT` reached `astar_ml` but was never applied. Dropped: the unused single-layer `astar` (its heuristic used an undefined name). The LED-strip fan-in (`lane_depths`, `fanin`, the escape pin lists) stays in the sign repo. First used on esp32-s3-ha-node (2026-10-12) |
 
 ## Migration status
 
@@ -36,8 +37,9 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 
 ## Still in the projects (candidates for the next pass)
 
-- `scripts/route_strip.py` (sign and spotlight, 790 lines, diverged by 8 lines): LED-strip routing. Needs a diff and
-  a decision on which is right before it moves.
+- `scripts/route_strip.py` (sign and spotlight): its generic router moved to `pcbkit/route.py` on 2026-10-12 (the
+  8-line divergence was spotlight's round outline, kept). Both repos still import their own copy; switch them to
+  `pcbkit.route` when next touched. The sign's LED-strip fan-in stays there.
 - `scripts/gen_*_pcb.py`, `sch_*.py`, `mod_*.py`, `ctl_*.py`: board generators. Project data by nature, but they share
   a shape (placement tables, `build()` calls) that a `pcbkit.board` module could carry: the collision-checked spiral
   placement and zone/stackup setup in dodeca's `pcb_build.py`.

@@ -7,7 +7,9 @@ KiCad imports EasyEDA PCBs from the command line, but schematics only in the GUI
 symbols unlinked from the footprints. This converts the schematic itself, keeping the EasyEDA layout:
   * one KiCad symbol per distinct EasyEDA symbol (name + pin geometry; rotated placements become variants, since
     EasyEDA stores pins already rotated), built from the pin geometry so the original wires land on their pins;
-  * net ports become global labels, GND/VCC/+5V flags become power symbols named after the flag;
+  * every sheet is converted: one sheet stays flat, several become a root page of sheet symbols, one file each;
+  * net ports and net labels become global labels (EasyEDA joins both by name across all sheets), GND/VCC/+5V
+    flags become power symbols named after the flag;
   * every footprint is linked to its symbol, the PCB nets are renamed to the schematic's, and any connectivity
     difference between the EasyEDA schematic and PCB is reported (and stops the run unless --force);
   * footprints go into LIBDIR/<nick>.pretty and symbols into LIBDIR/<nick>.kicad_sym, with project lib tables;
@@ -162,16 +164,35 @@ def parse_flag(s):
     return dict(kind=h[1], x=ax, y=ay, name=t[0], side=side)
 
 
+def parse_netlabel(s):
+    """N~x~y~rot~color~name~id~anchor~tx~ty~...: a net label on a wire end. Like a net port it joins every item of
+    that name in the project, on any sheet. Rotation is clockwise (y down); the text runs from the point."""
+    k = s.split("~")
+    side = {0: "right", 90: "down", 180: "left", 270: "up"}.get(int(float(k[3] or 0)) % 360, "right")
+    if k[7] == "end":
+        side = {"right": "left", "left": "right", "up": "down", "down": "up"}[side]
+    return dict(kind="netLabel", x=float(k[1]), y=float(k[2]), name=k[5], side=side)
+
+
 def load_schematic(path, pin_fixes=()):
-    """pin_fixes: ("REF", "PIN NAME", "NEW NUMBER") for EasyEDA symbol typos (two pins with one number)."""
+    """Every sheet of the export, in page order.
+    pin_fixes: ("REF", "PIN NAME", "NEW NUMBER") for EasyEDA symbol typos (two pins with one number)."""
     d = json.load(open(path))
-    if len(d.get("schematics", [])) > 1:
-        note(f"{len(d['schematics'])} sheets in the export; only the first is converted")
-    sheet = d["schematics"][0]["dataStr"]
-    if isinstance(sheet, str):
-        sheet = json.loads(sheet)
-    out = dict(parts=[], wires=[], flags=[], nc=[], texts=[], images=[], rects=[], junctions=[], bbox=sheet["BBox"],
-               title=d.get("title", ""))
+    sheets = []
+    for page in d["schematics"]:
+        data = page["dataStr"]
+        sheet = load_sheet(json.loads(data) if isinstance(data, str) else data, pin_fixes)
+        sheet["name"] = page.get("title", "")
+        sheets.append(sheet)
+    refs = Counter(p["fields"]["P"]["text"] for s in sheets for p in s["parts"])
+    if any(c > 1 for c in refs.values()):
+        sys.exit("more than one part with reference " + ", ".join(sorted(r for r, c in refs.items() if c > 1))
+                 + "; annotate the EasyEDA schematic first")
+    return dict(sheets=sheets, title=d.get("title", ""))
+
+
+def load_sheet(sheet, pin_fixes):
+    out = dict(parts=[], wires=[], flags=[], nc=[], texts=[], images=[], rects=[], junctions=[], bbox=sheet["BBox"])
     for s in sheet["shape"]:
         kind = s.split("~", 1)[0]
         if kind == "LIB":
@@ -192,6 +213,12 @@ def load_schematic(path, pin_fixes=()):
             out["wires"] += [((pts[i], pts[i + 1]), (pts[i + 2], pts[i + 3])) for i in range(0, len(pts) - 2, 2)]
         elif kind == "F":
             out["flags"].append(parse_flag(s))
+        elif kind == "N":
+            label = parse_netlabel(s)
+            if label["name"]:
+                out["flags"].append(label)
+            else:
+                note("net label without a name skipped")
         elif kind == "O":
             k = s.split("~")
             out["nc"].append((float(k[1]), float(k[2])))
@@ -345,7 +372,7 @@ def png_size(data):
 def register_symbols(sch, nick):
     """One library symbol per distinct (name, geometry). Returns ({ref: symbol name}, {name: definition})."""
     defs, geos, by_ref = {}, {}, {}
-    for p in sch["parts"]:
+    for p in (p for s in sch["sheets"] for p in s["parts"]):
         base = safe_name(p["para"].get("spiceSymbolName") or p["para"].get("name") or p["fields"].get("N", {}).get("text", "part"))
         geo = symbol_geometry(p)
         fp = safe_name(p["para"].get("package", "")) if p["para"].get("package") else ""
@@ -360,25 +387,108 @@ def register_symbols(sch, nick):
     return by_ref, defs
 
 
-def write_schematic(sch, sch_path, sym_of, defs, power, project, nick, meta):
-    bb = sch["bbox"]
+def sheet_files(sheets, project):
+    """(sheet name, file name) per EasyEDA sheet: unique, and no file clashing with the root PROJECT.kicad_sch."""
+    names, files, out = set(), {f"{project}.kicad_sch".lower()}, []
+    for i, s in enumerate(sheets):
+        base = (s["name"].strip() or f"Sheet {i + 1}").replace("/", "_")  # KiCad sheet names can't hold a /
+        name, k = base, 1
+        while name in names:
+            k += 1
+            name = f"{base} {k}"
+        stem = safe_name(name).lower()
+        file, k = f"{stem}.kicad_sch", 1
+        while file.lower() in files:
+            k += 1
+            file = f"{stem}_{k}.kicad_sch"
+        names.add(name)
+        files.add(file.lower())
+        out.append((name, file))
+    return out
+
+
+def write_schematic(sch, out_dir, sym_of, defs, power, project, nick, meta):
+    """OUT_DIR/PROJECT.kicad_sch. One EasyEDA sheet is the root itself; several become a root page of sheet symbols,
+    one file each. Net ports and labels are global labels, so nets join by name across sheets as in EasyEDA.
+    Returns (root uuid, [(sheet uuid, sheet name)], {ref: link to the footprint})."""
+    root = uid(project, "root")
+    flags = [f for s in sch["sheets"] for f in s["flags"]]
+    # PWR_FLAGs: every pin is passive, so tell ERC where each power net is driven from.
+    power_nets = []
+    for f in flags:
+        if f["kind"] != "part_netLabel_netPort" and f["kind"].startswith("part_netLabel_") and f["name"] and f["name"] not in power_nets:
+            power_nets.append(f["name"])
+    power_nets = [(p, "GND" if any(f["kind"] == "part_netLabel_gnD" and f["name"] == p for f in flags) else "VCC")
+                  for p in power_nets]
+    power_refs, links, subs = [], {}, []
+    if len(sch["sheets"]) == 1:
+        file = f"{project}.kicad_sch"
+        for ref, link in write_sheet(sch["sheets"][0], out_dir / file, root, "/" + root, (), sym_of, defs, power,
+                                     project, nick, meta, power_refs, power_nets).items():
+            links[ref] = dict(link, path=f"/{link['uuid']}", sheetname="/", sheetfile=file)
+        return root, subs, links
+    pages = []
+    for i, (sheet, (name, file)) in enumerate(zip(sch["sheets"], sheet_files(sch["sheets"], project))):
+        su = uid(project, "sheet", i)
+        for ref, link in write_sheet(sheet, out_dir / file, uid(project, "sheet-file", i), f"/{root}/{su}",
+                                     ("page", i) if i else (), sym_of, defs, power, project, nick, meta, power_refs,
+                                     power_nets if i == 0 else ()).items():
+            links[ref] = dict(link, path=f"/{su}/{link['uuid']}", sheetname=name, sheetfile=file)
+        subs.append((su, name))
+        pages.append((su, name, file))
+    write_root(out_dir / f"{project}.kicad_sch", root, pages, project, meta)
+    return root, subs, links
+
+
+def write_root(sch_path, root, pages, project, meta):
+    """The root page of a multi-sheet import: a sheet symbol per EasyEDA sheet, three to a row."""
+    body = []
+    for i, (su, name, file) in enumerate(pages):
+        x, y = 25.4 + 76.2 * (i % 3), 50.8 + 50.8 * (i // 3)
+        body += [f'(sheet (at {n(x)} {n(y)}) (size 60.96 30.48) (exclude_from_sim no) (in_bom yes) (on_board yes) '
+                 f'(dnp no) (fields_autoplaced yes) (stroke (width 0.1524) (type solid)) (fill (color 0 0 0 0.0)) '
+                 f'(uuid {q(su)})',
+                 f'  (property "Sheetname" {q(name)} (at {n(x)} {n(y - 0.635)} 0){font(justify="left bottom")})',
+                 f'  (property "Sheetfile" {q(file)} (at {n(x)} {n(y + 31.115)} 0){font(justify="left top")})',
+                 f'  (instances (project {q(project)} (path {q("/" + root)} (page {q(str(i + 2))}))))', ")"]
+    body.append(f'(text "One sheet per EasyEDA sheet; net ports and net labels are global labels, joined by name '
+                f'across sheets" (exclude_from_sim no) (at 25.4 38.1 0){font(justify="left")} '
+                f'(uuid {q(uid(project, "root-text"))}))')
+    width, height = 297, max(210, 50.8 * ((len(pages) + 2) // 3) + 80)
+    head = [f'(kicad_sch (version 20250114) (generator "pcbkit_import_easyeda") (generator_version "10.0") (uuid {q(root)})',
+            f'(paper "User" {width} {n(height)})', title_block(meta), "(lib_symbols)"]
+    tail = ['(sheet_instances (path "/" (page "1")))', "(embedded_fonts no)", ")"]
+    sch_path.write_text("\n".join(head + body + tail) + "\n")
+
+
+def title_block(meta):
+    return (f'(title_block (title {q(meta["title"])}) (date {q(meta["date"])}) (rev {q(meta["rev"])}) (company {q(meta["company"])})'
+            f' (comment 1 "Converted from the EasyEDA Std export by pcbkit import-easyeda"))')
+
+
+def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power, project, nick, meta, power_refs,
+                power_nets):
+    """One page. sheet_uuid is the file's own, inst_path its place in the hierarchy; tag keeps the uuids of items
+    unique across pages (the first page has none, as a single-sheet import). power_refs numbers #PWR/#FLG across
+    pages; power_nets [(net, GND|VCC)] get their PWR_FLAGs on this page. Returns {ref: link}."""
+    sid = lambda *k: uid(project, *tag, *k)
+    bb = sheet["bbox"]
     ox = 10 * math.ceil(-bb["x"] / 10) + 60
     oy = 10 * math.ceil(-bb["y"] / 10) + 100
     X = lambda x: (x + ox) * U
     Y = lambda y: (y + oy) * U
     width = math.ceil((bb["width"] + 120) * U)
     height = math.ceil((bb["height"] + 140) * U + 35)
-    root = uid(project, "root")
     body = []
-    inst = lambda ref: f'  (instances (project {q(project)} (path {q("/" + root)} (reference {q(ref)}) (unit 1))))'
+    inst = lambda ref: f'  (instances (project {q(project)} (path {q(inst_path)} (reference {q(ref)}) (unit 1))))'
     links = {}
 
-    for p in sch["parts"]:
+    for p in sheet["parts"]:
         ref = p["fields"]["P"]["text"]
         name = sym_of[ref]
         para = p["para"]
         fp = f"{nick}:{safe_name(para['package'])}" if para.get("package") else ""
-        u = uid(project, "sym", ref)
+        u = sid("sym", ref)
         links[ref] = dict(uuid=u, lcsc=para.get("Supplier Part", ""), value=p["fields"].get("N", {}).get("text", ""),
                           mpn=para.get("Manufacturer Part", ""), manufacturer=para.get("Manufacturer", ""),
                           desc=para.get("name", ""), footprint=safe_name(para.get("package", "")))
@@ -393,26 +503,24 @@ def write_schematic(sch, sch_path, sym_of, defs, power, project, nick, meta):
                      ("LCSC", links[ref]["lcsc"]), ("MPN", links[ref]["mpn"]), ("Manufacturer", links[ref]["manufacturer"])):
             body.append(f'  (property {q(k)} {q(v)} (at {n(X(p["x"]))} {n(Y(p["y"]))} 0){font(hide=True)})')
         for pin in p["pins"]:
-            body.append(f'  (pin {q(pin["num"])} (uuid {q(uid(project, "pin", ref, pin["num"]))}))')
+            body.append(f'  (pin {q(pin["num"])} (uuid {q(sid("pin", ref, pin["num"]))}))')
         body += [inst(ref), ")"]
-
-    power_refs = []
 
     def power_symbol(lib, value, x, y, rot, key):
         ref = f"#FLG{len(power_refs) + 1:03d}" if lib == "PWR_FLAG" else f"#PWR{len(power_refs) + 1:03d}"
         power_refs.append(ref)
         _, vx, vy = power[lib]
         dx, dy = rot_offset(vx, vy, rot)
-        u = uid(project, "power", key)
+        u = sid("power", key)
         body.append(f'(symbol (lib_id "power:{lib}") (at {n(X(x))} {n(Y(y))} {rot}) (unit 1) '
                     f'(exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid {q(u)})')
         body.append(f'  (property "Reference" {q(ref)} (at {n(X(x))} {n(Y(y))} 0){font(hide=True)})')
         body.append(f'  (property "Value" {q(value)} (at {n(X(x) + dx)} {n(Y(y) + dy)} 0){font()})')
         for k in ("Footprint", "Datasheet", "Description"):
             body.append(f'  (property {q(k)} "" (at {n(X(x))} {n(Y(y))} 0){font(hide=True)})')
-        body.extend([f'  (pin "1" (uuid {q(uid(project, "power-pin", key))}))', inst(ref), ")"])
+        body.extend([f'  (pin "1" (uuid {q(sid("power-pin", key))}))', inst(ref), ")"])
 
-    for i, f in enumerate(sch["flags"]):
+    for i, f in enumerate(sheet["flags"]):
         if f["kind"] == "part_netLabel_gnD":
             power_symbol("GND", f["name"] or "GND", f["x"], f["y"], POWER_ROT["GND"][f["side"]], f"flag{i}")
         elif f["kind"].startswith("part_netLabel_") and f["kind"] != "part_netLabel_netPort":
@@ -420,46 +528,40 @@ def write_schematic(sch, sch_path, sym_of, defs, power, project, nick, meta):
         else:
             rot, just = LABEL_ROT[f["side"]]
             body.append(f'(global_label {q(f["name"])} (shape passive) (at {n(X(f["x"]))} {n(Y(f["y"]))} {rot}) '
-                        f'(fields_autoplaced yes){font(justify=just)} (uuid {q(uid(project, "label", i))}))')
+                        f'(fields_autoplaced yes){font(justify=just)} (uuid {q(sid("label", i))}))')
 
-    # PWR_FLAGs: every pin is passive, so tell ERC where each power net is driven from.
-    power_nets = []
-    for f in sch["flags"]:
-        if f["kind"] != "part_netLabel_netPort" and f["kind"].startswith("part_netLabel_") and f["name"] and f["name"] not in power_nets:
-            power_nets.append(f["name"])
     fx, fy = 10 * round(bb["x"] / 10) + 60, 10 * round(bb["y"] / 10) - 40
-    for i, pname in enumerate(power_nets):
+    for i, (pname, lib) in enumerate(power_nets):
         x = fx + 60 * i
-        lib = "GND" if any(f["kind"] == "part_netLabel_gnD" and f["name"] == pname for f in sch["flags"]) else "VCC"
         power_symbol(lib, pname, x, fy, 0, f"pwrflag-{pname}")
         power_symbol("PWR_FLAG", "PWR_FLAG", x, fy, 0 if lib == "GND" else 180, f"pwrflag-flag-{pname}")
     if power_nets:
         body.append(f'(text "Power enters through the connectors (PWR_FLAGs for ERC)" (exclude_from_sim no) '
-                    f'(at {n(X(fx + 60 * len(power_nets)))} {n(Y(fy))} 0){font(justify="left")} (uuid {q(uid(project, "pwrflag-text"))}))')
+                    f'(at {n(X(fx + 60 * len(power_nets)))} {n(Y(fy))} 0){font(justify="left")} (uuid {q(sid("pwrflag-text"))}))')
 
-    pts = {p for w in sch["wires"] for p in w} | {(pin["x"], pin["y"]) for p in sch["parts"] for pin in p["pins"]} \
-        | {(f["x"], f["y"]) for f in sch["flags"]} | set(sch["nc"])
-    wires = split_wires(sch["wires"], pts)
-    ends = Counter(p for w in wires for p in w) + Counter((pin["x"], pin["y"]) for p in sch["parts"] for pin in p["pins"])
+    pts = {p for w in sheet["wires"] for p in w} | {(pin["x"], pin["y"]) for p in sheet["parts"] for pin in p["pins"]} \
+        | {(f["x"], f["y"]) for f in sheet["flags"]} | set(sheet["nc"])
+    wires = split_wires(sheet["wires"], pts)
+    ends = Counter(p for w in wires for p in w) + Counter((pin["x"], pin["y"]) for p in sheet["parts"] for pin in p["pins"])
     for i, (a, b) in enumerate(wires):
         body.append(f'(wire (pts (xy {n(X(a[0]))} {n(Y(a[1]))}) (xy {n(X(b[0]))} {n(Y(b[1]))})) '
-                    f'(stroke (width 0) (type default)) (uuid {q(uid(project, "wire", i))}))')
-    junctions = {p for p, c in ends.items() if c >= 3} | set(sch["junctions"])
+                    f'(stroke (width 0) (type default)) (uuid {q(sid("wire", i))}))')
+    junctions = {p for p, c in ends.items() if c >= 3} | set(sheet["junctions"])
     for p in sorted(junctions):
         body.append(f'(junction (at {n(X(p[0]))} {n(Y(p[1]))}) (diameter 0) (color 0 0 0 0) '
-                    f'(uuid {q(uid(project, "junction", *p))}))')
-    for x, y in sch["nc"]:
-        body.append(f'(no_connect (at {n(X(x))} {n(Y(y))}) (uuid {q(uid(project, "nc", x, y))}))')
-    for i, (x, y, w, h) in enumerate(sch["rects"]):
+                    f'(uuid {q(sid("junction", *p))}))')
+    for x, y in sheet["nc"]:
+        body.append(f'(no_connect (at {n(X(x))} {n(Y(y))}) (uuid {q(sid("nc", x, y))}))')
+    for i, (x, y, w, h) in enumerate(sheet["rects"]):
         body.append(f'(rectangle (start {n(X(x))} {n(Y(y))}) (end {n(X(x + w))} {n(Y(y + h))}) '
-                    f'(stroke (width 0) (type default)) (fill (type none)) (uuid {q(uid(project, "rect", i))}))')
-    for i, t in enumerate(sch["texts"]):
+                    f'(stroke (width 0) (type default)) (fill (type none)) (uuid {q(sid("rect", i))}))')
+    for i, t in enumerate(sheet["texts"]):
         size = max(1.27, round(float(t["size"].rstrip("pt")) * U * 0.8, 2)) if t["size"] else 1.27
         just = {"start": "left", "end": "right", "middle": None}[t["anchor"]]
         body.append(f'(text {q(t["text"])} (exclude_from_sim no) (at {n(X(t["x"]))} {n(Y(t["y"]) - size)} {t["rot"]})'
                     f'{font(size, justify=(just + " top") if just else "top", bold=t["bold"])} '
-                    f'(uuid {q(uid(project, "text", i))}))')
-    for i, im in enumerate(sch["images"]):
+                    f'(uuid {q(sid("text", i))}))')
+    for i, im in enumerate(sheet["images"]):
         if not im["href"].startswith("data:image/png;base64,"):
             note("non-PNG image skipped")
             continue
@@ -468,19 +570,16 @@ def write_schematic(sch, sch_path, sym_of, defs, power, project, nick, meta):
         scale = im["w"] * U / (w / ppi * 25.4)
         lines = "\n".join(f"    {b64[j:j + 76]}" for j in range(0, len(b64), 76))
         body.append(f'(image (at {n(X(im["x"] + im["w"] / 2))} {n(Y(im["y"] + im["h"] / 2))}) (scale {scale:.4f}) '
-                    f'(uuid {q(uid(project, "image", i))})\n  (data\n{lines}\n  )\n)')
+                    f'(uuid {q(sid("image", i))})\n  (data\n{lines}\n  )\n)')
 
-    used = sorted({sym_of[r] for r in sym_of})
+    used = sorted({sym_of[r] for r in links})
     lib = [defs[k].replace('(symbol "', f'(symbol "{nick}:', 1) for k in used]
     lib += [power[k][0].strip() for k in ("GND", "VCC", "PWR_FLAG")]
-    head = [f'(kicad_sch (version 20250114) (generator "pcbkit_import_easyeda") (generator_version "10.0") (uuid {q(root)})',
-            f'(paper "User" {width} {height})',
-            f'(title_block (title {q(meta["title"])}) (date {q(meta["date"])}) (rev {q(meta["rev"])}) (company {q(meta["company"])})'
-            f' (comment 1 "Converted from the EasyEDA Std export by pcbkit import-easyeda"))',
-            "(lib_symbols", *lib, ")"]
-    tail = ['(sheet_instances (path "/" (page "1")))', "(embedded_fonts no)", ")"]
-    sch_path.write_text("\n".join(head + body + tail) + "\n")
-    return root, links
+    head = [f'(kicad_sch (version 20250114) (generator "pcbkit_import_easyeda") (generator_version "10.0") (uuid {q(sheet_uuid)})',
+            f'(paper "User" {width} {height})', title_block(meta), "(lib_symbols", *lib, ")"]
+    tail = ['(sheet_instances (path "/" (page "1")))'] if inst_path == "/" + sheet_uuid else []  # only the root has them
+    sch_path.write_text("\n".join(head + body + tail + ["(embedded_fonts no)", ")"]) + "\n")
+    return links
 
 
 # ---------------------------------------------------------------- PCB
@@ -582,7 +681,7 @@ LAYER_NAMES = {"F_Cu": "F.Cu", "B_Cu": "B.Cu", "F_SilkS": "F.SilkS", "B_SilkS": 
                "Dwgs_User": "Dwgs.User", "In1_Cu": "In1.Cu", "In2_Cu": "In2.Cu"}
 
 
-def update_board(pcb_json, pcb_path, sch_path, links, sch_pins, nick, meta, force):
+def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
     ensure_pcbnew()
     import pcbnew
     shown = easyeda_text_visibility(pcb_json)
@@ -618,9 +717,9 @@ def update_board(pcb_json, pcb_path, sch_path, links, sch_pins, nick, meta, forc
                 exports.append((ref, name))
             note("a footprint name covers two land patterns; the second one got a _2 suffix")
         fp.SetFPID(pcbnew.LIB_ID(nick, name))
-        fp.SetPath(pcbnew.KIID_PATH(f"/{link['uuid']}"))
-        fp.SetSheetfile(sch_path.name)
-        fp.SetSheetname("/")
+        fp.SetPath(pcbnew.KIID_PATH(link["path"]))
+        fp.SetSheetfile(link["sheetfile"])
+        fp.SetSheetname(link["sheetname"])
         fp.SetValue(link["value"])
         for k, v in (("Description", link["desc"]), ("LCSC", link["lcsc"]), ("MPN", link["mpn"]), ("Manufacturer", link["manufacturer"])):
             fp.SetField(k, v)
@@ -697,12 +796,12 @@ def update_board(pcb_json, pcb_path, sch_path, links, sch_pins, nick, meta, forc
 
 # ---------------------------------------------------------------- project
 
-def write_project(kdir, project, root, nick, lib_rel):
+def write_project(kdir, project, root, subs, nick, lib_rel):
     (kdir / f"{project}.kicad_pro").write_text(json.dumps({
         "board": {"design_settings": {"rule_severities": RULE_SEVERITIES, "rules": PCB_RULES}},
         "meta": {"filename": f"{project}.kicad_pro", "version": 1},
         "net_settings": {"classes": [NET_CLASS], "meta": {"version": 3}},
-        "sheets": [[root, "Root"]],
+        "sheets": [[root, "Root"]] + [[su, name] for su, name in subs],
     }, indent=2) + "\n")
     (kdir / "sym-lib-table").write_text(
         f'(sym_lib_table\n  (version 7)\n  (lib (name {q(nick)})(type "KiCad")(uri "${{KIPRJMOD}}/{lib_rel}/{nick}.kicad_sym")'
@@ -727,19 +826,21 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
         '(kicad_symbol_lib (version 20241209) (generator "pcbkit_import_easyeda") (generator_version "10.0")\n'
         + "\n".join(defs[k] for k in sorted(defs)) + "\n)\n")
     sch_path = out_dir / f"{name}.kicad_sch"
-    root, links = write_schematic(sch, sch_path, sym_of, defs, power, name, nick, meta)
-    write_project(out_dir, name, root, nick, lib_rel)
+    root, subs, links = write_schematic(sch, out_dir, sym_of, defs, power, name, nick, meta)
+    write_project(out_dir, name, root, subs, nick, lib_rel)
     pcb_path = out_dir / f"{name}.kicad_pcb"
     r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
-    fixes = update_board(pcb_json, pcb_path, sch_path, links, read_netlist(sch_path), nick, meta, force)
+    fixes = update_board(pcb_json, pcb_path, links, read_netlist(sch_path), nick, meta, force)
     subprocess.run([KICAD_PYTHON, "-c", "import sys; from pcbkit.import_easyeda import export_footprints; "
                     "export_footprints(sys.argv[1], __import__('json').loads(sys.argv[2]), sys.argv[3])",
                     str(pcb_path), json.dumps(fixes["exports"]), str(lib_dir / f"{nick}.pretty")],
                    check=True, capture_output=True, env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
-    print(f"{name}: {len(sch['parts'])} parts, {len(defs)} symbols, {len(fixes['exports'])} footprints, {len(sch['wires'])} wires, "
-          f"{len(sch['flags'])} labels/flags; {fixes['renamed']} PCB nets renamed, {fixes['paste_fixed']} pads given paste, "
+    count = lambda k: sum(len(s[k]) for s in sch["sheets"])
+    sheets = f"{len(subs)} sheets, " if subs else ""
+    print(f"{name}: {sheets}{count('parts')} parts, {len(defs)} symbols, {len(fixes['exports'])} footprints, {count('wires')} wires, "
+          f"{count('flags')} labels/flags; {fixes['renamed']} PCB nets renamed, {fixes['paste_fixed']} pads given paste, "
           f"{fixes['duplicate_vias']} duplicate vias removed, {len(fixes['board_only'])} board-only footprints "
           f"(loose pads, holes)")
     for msg, c in NOTES.most_common():

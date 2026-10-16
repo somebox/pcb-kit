@@ -10,12 +10,14 @@ The JSON (kept in the project, measured from the box) looks like:
              "notches": [{"corner": "+x+y", "width": 10, "height": 8}],      # optional rectangular corner cuts
              "cutouts": [{"x": 22.65, "y": 39.15, "boss": 7.5, "clearance": 1.0, "fillet": 1.0}]},  # or boss notches
    "mounts":   [{"x": -31.2, "y": -14.85, "hole": 2.2, "boss": 5.0, "name": "H1"}, ...],   # NPTH holes
+               # optional "head": 5.5 -> the screw head's footprint on the top: F.CrtYd ring + no copper on F.Cu
    "keepouts": [{"x": -39.0, "y": -22.3, "d": 7.5, "what": "lid screw boss"}, ...],       # no parts/copper, both sides
    "drawings": [{"rect": [92, 61], "label": "plateau"}, {"rect": [123.6, 67.5], "label": "plate"},
                 {"circle": [x, y, d], "label": "..."}, {"line": [x0, y0, x1, y1], "label": "..."}]}   # reference geometry on Dwgs.User
 
 Writes into BOARD: the outline on Edge.Cuts (lines and arcs, centred at 100,100 mm), one board-only footprint per
-mount with an NPTH pad, a rule area per keep-out (no tracks, vias, pads, footprints or fills on F.Cu and B.Cu,
+mount with an NPTH pad (plus, with "head", an F.CrtYd ring and an F.Cu copper keep-out the size of the screw head),
+a rule area per keep-out (no tracks, vias, pads, footprints or fills on F.Cu and B.Cu,
 a circle grown by 0.5 mm), the reference geometry and labels on Dwgs.User and the notes on Cmts.User. Existing
 Edge.Cuts items and earlier template footprints (references starting with H) are replaced; everything else on
 the board is kept, so it can be rerun after the layout starts. Needs pcbnew.
@@ -229,6 +231,26 @@ def apply(board_path, spec):
             c.SetWidth(MM(0.05))
             c.SetCenter(pcbnew.VECTOR2I(0, 0)); c.SetEnd(pcbnew.VECTOR2I(MM(m["boss"] / 2), 0))
             fp.Add(c)
+        if m.get("head"):  # the screw head on the top: courtyard ring for parts, rule area for copper (pads allowed)
+            c = pcbnew.PCB_SHAPE(fp)
+            c.SetShape(pcbnew.SHAPE_T_CIRCLE)
+            c.SetLayer(pcbnew.F_CrtYd)
+            c.SetWidth(MM(0.05))
+            c.SetCenter(pcbnew.VECTOR2I(0, 0)); c.SetEnd(pcbnew.VECTOR2I(MM(m["head"] / 2), 0))
+            fp.Add(c)
+            z = pcbnew.ZONE(b)
+            z.SetIsRuleArea(True)
+            z.SetDoNotAllowTracks(True); z.SetDoNotAllowVias(True); z.SetDoNotAllowPads(False); z.SetDoNotAllowFootprints(False)
+            for fn in ("SetDoNotAllowZoneFills", "SetDoNotAllowCopperPour"):
+                if hasattr(z, fn):
+                    getattr(z, fn)(True)
+                    break
+            z.SetLayer(pcbnew.F_Cu)
+            z.SetZoneName("keepout:screw head " + name)
+            o = z.Outline(); o.NewOutline()
+            for x, y in circle_poly(m["x"], m["y"], m["head"] / 2):
+                o.Append(P(x, y))
+            b.Add(z)
         fp.Reference().SetVisible(False)
         fp.Value().SetVisible(False)
         fp.SetBoardOnly(True); fp.SetExcludedFromBOM(True); fp.SetExcludedFromPosFiles(True)

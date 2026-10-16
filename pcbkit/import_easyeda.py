@@ -12,7 +12,9 @@ symbols unlinked from the footprints. This converts the schematic itself, keepin
     flags become power symbols named after the flag;
   * every footprint is linked to its symbol, the PCB nets are renamed to the schematic's, and any connectivity
     difference between the EasyEDA schematic and PCB is reported (and stops the run unless --force);
-  * footprints go into LIBDIR/<nick>.pretty and symbols into LIBDIR/<nick>.kicad_sym, with project lib tables;
+  * footprints go into LIBDIR/<nick>.pretty, each copied from one placement chosen the same way every run (right-
+    angle rotations first, then top side, unrotated, lowest reference), and symbols into LIBDIR/<nick>.kicad_sym,
+    with project lib tables;
   * what KiCad's PCB importer gets wrong is corrected: -100 mm paste margins, every designator shown, duplicate
     vias, EasyEDA layer names, zone fill minimums; the zones are refilled and the board saved filled.
 Loose pads and holes on the PCB (no symbol) become board-only footprints. Writes OUT_DIR/BOARD.kicad_{pro,sch,pcb}
@@ -604,6 +606,20 @@ def same_pads(a, b, tol=0.02):
                                     for p, r in zip(a, b))
 
 
+def ref_order(fp):
+    """Sort key for footprints: by reference, numbers compared as numbers (R2 before R10), then by position.
+    kicad-cli's import hands out fresh UUIDs and its footprint order changes from run to run; this one does not."""
+    r, p = fp.GetReference(), fp.GetPosition()
+    return [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", r))], r, p.x, p.y
+
+
+def exemplar_rank(fp):
+    """Which placement of a footprint goes into the library (lowest first): right-angle rotations, which un-rotate
+    exactly (any other angle leaves float noise in every coordinate), then the top side, then unrotated."""
+    a = round(fp.GetOrientationDegrees(), 3)
+    return a % 90 != 0, fp.IsFlipped(), a % 360 != 0, ref_order(fp)
+
+
 def drop_fields(path, pattern=r"JLC_3D[^\"]*"):
     """Remove footprint fields from a saved board or footprint file on the text (FOOTPRINT.Remove(field)
     corrupts the pcbnew bindings): by default EasyEDA's 3D-model ids, which mean nothing in KiCad."""
@@ -687,8 +703,8 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
     shown = easyeda_text_visibility(pcb_json)
     b = pcbnew.LoadBoard(str(pcb_path))
     problems, board_only, fp_refs, paste_fixed = [], [], set(), 0
-    signatures, exports = {}, []
-    for fp in b.GetFootprints():
+    signatures, placements = {}, defaultdict(list)
+    for fp in sorted(b.GetFootprints(), key=ref_order):
         ref = fp.GetReference()
         if ref not in links:
             pads = list(fp.Pads())
@@ -704,18 +720,14 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
         link = links[ref]
         name = link["footprint"] or safe_name(str(fp.GetFPID().GetLibItemName()))
         sig = footprint_signature(pcbnew, fp)
-        if name not in signatures:
-            signatures[name] = sig
-            exports.append((ref, name))
-        elif not same_pads(signatures[name], sig):
+        if name in signatures and not same_pads(signatures[name], sig):
             k = 2
             while f"{name}_{k}" in signatures and not same_pads(signatures[f"{name}_{k}"], sig):
                 k += 1
             name = f"{name}_{k}"
-            if name not in signatures:
-                signatures[name] = sig
-                exports.append((ref, name))
             note("a footprint name covers two land patterns; the second one got a _2 suffix")
+        signatures.setdefault(name, sig)
+        placements[name].append((exemplar_rank(fp), ref))
         fp.SetFPID(pcbnew.LIB_ID(nick, name))
         fp.SetPath(pcbnew.KIID_PATH(link["path"]))
         fp.SetSheetfile(link["sheetfile"])
@@ -735,6 +747,7 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
                 p.SetLocalSolderPasteMargin(None)
                 paste_fixed += 1
     problems += [f"{r} in the schematic has no footprint on the PCB" for r in sorted(set(links) - fp_refs)]
+    exports = [(min(p)[1], name) for name, p in placements.items()]
 
     old_to_new, new_to_old, pads = defaultdict(set), defaultdict(set), []
     for fp in b.GetFootprints():

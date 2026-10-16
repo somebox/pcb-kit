@@ -3,7 +3,7 @@
 Checks:    drc, erc, nets, check, cleanup
 Release:   previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
-Analysis:  spice
+Analysis:  spice, place-score
 Projects:  new, import-easyeda, outline
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
 """
@@ -16,7 +16,7 @@ COMMANDS = {
     "erc": ("pcbkit.checks.erc", "ERC summary through kicad-cli"),
     "nets": ("pcbkit.checks.netlist", "net sizes and members from a schematic"),
     "check": ("pcbkit.checks.route_check", "floating copper, stubs, loops, thin power feeds (needs pcbnew)"),
-    "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered segments, merge collinear runs"),
+    "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered (--dangling: dead-end) segments, merge runs"),
     "previews": ("pcbkit.release.previews", "schematic PDF, copper PNGs, assembly map, 1:1 print, renders"),
     "print": ("pcbkit.release.plot_print", "printable 1:1 PDF, front then mirrored back (needs pcbnew)"),
     "fab": ("pcbkit.release.jlc_fab", "JLC Gerber zip, BOM and CPL (needs pcbnew)"),
@@ -27,6 +27,7 @@ COMMANDS = {
     "link": ("pcbkit.kicad", "make this checkout importable from KiCad's Python and python3 (--remove to undo)"),
     "netview": ("pcbkit.netview", "SVG of a board region coloured by net (needs pcbnew)"),
     "spice": ("pcbkit.spice", "run an ngspice deck (PSpice-compatible), print its measurements, flag aborted runs"),
+    "place-score": ("pcbkit.placement", "score and search placements by their ratsnest, draw it (needs pcbnew)"),
     "outline": ("pcbkit.mech", "board outline, mounting holes and keep-outs from an enclosure JSON (needs pcbnew)"),
     "new": ("pcbkit.new_project", "scaffold a hardware project: docs, boards/<b> KiCad project, lib/, scripts/, bomi, git"),
     "import-easyeda": ("pcbkit.import_easyeda", "EasyEDA Std schematic + PCB exports -> linked KiCad project and library"),

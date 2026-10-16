@@ -41,6 +41,15 @@ like, such as three terminal-block pitches. The esp32-s3-ha-node layout was sett
 
 <img src="docs/images/placement-mockup.webp" width="420" alt="3-D render of a placement mock-up: ESP32-S3 module at the top, screw terminals and USB-C on the right edge, JST connectors and side buttons on the left">
 
+### Place by the ratsnest, route the winner
+
+A full route of a dense board can take most of an hour; a ratsnest score takes milliseconds. `pcbkit place-score`
+counts crossings between nets' ratsnest edges (only where they could meet on one layer), their length, courtyard
+area over zones to keep clear (such as where the other side's vias will go), and solves free choices like which
+register output drives which gate. With a study file it moves groups of parts through their candidate positions and
+keeps the best; `--svg` draws the ratsnest with the crossings circled. Only the winner gets routed: on Orbitchron's
+driver board the first scored placement cut the full route's unconnected items from 7 to 3.
+
 ### Look at the copper
 
 `pcbkit netview` draws one layer of a board region with every net in its own colour, pads labelled and courtyards
@@ -59,7 +68,8 @@ actually refers to before anything gets edited:
 `pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit check` finds what
 DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power pads fed only through thin track.
 `pcbkit cleanup` removes duplicate and zero-length segments by editing the file text, because pcbnew's own
-`Remove()` corrupts its bindings mid-run. Before an order, KiCadRoutingTools' checkers give a second opinion.
+`Remove()` corrupts its bindings mid-run; `--dangling` also peels a router's dead ends, one leaf at a time, so no
+net is ever split. Before an order, KiCadRoutingTools' checkers give a second opinion.
 
 ### Simulate the power path
 
@@ -103,6 +113,7 @@ panels with rails, fiducials and tooling holes, and runs DRC on each.
 | [enclosure-fit](skills/enclosure-fit/SKILL.md) | measuring a box, the outline JSON, the print-and-cut loop and what went wrong in it |
 | [power-sim](skills/power-sim/SKILL.md) | one ngspice script per design question; averaged models when vendor models stall |
 | [bom-cost](skills/bom-cost/SKILL.md) | the proven-parts catalog first, then bomi: stock checks, Extended-part fees, what goes into BOM.md |
+| [placement-study](skills/placement-study/SKILL.md) | scoring placements by their ratsnest, the study file, searching, and routing only the winner |
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the project layout and writing style they all assume: dated status
 lines, numbered decisions, generated files that say what made them.
@@ -146,7 +157,7 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 | `pcbkit erc SCH` | ERC summary, exit 1 on errors |
 | `pcbkit nets SCH [NET ...]` | net sizes and members; `pcbkit.checks.netlist.Netlist` is the base for a project's topology assertions |
 | `pcbkit check BOARD` | what DRC doesn't flag: floating copper, stubs with their full length, loops, pours reaching one pad, power pads fed only through thin track |
-| `pcbkit cleanup BOARD [--dry-run]` | duplicate, zero-length and covered segments removed, collinear runs merged; edits the file text by uuid |
+| `pcbkit cleanup BOARD [--dry-run] [--dangling]` | duplicate, zero-length and covered segments removed, collinear runs merged; `--dangling` also removes dead-end segments that no net needs; edits the file text by uuid |
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
 | `pcbkit fab BOARD OUT` | JLC Gerber zip, BOM and CPL (front-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table |
@@ -154,6 +165,7 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
 | `pcbkit parts [TEXT] [--low N]` | the proven-parts catalog (library/PARTS.md) with current stock and price; flags low stock |
 | `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--png]` | a region of one layer coloured by net, for reviewing power stages |
+| `pcbkit place-score BOARD [--study S.py] [--planes GND,..] [--search] [--write P.json] [--svg OUT.svg] [--png]` | ratsnest score of a placement (side-aware crossings, length, zones, free pin/gate choices); with a study, coordinate descent over groups of parts; the ratsnest picture |
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
 | `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards, keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
@@ -167,6 +179,7 @@ from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box
 from pcbkit.route import complete_nets      # maze router, plane vias, neck-down, track-end audit (KiCad's Python)
+from pcbkit.placement import Study, Group, Zone, Perm, assign   # a placement study (see the placement-study skill)
 from pcbkit.checks.netlist import Netlist    # netlist topology assertions
 from pcbkit.spice import run                 # ngspice deck -> measurements, wrdata files, aborted flag
 ```
@@ -174,7 +187,7 @@ from pcbkit.spice import run                 # ngspice deck -> measurements, wrd
 ## Repository layout
 
 ```
-pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, route.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
+pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
 pcbkit/data/       jlc/corrections.csv (rotations), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo
@@ -196,4 +209,5 @@ Harvested on 2026-10-10 from the rp2354-messages-sign, siebenuhr controller-v2, 
 repos; see [docs/HARVEST.md](docs/HARVEST.md) for where each piece came from and what is still in the projects.
 siebenuhr, the message sign and the spotlight use the kit; dodeca still runs its own tools until v1.3 is ordered.
 Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), `pcbkit spice` (2026-10-11,
-from the dodeca v1.3 simulations) and the proven-parts catalog (2026-10-11).
+from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), and placement
+scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron).

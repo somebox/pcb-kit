@@ -16,7 +16,8 @@ the interpreter.
 | Is the schematic legal? | `pcbkit erc boards/x/x.kicad_sch` |
 | Is the schematic what we meant? | run the project's netlist assertions (built on `pcbkit.checks.netlist.Netlist`); `pcbkit nets SCH NET...` to look |
 | Is the board clean? | `pcbkit drc BOARD --save` (refills zones and writes the board back; 0 errors, 0 unconnected, 0 parity) |
-| Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds), `pcbkit cleanup BOARD --dry-run` |
+| Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds), `pcbkit cleanup BOARD --dry-run` (after a scripted route: `--dangling` too) |
+| Where should this block go? Which output drives which net? | `pcbkit place-score BOARD --study scripts/place_study.py --search --svg out.svg --png out.png`; see the placement-study skill; route only the winner |
 | Review a power stage | `pcbkit netview BOARD out.svg X0 Y0 X1 Y1 --layer B.Cu --png out.png`, then look at the PNG |
 | Update the docs' pictures | `pcbkit previews BOARD docs/previews/<board>` |
 | Order files | `pcbkit fab BOARD build/fab/<board>`; panels: `pcbkit panel BOARD build/panels/<board> --style both` |
@@ -28,7 +29,8 @@ the interpreter.
 | Does a rail survive a load step, does reset trip? | `pcbkit spice deck.cir --gear-retry`; see the power-sim skill |
 
 Related skills in this kit: **visual-review** (which picture answers which question), **power-sim** (ngspice),
-**bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test).
+**bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test), **placement-study**
+(score placements by their ratsnest, route only the winner).
 
 ## Rules
 

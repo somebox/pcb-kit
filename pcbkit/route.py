@@ -11,7 +11,10 @@ grid over (cell, layer), vias where clear; a connection that fails in its corrid
 Parameters (dict P): CLEARANCE, EDGE_CLR, VIA (diameter, drill), VIA_PAD_CLR, QUICK, AXIAL_PADS (tracks end on pad
 centres), HWEIGHT (greedier A*), LAYER_COST ({layer id: cost}, e.g. make B.Cu dear to keep a GND pour whole),
 IN1_COST (old name for the In1 cost), HOLE_CLEARANCE (unplated holes keep this from copper when it is larger than
-CLEARANCE). Pads are obstacles on every copper layer they reach (see pad_item), unplated holes on all of them.
+CLEARANCE), CONN_SECONDS (time for one connection, all its widths and corridors; a failed connection otherwise uses
+its whole expansion budget, which dominates a run: 40 s each in QUICK mode, minutes without), DEADLINE (time.time()
+after which complete_nets tries nothing more and reports the rest as failed). Pads are obstacles on every copper
+layer they reach (see pad_item), unplated holes on all of them.
 `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
 and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).
@@ -488,9 +491,10 @@ DIRS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
 def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.0, layer_cost=None,
-             corridor=None, max_expand=600000, turn=0.6, hweight=1.0):
+             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None):
     """A* over (cell, layer): 8-connected moves within a layer, or a via to another allowed layer where via_ok.
-    sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. Returns [(cell, layer)]."""
+    sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. deadline: time.time() at which
+    to give up. Returns [(cell, layer)] or None."""
     layer_cost = layer_cost or {L: 1.0 for L in layers}
     tl = list(targets)
     if not tl:
@@ -512,6 +516,8 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
         if gc > best.get((st, di), 1e18):
             continue
         n += 1
+        if deadline and not n & 1023 and _time.time() > deadline:
+            return None
         if st in targets:
             path, k = [st], (st, di)
             while k in parent:
@@ -546,7 +552,7 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
     return None
 
 
-def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p):
+def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=None):
     """p["QUICK"]: give up early (corridors of 4 and 12 mm, 250k expansions each, no whole-board search), so a hard
     connection fails in seconds and is left for hand routing. p["HWEIGHT"] > 1 makes the A* greedier (weighted
     heuristic): far fewer expansions, paths slightly longer than optimal."""
@@ -554,13 +560,15 @@ def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p):
     allc = [s_[0] for s_ in src] + [t[0] for t in tgt]
     quick = p.get("QUICK", False)
     for m in ((40, 120) if quick else (40, 120, None)):  # corridor margin in cells, widening on failure
+        if deadline and _time.time() > deadline:
+            return None
         cor = None if m is None else (max(0, min(c[0] for c in allc) - m), max(0, min(c[1] for c in allc) - m),
                                       min(G0.nx - 1, max(c[0] for c in allc) + m), min(G0.ny - 1, max(c[1] for c in allc) + m))
         path = astar_ml(Gs, layers, net, clr + width / 2 + 0.02, width / 2, src, tgt, via_ok,
                         layer_cost={L: p.get("LAYER_COST", {}).get(L, p["IN1_COST"] if L == pcbnew.In1_Cu and "IN1_COST" in p
                                                                      else 1 + 0.25 * k) for k, L in enumerate(layers)},
                         corridor=cor, max_expand=250000 if quick else (600000 if m else 3000000),
-                        hweight=p.get("HWEIGHT", 1.0))
+                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline)
         if path:
             return path
     return None
@@ -649,10 +657,16 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     names = sorted({n.GetNetname() for n in b.GetNetsByNetcode().values() if n.GetNetname()})
     cu_layers = list(b.GetEnabledLayers().CuStack())
     done, failed = 0, []
+    stop = p.get("DEADLINE")
     for pattern, layers, width in plan:
         for net in [n for n in names if _re.fullmatch(pattern, n)]:
             groups = net_components(b, net, exclude)
             if len(groups) < 2:
+                continue
+            if stop and _time.time() > stop:                 # out of time: report, don't try
+                failed.append(net)
+                if _VERBOSE:
+                    print(f"   {_time.time() - _T0:6.1f}s {net}: not tried, out of time ({len(groups) - 1} connections)", flush=True)
                 continue
             netobj = b.FindNet(net)
             pad_mids = _capsule_pad_mids(b, net, cu_layers)   # centres of its pads at an angle
@@ -683,12 +697,14 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     return vcache[c]
                 path = None
                 w_used = width
+                dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
+                dl = min(dl) if dl else None
                 for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
                     if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
                         continue
                     w_used = w_try
-                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p) if src and tgt else None
-                    if path:
+                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
+                    if path or (dl and _time.time() > dl):
                         break
                 if path:
                     def centre(items, st):                       # pad / via centre of the item holding this cell
@@ -746,7 +762,8 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     done += 1
                     routed = True
                 if _VERBOSE:
-                    print(f"   {_time.time() - _T0:6.1f}s {net}: {'ok' if routed else 'FAILED'} ({len(rest)} groups left)", flush=True)
+                    why = "ok" if routed else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
+                    print(f"   {_time.time() - _T0:6.1f}s {net}: {why} ({len(rest)} groups left)", flush=True)
                 if not routed:                               # this tree is stuck: keep it, grow a new one
                     failed.append(net)
                     tree, rest = rest[0], rest[1:]

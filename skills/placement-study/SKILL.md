@@ -1,6 +1,6 @@
 ---
 name: placement-study
-description: Compare and search component placements by their ratsnest before routing: score crossings, length, via-field zones and free pin or gate choices in milliseconds per candidate, draw the ratsnest for review, and route only the winner. Use when a full route is slow (minutes to an hour), when deciding where a block of parts should sit, which side or angle a connector takes, or which register output or GPIO drives which net, and when reviewing a placement before routing.
+description: "Compare and search component placements by their ratsnest before routing: score crossings, length, via-field zones and free pin or gate choices in milliseconds per candidate, draw the ratsnest for review, and route only the winner. Use when a full route is slow (minutes to an hour), when deciding where a block of parts should sit, which side or angle a connector takes, or which register output or GPIO drives which net, and when reviewing a placement before routing."
 ---
 
 # Placement study

@@ -1,6 +1,6 @@
 ---
 name: visual-review
-description: Make and read pictures of a KiCad board or design question: net-coloured region views, 3-D renders, placement mock-ups, 1:1 prints, copper checks and simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, or when the user would understand a finding faster from an image than from a table.
+description: "Make and read pictures of a KiCad board or design question: net-coloured region views, 3-D renders, placement mock-ups, 1:1 prints, copper checks and simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, or when the user would understand a finding faster from an image than from a table."
 ---
 
 # Visual review

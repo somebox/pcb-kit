@@ -388,6 +388,7 @@ class Scorer:
         outline = pcbnew.SHAPE_POLY_SET()
         board.GetBoardPolygonOutlines(outline, False)
         self.outline = outline
+        self.cu = list(board.GetEnabledLayers().CuStack())
         self.inner = pcbnew.SHAPE_POLY_SET(outline)
         self.inner.Deflate(pcbnew.FromMM(study.edge_clr), pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS, pcbnew.FromMM(0.005))
         self.zones = [(z, self._poly(z.polygon)) for z in study.zones]
@@ -489,11 +490,11 @@ class Scorer:
         if ref not in self._blk:
             pcbnew, f = self.pcbnew, self.fps[ref]
             own = "B" if f.IsFlipped() else "F"
+            other, L = ("F", pcbnew.F_Cu) if own == "B" else ("B", pcbnew.B_Cu)
             shapes = {own: [self._court(ref)]}
             for q in f.Pads():
                 if q.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
-                    shapes.setdefault("F" if own == "B" else "B", []).append(
-                        pcbnew.SHAPE_POLY_SET(q.GetEffectivePolygon(pcbnew.F_Cu)))
+                    shapes.setdefault(other, []).append(pcbnew.SHAPE_POLY_SET(q.GetEffectivePolygon(L)))
             out = {}
             for side, ss in shapes.items():
                 boxes = [s.BBox() for s in ss]
@@ -518,11 +519,15 @@ class Scorer:
             for q in self.fps[ref].Pads():
                 if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
                     continue
-                L = pcbnew.B_Cu if q.IsOnLayer(pcbnew.B_Cu) and not q.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu
-                out = pcbnew.SHAPE_POLY_SET(q.GetEffectivePolygon(L))
-                out.BooleanSubtract(self.inner)           # all its copper: corners inside can still bridge a notch
-                if out.Area() > 1e8:                      # nm^2, 1e-4 mm^2
-                    return f"{ref} pad {q.GetNumber()} off the board"
+                shapes = {}                               # a copper layer per shape: one unless the padstack varies
+                for L in self.cu:
+                    if q.IsOnLayer(L):
+                        shapes.setdefault(q.Padstack().EffectiveLayerFor(L), L)
+                for L in shapes.values():
+                    out = pcbnew.SHAPE_POLY_SET(q.GetEffectivePolygon(L))
+                    out.BooleanSubtract(self.inner)       # all its copper: corners inside can still bridge a notch
+                    if out.Area() > 1e8:                  # nm^2, 1e-4 mm^2
+                        return f"{ref} pad {q.GetNumber()} off the board"
         refs = set(refs)
         checked = set()
         for r in sorted(refs):

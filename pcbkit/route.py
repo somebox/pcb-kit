@@ -10,7 +10,12 @@ complete_nets(plan): for each net matching a pattern, join its copper islands on
 grid over (cell, layer), vias where clear; a connection that fails in its corridor is left (QUICK) for hand routing.
 Parameters (dict P): CLEARANCE, EDGE_CLR, VIA (diameter, drill), VIA_PAD_CLR, QUICK, AXIAL_PADS (tracks end on pad
 centres), HWEIGHT (greedier A*), LAYER_COST ({layer id: cost}, e.g. make B.Cu dear to keep a GND pour whole),
-IN1_COST (old name for the In1 cost). `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
+IN1_COST (old name for the In1 cost), HOLE_CLEARANCE (unplated holes keep this from copper when it is larger than
+CLEARANCE), CONN_SECONDS (time for one connection, all its widths and corridors; a failed connection otherwise uses
+its whole expansion budget, which dominates a run: 40 s each in QUICK mode, minutes without), DEADLINE (time.time()
+after which complete_nets tries nothing more and reports the rest as failed). Pads are obstacles on every copper
+layer they reach, with their shape on that layer (see pad_items), unplated holes on all of them.
+`outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
 and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).
 
@@ -23,6 +28,7 @@ import math
 import os as _os
 import re as _re
 import time as _time
+from collections import Counter
 
 
 def writer(b, via_size=(0.6, 0.3)):
@@ -156,22 +162,83 @@ def _rect_dist(p, r):
     return (dx * dx + dy * dy) ** 0.5
 
 
+def pad_items(q, cu_layers, cover=True):
+    """pad_item for each shape a pad has on cu_layers: one, unless its padstack differs by layer (KiCad's
+    front/inner/back and custom modes), then one per group of layers sharing a shape. They are one plated pad, so
+    they connect (net_components joins them)."""
+    import pcbnew
+    groups = {}
+    for L in cu_layers:
+        if q.IsOnLayer(L):
+            groups.setdefault(q.Padstack().EffectiveLayerFor(L), []).append(L)
+    if len(groups) < 2 or q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+        return [pad_item(q, cu_layers, cover)]
+    return [pad_item(q, ls, cover, ls[0]) for ls in groups.values()]
+
+
+def pad_item(q, cu_layers, cover=True, layer=None):
+    """(layers, kind, geometry) of a pad, board mm. Square to the axes: its bounding box ("rect"). Round: a "disc".
+    At any other angle a "seg" capsule along the long side: with cover, wide enough to cover the corners (an obstacle);
+    without, inscribed in the pad (connectivity, route ends). A plated pad is on every copper layer of cu_layers it
+    reaches, inner ones included, with its shape on `layer` (default its front, or its back if it has no front; see
+    pad_items for a padstack that differs by layer); an unplated hole is a disc of the drill on all of cu_layers."""
+    import pcbnew
+    mm = pcbnew.ToMM
+    if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+        d = q.GetDrillSize()
+        c = (mm(q.GetPosition().x), mm(q.GetPosition().y))
+        if d.x == d.y:
+            return set(cu_layers), "disc", (c, mm(d.x) / 2)
+        o = math.radians(q.GetOrientationDegrees())                  # a slot: capsule along its long side
+        ux, uy = (math.cos(o), -math.sin(o)) if d.x > d.y else (math.sin(o), math.cos(o))
+        hl, r = abs(mm(d.x) - mm(d.y)) / 2, min(mm(d.x), mm(d.y)) / 2
+        return set(cu_layers), "seg", ((c[0] - ux * hl, c[1] - uy * hl), (c[0] + ux * hl, c[1] + uy * hl), r)
+    layers = {L for L in cu_layers if q.IsOnLayer(L)}
+    L = layer if layer is not None else pcbnew.B_Cu if q.IsOnLayer(pcbnew.B_Cu) and not q.IsOnLayer(pcbnew.F_Cu) \
+        else pcbnew.F_Cu
+    shape, ang = q.GetShape(L), q.GetOrientationDegrees() % 90
+    sp = q.ShapePos(L)
+    c = (mm(sp.x), mm(sp.y))
+    if shape == pcbnew.PAD_SHAPE_CIRCLE:
+        return layers, "disc", (c, mm(q.GetSize(L).x) / 2)
+    if min(ang, 90 - ang) < 0.5 or shape not in (pcbnew.PAD_SHAPE_RECT, pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_OVAL,
+                                                 pcbnew.PAD_SHAPE_CHAMFERED_RECT):
+        r = q.GetEffectiveShape(L).BBox()                          # also trapezoids and custom shapes, any angle
+        return layers, "rect", (mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom()))
+    w, h = mm(q.GetSize(L).x), mm(q.GetSize(L).y)
+    o = math.radians(q.GetOrientationDegrees())
+    ux, uy = (math.cos(o), -math.sin(o)) if w >= h else (math.sin(o), math.cos(o))
+    long_, short = max(w, h), min(w, h)
+    hl, r = (long_ - short) / 2, short / 2
+    if cover and shape != pcbnew.PAD_SHAPE_OVAL:                   # an oval pad is the capsule itself
+        rr = mm(q.GetRoundRectCornerRadius(L)) if shape == pcbnew.PAD_SHAPE_ROUNDRECT else 0.0
+        r += (short / 2 - rr) * (math.sqrt(2) - 1) + 0.01
+    elif not cover and shape == pcbnew.PAD_SHAPE_CHAMFERED_RECT and q.GetChamferPositions(L):
+        r = min(r, short * (1 - q.GetChamferRectRatio(L)) / math.sqrt(2))   # inside the cut corners (ratio > 0.29)
+    return layers, "seg", ((c[0] - ux * hl, c[1] - uy * hl), (c[0] + ux * hl, c[1] + uy * hl), r)
+
+
 class Copper:
-    """Just enough geometry to place a via + stub without asking DRC: pads as rectangles, tracks as capsules,
-    vias as discs, per copper layer, tagged with net names; bucketed on a 1 mm grid for fast lookups."""
+    """Just enough geometry to place a via + stub without asking DRC: pads as rectangles, capsules or discs (see
+    pad_item), tracks as capsules, vias as discs, per copper layer, tagged with net names; bucketed on a 1 mm grid
+    for fast lookups. hole_extra widens unplated holes, for a hole clearance above the copper clearance."""
     B = 1.0
 
-    def __init__(self, b, hole_pitch=0.55):
+    def __init__(self, b, hole_pitch=0.55, hole_extra=0.0):
         import pcbnew
         mm = pcbnew.ToMM
         self.hole_pitch = hole_pitch                         # drill 0.25 + hole-to-hole 0.25, plus margin
         self.via_pad_clr = 0.15
         self.items, self.buckets = [], {}                    # items: (layers, kind, geometry, net)
+        self.pads = set()                                    # ids of the items that are pads
+        cu = list(b.GetEnabledLayers().CuStack())
         for fp in b.GetFootprints():
             for q in fp.Pads():
-                r = q.GetBoundingBox()
-                layers = {l for l in (pcbnew.F_Cu, pcbnew.B_Cu) if q.IsOnLayer(l)}
-                self._add((layers, "rect", (mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom())), q.GetNetname()))
+                for ls, kind, g in pad_items(q, cu):
+                    if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and hole_extra > 0:
+                        g = (g[0], g[1] + hole_extra) if kind == "disc" else (g[0], g[1], g[2] + hole_extra)
+                    self._add((ls, kind, g, q.GetNetname()))
+                    self.pads.add(id(self.items[-1]))
         for t in b.GetTracks():
             if t.Type() == pcbnew.PCB_VIA_T:
                 self.add_via((mm(t.GetPosition().x), mm(t.GetPosition().y)), mm(t.GetWidth(pcbnew.F_Cu)) / 2, t.GetNetname())
@@ -216,9 +283,13 @@ class Copper:
     def clear(self, shape, layers, net, clr):
         """shape: ('disc', (c, r)) or ('seg', (a, z, hw)); True if clr from all other-net copper on layers."""
         kind, g = shape
-        for ils, ik, ig, inet in self.near(kind, g, max(clr, self.hole_pitch) + 0.05):
-            if kind == "disc" and ik == "rect" and inet == net:        # no via in or touching any pad, same net too
-                if _rect_dist(g[0], ig) - g[1] < self.via_pad_clr:
+        for it in self.near(kind, g, max(clr, self.hole_pitch) + 0.05):
+            ils, ik, ig, inet = it
+            if kind == "disc" and inet == net and id(it) in self.pads:  # no via in or touching any pad, same net too
+                c, r = g
+                d = _rect_dist(c, ig) if ik == "rect" else math.hypot(c[0] - ig[0][0], c[1] - ig[0][1]) - ig[1] \
+                    if ik == "disc" else _seg_dist(c, ig[0], ig[1]) - ig[2]
+                if d - r < self.via_pad_clr:
                     return False
                 continue
             if kind == "disc" and ik == "disc" and inet == net:        # same-net vias still need hole spacing
@@ -248,13 +319,20 @@ class Copper:
         return True
 
 
+def _copper(b, p):
+    """Copper(b) with the plan's via-to-pad clearance and, when HOLE_CLEARANCE is above CLEARANCE, unplated holes
+    widened by the difference."""
+    cu = Copper(b, hole_extra=max(0.0, p.get("HOLE_CLEARANCE", p["CLEARANCE"]) - p["CLEARANCE"]))
+    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    return cu
+
+
 def stitch_gnd(b, fps, p, area, track, via, skip=lambda ref: False):
     """Give every GND pad (outside `skip`) a via to the GND plane or pour: try spots around the pad, outward
     from its footprint first, and keep the first one clear of other-net copper on every layer and inside `area`."""
     import pcbnew
     mm = pcbnew.ToMM
-    cu = Copper(b)
-    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    cu = _copper(b, p)
     vr, clr = p["VIA"][0] / 2, p["CLEARANCE"]
     stub_w = p["GND_STUB_W"]
     placed, failed = 0, []
@@ -307,8 +385,7 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
     after each placement only the neighbours' candidate lists are re-checked. Returns (placed, failed)."""
     import pcbnew
     mm = pcbnew.ToMM
-    cu = Copper(b)
-    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    cu = _copper(b, p)
     vr, clr, sw = p["VIA"][0] / 2, p["CLEARANCE"], p["ESCAPE_W"]
     layer = pcbnew.F_Cu if layer is None else layer
     ok = lambda net, pxy, c: (cu.clear(("disc", (c, vr)), "all", net, clr)
@@ -432,9 +509,10 @@ DIRS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
 def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.0, layer_cost=None,
-             corridor=None, max_expand=600000, turn=0.6, hweight=1.0):
+             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None):
     """A* over (cell, layer): 8-connected moves within a layer, or a via to another allowed layer where via_ok.
-    sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. Returns [(cell, layer)]."""
+    sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. deadline: time.time() at which
+    to give up. Returns [(cell, layer)] or None."""
     layer_cost = layer_cost or {L: 1.0 for L in layers}
     tl = list(targets)
     if not tl:
@@ -456,6 +534,8 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
         if gc > best.get((st, di), 1e18):
             continue
         n += 1
+        if deadline and not n & 1023 and _time.time() > deadline:
+            return None
         if st in targets:
             path, k = [st], (st, di)
             while k in parent:
@@ -490,7 +570,7 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
     return None
 
 
-def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p):
+def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=None):
     """p["QUICK"]: give up early (corridors of 4 and 12 mm, 250k expansions each, no whole-board search), so a hard
     connection fails in seconds and is left for hand routing. p["HWEIGHT"] > 1 makes the A* greedier (weighted
     heuristic): far fewer expansions, paths slightly longer than optimal."""
@@ -498,13 +578,15 @@ def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p):
     allc = [s_[0] for s_ in src] + [t[0] for t in tgt]
     quick = p.get("QUICK", False)
     for m in ((40, 120) if quick else (40, 120, None)):  # corridor margin in cells, widening on failure
+        if deadline and _time.time() > deadline:
+            return None
         cor = None if m is None else (max(0, min(c[0] for c in allc) - m), max(0, min(c[1] for c in allc) - m),
                                       min(G0.nx - 1, max(c[0] for c in allc) + m), min(G0.ny - 1, max(c[1] for c in allc) + m))
         path = astar_ml(Gs, layers, net, clr + width / 2 + 0.02, width / 2, src, tgt, via_ok,
                         layer_cost={L: p.get("LAYER_COST", {}).get(L, p["IN1_COST"] if L == pcbnew.In1_Cu and "IN1_COST" in p
                                                                      else 1 + 0.25 * k) for k, L in enumerate(layers)},
                         corridor=cor, max_expand=250000 if quick else (600000 if m else 3000000),
-                        hweight=p.get("HWEIGHT", 1.0))
+                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline)
         if path:
             return path
     return None
@@ -521,16 +603,18 @@ def _simplify(path):
 
 
 def net_components(b, net_name, exclude):
-    """Connected groups of a net's copper (pads, vias, tracks); zones ignored. Returns list of item lists."""
+    """Connected groups of a net's copper (pads as inscribed shapes, vias, tracks); zones ignored. Returns list of
+    item lists."""
     import pcbnew
     mm = pcbnew.ToMM
-    items = []
+    items, barrels = [], []                              # barrels: (i, k), shapes of one pad on different layers
+    cu = list(b.GetEnabledLayers().CuStack())
     for fp in b.GetFootprints():
         for q in fp.Pads():
             if q.GetNetname() == net_name and (fp.GetReference(), q.GetNumber()) not in exclude:
-                r = q.GetBoundingBox()
-                ls = {l for l in (pcbnew.F_Cu, pcbnew.B_Cu) if q.IsOnLayer(l)}
-                items.append((ls, "rect", (mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom()))))
+                its = pad_items(q, cu, cover=False)
+                barrels += [(len(items), len(items) + k) for k in range(1, len(its))]
+                items += its
     for t in b.GetTracks():
         if t.GetNetname() != net_name:
             continue
@@ -564,6 +648,8 @@ def net_components(b, net_name, exclude):
         if ka == "seg":
             a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
         return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
+    for i, k in barrels:
+        par[find(i)] = find(k)
     for i in range(len(items)):
         for k in range(i + 1, len(items)):
             if find(i) != find(k) and dist(items[i], items[k]) <= 1e-3:
@@ -578,8 +664,7 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     """plan: [(net regex, [layer ids in preference order], width)]. For each matching net, join its copper groups
     one at a time: A* from the growing tree to the nearest other group, trying the layers in order.
     Returns (routed connections, [unrouted net names])."""
-    cu = Copper(b)
-    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    cu = _copper(b, p)
     clr = p["CLEARANCE"]
     grids = {}
     reach = _reach(clr, p["VIA"][0] / 2, *(w / 2 for _, _, w in plan))
@@ -594,25 +679,38 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     names = sorted({n.GetNetname() for n in b.GetNetsByNetcode().values() if n.GetNetname()})
     cu_layers = list(b.GetEnabledLayers().CuStack())
     done, failed = 0, []
+    stop = p.get("DEADLINE")
     for pattern, layers, width in plan:
         for net in [n for n in names if _re.fullmatch(pattern, n)]:
             groups = net_components(b, net, exclude)
             if len(groups) < 2:
                 continue
+            if stop and _time.time() > stop:                 # out of time: report, don't try
+                failed.append(net)
+                if _VERBOSE:
+                    print(f"   {_time.time() - _T0:6.1f}s {net}: not tried, out of time ({len(groups) - 1} connections)", flush=True)
+                continue
             netobj = b.FindNet(net)
+            pad_mids = _capsule_pad_mids(b, net, cu_layers)   # centres of its pads at an angle
             tree, rest = groups[0], groups[1:]
             while rest:
+                if stop and _time.time() > stop:             # out of time within the net: the rest is not tried
+                    failed.append(net)
+                    if _VERBOSE:
+                        print(f"   {_time.time() - _T0:6.1f}s {net}: out of time ({len(rest)} groups left)", flush=True)
+                    break
                 routed = False
                 Gs = {L: grid(L) for L in layers}
                 G0 = Gs[layers[0]]
                 src, tgt = set(), {}
                 ax = p.get("AXIAL_PADS", False)
                 for L in layers:
-                    src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax)}
+                    is_pad = lambda it: it[1] != "seg" or _mid(it) in pad_mids
+                    src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax and is_pad(it))}
                     for gi, grp in enumerate(rest):
                         for it in grp:
                             if it[0] == "all" or L in it[0]:
-                                for c in _cells(Gs[L], it, ax):
+                                for c in _cells(Gs[L], it, ax and is_pad(it)):
                                     tgt[(c, L)] = gi
                 vr = p["VIA"][0] / 2
                 vcache = {}
@@ -626,12 +724,14 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     return vcache[c]
                 path = None
                 w_used = width
+                dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
+                dl = min(dl) if dl else None
                 for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
                     if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
                         continue
                     w_used = w_try
-                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p) if src and tgt else None
-                    if path:
+                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
+                    if path or (dl and _time.time() > dl):
                         break
                 if path:
                     def centre(items, st):                       # pad / via centre of the item holding this cell
@@ -643,6 +743,8 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                                 return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)
                             if k == "disc" and math.hypot(xy[0] - g[0][0], xy[1] - g[0][1]) <= g[1]:
                                 return g[0]
+                            if k == "seg" and _mid((ls, k, g)) in pad_mids and _seg_dist(xy, g[0], g[1]) <= g[2]:
+                                return _mid((ls, k, g))      # a pad at an angle: its centre
                         return None
                     c_start = centre(tree, path[0])
                     c_end = centre(rest[tgt[path[-1]]], path[-1])
@@ -687,17 +789,30 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     done += 1
                     routed = True
                 if _VERBOSE:
-                    print(f"   {_time.time() - _T0:6.1f}s {net}: {'ok' if routed else 'FAILED'} ({len(rest)} groups left)", flush=True)
+                    why = "ok" if routed else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
+                    print(f"   {_time.time() - _T0:6.1f}s {net}: {why} ({len(rest)} groups left)", flush=True)
                 if not routed:                               # this tree is stuck: keep it, grow a new one
                     failed.append(net)
                     tree, rest = rest[0], rest[1:]
     return done, failed
 
 
+def _mid(it):
+    (a, z, _r) = it[2]
+    return (round((a[0] + z[0]) / 2, 4), round((a[1] + z[1]) / 2, 4))
+
+
+def _capsule_pad_mids(b, net, cu):
+    """Centres of the net's pads that pad_item models as capsules (pads at an angle), to tell them from tracks."""
+    return {_mid(it) for f in b.GetFootprints() for q in f.Pads() if q.GetNetname() == net
+            for it in pad_items(q, cu, cover=False) if it[1] == "seg"}
+
+
 def _cells(G, it, axial=False):
     """Grid cells lying inside an item's copper (with a small inset), for A* sources/targets.
-    axial: for pads, only cells on the pad's long centre line (both lines for a square pad), so a route enters along
-    the axis and its last segment to the pad centre stays inside the pad: every track then ends on the centre."""
+    axial: for pads, only cells on the pad's long centre line (both lines for a square pad; the capsule's spine for a
+    pad at an angle), so a route enters along the axis and its last segment to the pad centre stays inside the pad:
+    every track then ends on the centre."""
     ls, kind, geom = it
     x0, y0, x1, y1 = Copper._bbox(kind, geom)
     out, g, A = [], G.g, G.area
@@ -714,7 +829,7 @@ def _cells(G, it, axial=False):
             elif kind == "disc":
                 ok = math.hypot(p[0] - geom[0][0], p[1] - geom[0][1]) <= geom[1] - 0.05
             else:
-                ok = _seg_dist(p, geom[0], geom[1]) <= geom[2] - 0.02
+                ok = _seg_dist(p, geom[0], geom[1]) <= (min(geom[2] - 0.02, g * 0.51) if axial else geom[2] - 0.02)
             if ok:
                 out.append((i, j))
     return out
@@ -726,8 +841,7 @@ def tie_pads(b, p, area, pads, net, layers, width, track, via_fn, outline=None):
     serve): one A* per pad, from the pad to any via of the net. Returns (tied, failed)."""
     import pcbnew
     mm = pcbnew.ToMM
-    cu = Copper(b)
-    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    cu = _copper(b, p)
     clr, vr = p["CLEARANCE"], p["VIA"][0] / 2
     reach = _reach(clr, width / 2)
     Gs = {L: Grid(cu, L, area, reach=reach, outline=outline, edge_clr=p["EDGE_CLR"]) for L in layers}
@@ -738,9 +852,7 @@ def tie_pads(b, p, area, pads, net, layers, width, track, via_fn, outline=None):
     tied, failed = 0, []
     for ref, num in pads:
         q = next(q for f in b.GetFootprints() if f.GetReference() == ref for q in f.Pads() if q.GetNumber() == num)
-        r = q.GetBoundingBox()
-        it = ({L for L in layers if q.IsOnLayer(L)}, "rect", (mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom())))
-        src = {(c, L) for L in it[0] for c in _cells(Gs[L], it)}
+        src = {(c, L) for it in pad_items(q, layers, cover=False) for L in it[0] for c in _cells(Gs[L], it)}
         tgt = {(c, L): 0 for L in layers for v in vias for c in _cells(Gs[L], v)}
         path = _route_once(Gs, layers, net, clr, width, src, tgt, lambda c: False, G0, p) if src and tgt else None
         if not path:
@@ -769,8 +881,7 @@ def plane_vias(b, p, area, net_name, size, track, via, per_pad=lambda q: 1, radi
     import pcbnew
     T = pcbnew.ToMM
     layer = pcbnew.F_Cu if layer is None else layer
-    cu = Copper(b)
-    cu.via_pad_clr = p.get("VIA_PAD_CLR", 0.15)
+    cu = _copper(b, p)
     vr, clr, netobj = size[0] / 2, p["CLEARANCE"], b.FindNet(net_name)
     placed, failed = 0, []
     pads = [(f.GetReference(), q) for f in b.GetFootprints() for q in f.Pads()
@@ -825,6 +936,46 @@ def neckdown(b, fine_refs=(), min_w=0.2, clr=0.2):
             while t.GetWidth() > mm(min_w) and q.GetEffectiveShape(t.GetLayer()).Collide(t.GetEffectiveShape(), mm(clr)):
                 t.SetWidth(max(mm(min_w), t.GetWidth() - mm(0.1))); fixed += 1
     return fixed
+
+
+def snap_to_pad_centres(b, track, clr=0.2, min_w=0.2):
+    """Finish each track end that audit_track_ends calls off-centre (alone, inside a same-net pad, not on its centre)
+    with a segment to the pad centre on the track's layer: at the track's width if that keeps clr from other-net
+    copper, else necked down (min_w at the narrowest), else the end stays as it is. complete_nets ends on centres itself;
+    this is for routes from elsewhere. Returns the number of segments added."""
+    import pcbnew
+    T = pcbnew.ToMM
+    cu = Copper(b)
+    key = lambda x, y: (round(x / 2000), round(y / 2000))
+    tracks = [t for t in b.GetTracks() if t.Type() != pcbnew.PCB_VIA_T]
+    ends = Counter((key(e.x, e.y), t.GetLayer()) for t in tracks for e in (t.GetStart(), t.GetEnd()))
+    vias = {key(v.GetPosition().x, v.GetPosition().y) for v in b.GetTracks() if v.Type() == pcbnew.PCB_VIA_T}
+    pads, by_net = {}, {}
+    for f in b.GetFootprints():
+        for q in f.Pads():
+            pads.setdefault(q.GetNetname(), []).append(q)
+    for t in tracks:
+        by_net.setdefault((t.GetNetname(), t.GetLayer()), []).append(t)
+    added = 0
+    for t in tracks:
+        for e in (t.GetStart(), t.GetEnd()):
+            k = key(e.x, e.y)
+            if ends[(k, t.GetLayer())] > 1 or k in vias:
+                continue
+            if any(s is not t and s.HitTest(e, 0) for s in by_net[(t.GetNetname(), t.GetLayer())]):
+                continue                                     # a T-junction onto another track: joined already
+            for q in pads.get(t.GetNetname(), ()):
+                c = q.GetPosition()
+                if q.IsOnLayer(t.GetLayer()) and key(c.x, c.y) != k and q.HitTest(e):
+                    a, z, L, w0 = (T(e.x), T(e.y)), (T(c.x), T(c.y)), t.GetLayer(), T(t.GetWidth())
+                    for w in (w0, max(min_w, round(w0 * 0.6, 2)), min_w):   # as complete_nets' to_centre
+                        if w <= w0 and cu.clear(("seg", (a, z, w / 2)), {L}, t.GetNetname(), clr):
+                            track(a, z, w, L, t.GetNet())
+                            cu.add_track(a, z, w / 2, L, t.GetNetname())
+                            added += 1
+                            break
+                    break
+    return added
 
 
 def audit_track_ends(b):

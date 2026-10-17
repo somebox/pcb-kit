@@ -14,7 +14,7 @@ IN1_COST (old name for the In1 cost), HOLE_CLEARANCE (unplated holes keep this f
 CLEARANCE), CONN_SECONDS (time for one connection, all its widths and corridors; a failed connection otherwise uses
 its whole expansion budget, which dominates a run: 40 s each in QUICK mode, minutes without), DEADLINE (time.time()
 after which complete_nets tries nothing more and reports the rest as failed). Pads are obstacles on every copper
-layer they reach (see pad_item), unplated holes on all of them.
+layer they reach, with their shape on that layer (see pad_items), unplated holes on all of them.
 `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
 and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).
@@ -162,11 +162,26 @@ def _rect_dist(p, r):
     return (dx * dx + dy * dy) ** 0.5
 
 
-def pad_item(q, cu_layers, cover=True):
+def pad_items(q, cu_layers, cover=True):
+    """pad_item for each shape a pad has on cu_layers: one, unless its padstack differs by layer (KiCad's
+    front/inner/back and custom modes), then one per group of layers sharing a shape. They are one plated pad, so
+    they connect (net_components joins them)."""
+    import pcbnew
+    groups = {}
+    for L in cu_layers:
+        if q.IsOnLayer(L):
+            groups.setdefault(q.Padstack().EffectiveLayerFor(L), []).append(L)
+    if len(groups) < 2 or q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+        return [pad_item(q, cu_layers, cover)]
+    return [pad_item(q, ls, cover, ls[0]) for ls in groups.values()]
+
+
+def pad_item(q, cu_layers, cover=True, layer=None):
     """(layers, kind, geometry) of a pad, board mm. Square to the axes: its bounding box ("rect"). Round: a "disc".
     At any other angle a "seg" capsule along the long side: with cover, wide enough to cover the corners (an obstacle);
-    without, inscribed in the pad (connectivity, route ends). A plated pad is on every copper layer it reaches, inner
-    ones included; an unplated hole is a disc of the drill on all of cu_layers."""
+    without, inscribed in the pad (connectivity, route ends). A plated pad is on every copper layer of cu_layers it
+    reaches, inner ones included, with its shape on `layer` (default its front, or its back if it has no front; see
+    pad_items for a padstack that differs by layer); an unplated hole is a disc of the drill on all of cu_layers."""
     import pcbnew
     mm = pcbnew.ToMM
     if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
@@ -179,7 +194,8 @@ def pad_item(q, cu_layers, cover=True):
         hl, r = abs(mm(d.x) - mm(d.y)) / 2, min(mm(d.x), mm(d.y)) / 2
         return set(cu_layers), "seg", ((c[0] - ux * hl, c[1] - uy * hl), (c[0] + ux * hl, c[1] + uy * hl), r)
     layers = {L for L in cu_layers if q.IsOnLayer(L)}
-    L = pcbnew.B_Cu if q.IsOnLayer(pcbnew.B_Cu) and not q.IsOnLayer(pcbnew.F_Cu) else pcbnew.F_Cu
+    L = layer if layer is not None else pcbnew.B_Cu if q.IsOnLayer(pcbnew.B_Cu) and not q.IsOnLayer(pcbnew.F_Cu) \
+        else pcbnew.F_Cu
     shape, ang = q.GetShape(L), q.GetOrientationDegrees() % 90
     sp = q.ShapePos(L)
     c = (mm(sp.x), mm(sp.y))
@@ -187,7 +203,7 @@ def pad_item(q, cu_layers, cover=True):
         return layers, "disc", (c, mm(q.GetSize(L).x) / 2)
     if min(ang, 90 - ang) < 0.5 or shape not in (pcbnew.PAD_SHAPE_RECT, pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_OVAL,
                                                  pcbnew.PAD_SHAPE_CHAMFERED_RECT):
-        r = q.GetBoundingBox()                                     # also trapezoids and custom shapes, any angle
+        r = q.GetEffectiveShape(L).BBox()                          # also trapezoids and custom shapes, any angle
         return layers, "rect", (mm(r.GetLeft()), mm(r.GetTop()), mm(r.GetRight()), mm(r.GetBottom()))
     w, h = mm(q.GetSize(L).x), mm(q.GetSize(L).y)
     o = math.radians(q.GetOrientationDegrees())
@@ -197,6 +213,8 @@ def pad_item(q, cu_layers, cover=True):
     if cover and shape != pcbnew.PAD_SHAPE_OVAL:                   # an oval pad is the capsule itself
         rr = mm(q.GetRoundRectCornerRadius(L)) if shape == pcbnew.PAD_SHAPE_ROUNDRECT else 0.0
         r += (short / 2 - rr) * (math.sqrt(2) - 1) + 0.01
+    elif not cover and shape == pcbnew.PAD_SHAPE_CHAMFERED_RECT and q.GetChamferPositions(L):
+        r = min(r, short * (1 - q.GetChamferRectRatio(L)) / math.sqrt(2))   # inside the cut corners (ratio > 0.29)
     return layers, "seg", ((c[0] - ux * hl, c[1] - uy * hl), (c[0] + ux * hl, c[1] + uy * hl), r)
 
 
@@ -216,11 +234,11 @@ class Copper:
         cu = list(b.GetEnabledLayers().CuStack())
         for fp in b.GetFootprints():
             for q in fp.Pads():
-                ls, kind, g = pad_item(q, cu)
-                if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and hole_extra > 0:
-                    g = (g[0], g[1] + hole_extra) if kind == "disc" else (g[0], g[1], g[2] + hole_extra)
-                self._add((ls, kind, g, q.GetNetname()))
-                self.pads.add(id(self.items[-1]))
+                for ls, kind, g in pad_items(q, cu):
+                    if q.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and hole_extra > 0:
+                        g = (g[0], g[1] + hole_extra) if kind == "disc" else (g[0], g[1], g[2] + hole_extra)
+                    self._add((ls, kind, g, q.GetNetname()))
+                    self.pads.add(id(self.items[-1]))
         for t in b.GetTracks():
             if t.Type() == pcbnew.PCB_VIA_T:
                 self.add_via((mm(t.GetPosition().x), mm(t.GetPosition().y)), mm(t.GetWidth(pcbnew.F_Cu)) / 2, t.GetNetname())
@@ -589,12 +607,14 @@ def net_components(b, net_name, exclude):
     item lists."""
     import pcbnew
     mm = pcbnew.ToMM
-    items = []
+    items, barrels = [], []                              # barrels: (i, k), shapes of one pad on different layers
     cu = list(b.GetEnabledLayers().CuStack())
     for fp in b.GetFootprints():
         for q in fp.Pads():
             if q.GetNetname() == net_name and (fp.GetReference(), q.GetNumber()) not in exclude:
-                items.append(pad_item(q, cu, cover=False))
+                its = pad_items(q, cu, cover=False)
+                barrels += [(len(items), len(items) + k) for k in range(1, len(its))]
+                items += its
     for t in b.GetTracks():
         if t.GetNetname() != net_name:
             continue
@@ -628,6 +648,8 @@ def net_components(b, net_name, exclude):
         if ka == "seg":
             a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
         return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
+    for i, k in barrels:
+        par[find(i)] = find(k)
     for i in range(len(items)):
         for k in range(i + 1, len(items)):
             if find(i) != find(k) and dist(items[i], items[k]) <= 1e-3:
@@ -672,6 +694,11 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
             pad_mids = _capsule_pad_mids(b, net, cu_layers)   # centres of its pads at an angle
             tree, rest = groups[0], groups[1:]
             while rest:
+                if stop and _time.time() > stop:             # out of time within the net: the rest is not tried
+                    failed.append(net)
+                    if _VERBOSE:
+                        print(f"   {_time.time() - _T0:6.1f}s {net}: out of time ({len(rest)} groups left)", flush=True)
+                    break
                 routed = False
                 Gs = {L: grid(L) for L in layers}
                 G0 = Gs[layers[0]]
@@ -778,7 +805,7 @@ def _mid(it):
 def _capsule_pad_mids(b, net, cu):
     """Centres of the net's pads that pad_item models as capsules (pads at an angle), to tell them from tracks."""
     return {_mid(it) for f in b.GetFootprints() for q in f.Pads() if q.GetNetname() == net
-            for it in [pad_item(q, cu, cover=False)] if it[1] == "seg"}
+            for it in pad_items(q, cu, cover=False) if it[1] == "seg"}
 
 
 def _cells(G, it, axial=False):
@@ -825,8 +852,7 @@ def tie_pads(b, p, area, pads, net, layers, width, track, via_fn, outline=None):
     tied, failed = 0, []
     for ref, num in pads:
         q = next(q for f in b.GetFootprints() if f.GetReference() == ref for q in f.Pads() if q.GetNumber() == num)
-        it = pad_item(q, layers, cover=False)
-        src = {(c, L) for L in it[0] for c in _cells(Gs[L], it)}
+        src = {(c, L) for it in pad_items(q, layers, cover=False) for L in it[0] for c in _cells(Gs[L], it)}
         tgt = {(c, L): 0 for L in layers for v in vias for c in _cells(Gs[L], v)}
         path = _route_once(Gs, layers, net, clr, width, src, tgt, lambda c: False, G0, p) if src and tgt else None
         if not path:
@@ -912,12 +938,14 @@ def neckdown(b, fine_refs=(), min_w=0.2, clr=0.2):
     return fixed
 
 
-def snap_to_pad_centres(b, track):
+def snap_to_pad_centres(b, track, clr=0.2, min_w=0.2):
     """Finish each track end that audit_track_ends calls off-centre (alone, inside a same-net pad, not on its centre)
-    with a segment to the pad centre, at the track's width and on its layer. complete_nets ends on centres itself;
+    with a segment to the pad centre on the track's layer: at the track's width if that keeps clr from other-net
+    copper, else necked down (min_w at the narrowest), else the end stays as it is. complete_nets ends on centres itself;
     this is for routes from elsewhere. Returns the number of segments added."""
     import pcbnew
     T = pcbnew.ToMM
+    cu = Copper(b)
     key = lambda x, y: (round(x / 2000), round(y / 2000))
     tracks = [t for t in b.GetTracks() if t.Type() != pcbnew.PCB_VIA_T]
     ends = Counter((key(e.x, e.y), t.GetLayer()) for t in tracks for e in (t.GetStart(), t.GetEnd()))
@@ -939,8 +967,13 @@ def snap_to_pad_centres(b, track):
             for q in pads.get(t.GetNetname(), ()):
                 c = q.GetPosition()
                 if q.IsOnLayer(t.GetLayer()) and key(c.x, c.y) != k and q.HitTest(e):
-                    track((T(e.x), T(e.y)), (T(c.x), T(c.y)), T(t.GetWidth()), t.GetLayer(), t.GetNet())
-                    added += 1
+                    a, z, L, w0 = (T(e.x), T(e.y)), (T(c.x), T(c.y)), t.GetLayer(), T(t.GetWidth())
+                    for w in (w0, max(min_w, round(w0 * 0.6, 2)), min_w):   # as complete_nets' to_centre
+                        if w <= w0 and cu.clear(("seg", (a, z, w / 2)), {L}, t.GetNetname(), clr):
+                            track(a, z, w, L, t.GetNet())
+                            cu.add_track(a, z, w / 2, L, t.GetNetname())
+                            added += 1
+                            break
                     break
     return added
 

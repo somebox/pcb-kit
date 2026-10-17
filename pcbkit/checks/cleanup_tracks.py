@@ -162,28 +162,33 @@ def dangling(board, pcbnew):
     def holds(kind, o, L, pt):
         return shape(kind, o, L).Contains(pt) if kind in ("island", "zone") else shape(kind, o, L).Collide(pt, 0)
 
-    gone, cut = {}, True
-    candidates = [t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()]
-    while cut:
-        cut = False
-        for t in candidates:
-            u = t.m_Uuid.AsString()
-            if u in gone:
-                continue
+    candidates = {t.m_Uuid.AsString(): t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T and not t.IsLocked()}
+    contacts = {}                                      # uuid -> [(kind, item, its uuid if a track)], found once
+
+    def touching(u, t):
+        if u not in contacts:
             L, tb, ts = t.GetLayer(), box(t), shape("track", t, t.GetLayer())
-            touching = [(k, o) for k, o, ob in by[(t.GetNetCode(), L)]
-                        if o is not t and not (k == "track" and o.m_Uuid.AsString() in gone)
-                        and ob[0] <= tb[2] and tb[0] <= ob[2] and ob[1] <= tb[3] and tb[1] <= ob[3]
-                        and shape(k, o, L).Collide(ts, 0)]
-            if any(k == "zone" for k, _ in touching):
-                continue
-            ends = (t.GetStart(), t.GetEnd())
-            for i in (0, 1):
-                if not any(holds(k, o, L, ends[i]) for k, o in touching) and \
-                        all(holds(k, o, L, ends[1 - i]) for k, o in touching):
-                    gone[u] = "dangling"
-                    cut = True
-                    break
+            contacts[u] = [(k, o, o.m_Uuid.AsString() if k == "track" else None) for k, o, ob in by[(t.GetNetCode(), L)]
+                           if o is not t and ob[0] <= tb[2] and tb[0] <= ob[2] and ob[1] <= tb[3] and tb[1] <= ob[3]
+                           and shape(k, o, L).Collide(ts, 0)]
+        return [(k, o, ou) for k, o, ou in contacts[u] if ou not in gone]
+
+    gone, todo = {}, list(candidates)
+    while todo:                                        # a removal can only make its neighbours leaves: re-check those
+        u = todo.pop()
+        if u in gone:
+            continue
+        t = candidates[u]
+        near = touching(u, t)
+        if any(k == "zone" for k, _, _ in near):
+            continue
+        L, ends = t.GetLayer(), (t.GetStart(), t.GetEnd())
+        for i in (0, 1):
+            if not any(holds(k, o, L, ends[i]) for k, o, _ in near) and \
+                    all(holds(k, o, L, ends[1 - i]) for k, o, _ in near):
+                gone[u] = "dangling"
+                todo += [ou for _, _, ou in near if ou in candidates]
+                break
     return gone
 
 

@@ -34,15 +34,15 @@ and spotlight (rgb-spotlight) repos were byte-identical; the kit version is the 
 | Project | State |
 | --- | --- |
 | siebenuhr controller-v2 | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `scripts/builder.py` is a 15-line glue module, the copied scripts are gone, README lists the pcbkit commands. Its own routing chain (`scripts/route/`, built on KiCadRoutingTools) is untouched |
-| rp2354-messages-sign | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `builder.py` is glue that becomes `pcbkit.schematic` (its module/archive scripts set `builder.P`), the three `make_*.sh` wrappers call `pcbkit previews/panel/fab`, `netcheck.py` sits on the kit's parser. Kept: `char_variants.py`, the generators, `route_strip.py`, `route_controller.py`, `resilk.py`, `renumber_controller.py`, `check_char_netlist.py` |
+| rp2354-messages-sign | migrated 2026-10-10 (commit `scripts: use pcb-kit for the shared tooling`): `builder.py` is glue that becomes `pcbkit.schematic` (its module/archive scripts set `builder.P`), the three `make_*.sh` wrappers call `pcbkit previews/panel/fab`, `netcheck.py` sits on the kit's parser. Kept: `char_variants.py`, the generators, `route_strip.py`, `route_controller.py`, `resilk.py`, `renumber_controller.py`, `check_char_netlist.py`. 2026-10-18: `route_strip.py` is cut to the LED-strip fan-in and the escape pin lists; `gen_char_module.py` calls `pcbkit.route` for GND stitching, escape vias, pad ties and the maze router, and `route_controller.py` uses its `writer`, `plane_vias`, `neckdown` and `audit_track_ends`. `make_panel.sh` passes `--hide-refs` |
 | rgb-spotlight | migrated 2026-10-10, committed in that repo as `05d2b1d`. `builder.py` is glue that becomes `pcbkit.schematic` (power symbols GND, +5V, +12V), `netcheck.py` keeps its driver-board assertions on the kit's parser, `set_outline.py` and the two `make_*_pcb.sh` use `pcbkit drc`, `make_previews.sh` wraps `pcbkit previews`. 2026-10-11: `mech.strip_outline_file` uses `pcbkit.mech.top_level_blocks`; `scripts/make_fab.sh` from `templates/project`; LAYOUT.md and PRODUCTION.md per CONVENTIONS; `pcbkit check` findings fixed or explained (open 12 V ring, net-class width); `sim/channel.py` on `pcbkit.spice` (behavioural PT4115 channel). Kept: `mech.py` (outline presets), `make_lib.py`, `ratsnest.py`, `route_driver.py`, `route_strip.py`, the generators |
 | dodeca-v2-hardware | not yet; v1.3 stays as is until it is ordered |
 
 ## Still in the projects (candidates for the next pass)
 
-- `scripts/route_strip.py` (sign and spotlight): its generic router moved to `pcbkit/route.py` on 2026-10-12 (the
-  8-line divergence was spotlight's round outline, kept). Both repos still import their own copy; switch them to
-  `pcbkit.route` when next touched. The sign's LED-strip fan-in stays there.
+- `scripts/route_strip.py` (spotlight): its generic router moved to `pcbkit/route.py` on 2026-10-12 (the 8-line
+  divergence was spotlight's round outline, kept). Spotlight still imports its own copy; switch it to `pcbkit.route`
+  when next touched. The sign switched on 2026-10-18 and keeps only its LED-strip fan-in.
 - `scripts/gen_*_pcb.py`, `sch_*.py`, `mod_*.py`, `ctl_*.py`: board generators. Project data by nature, but they share
   a shape (placement tables, `build()` calls) that a `pcbkit.board` module could carry: the collision-checked spiral
   placement and zone/stackup setup in dodeca's `pcb_build.py`.

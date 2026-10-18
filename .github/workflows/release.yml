@@ -18,7 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: python3 scripts/release.py check ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      # The tag name reaches the shell only through the environment, quoted: a v* tag can hold ; $ ( ) and the like,
+      # and release.py refuses anything that is not vX.Y.Z before it is used.
+      - env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: python3 scripts/release.py check ${TAG:+"$TAG"}
 
   publish:
     name: Publish release

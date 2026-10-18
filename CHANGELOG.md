@@ -25,6 +25,8 @@ Routing, placement scoring and a failure review before each order.
   failure modes and how to diagnose them, test points and rework provisions, and a briefing for the user before
   any change. `checklist.md` lists what to check per kind of block.
 - **`"head"` on a mounting hole** in `enclosure.json` adds a courtyard ring and an F.Cu keep-out under the screw head.
+- **`pcbkit panel --hide-refs REGEX`** leaves matching references off the printable panel PDF (with `--previews`),
+  as `pcbkit previews` already did.
 - **Releases.** This changelog, `scripts/release.py` (bump, check, tag) and a workflow that publishes a GitHub
   release when a `v*` tag is pushed.
 

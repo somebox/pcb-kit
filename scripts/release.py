@@ -32,7 +32,8 @@ FILES = [
     ("package.json", r'^(  "version": ")([^"]+)(")'),
     (".claude-plugin/plugin.json", r'^(  "version": ")([^"]+)(")'),
 ]
-SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+# X.Y.Z in ASCII digits, no leading zeroes (SemVer 2.0.0 §2); used with fullmatch, so no trailing newline either
+SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 def fail(msg):
@@ -49,11 +50,22 @@ def versions():
     return out
 
 
+def version_arg(text):
+    """X.Y.Z or vX.Y.Z from the command line or a tag name; anything else stops the run."""
+    v = text[1:] if text.startswith("v") else text
+    if not SEMVER.fullmatch(v):
+        fail(f"{text!r} is not X.Y.Z (ASCII digits, no leading zeroes)")
+    return v
+
+
 def current():
     v = versions()
     if len(set(v.values())) != 1:
         fail("versions disagree: " + ", ".join(f"{k} {x}" for k, x in v.items()))
-    return next(iter(v.values()))
+    ver = next(iter(v.values()))
+    if not SEMVER.fullmatch(ver):
+        fail(f"the files say {ver!r}, which is not X.Y.Z (ASCII digits, no leading zeroes)")
+    return ver
 
 
 def sections():
@@ -101,8 +113,6 @@ def cmd_check(want=None):
 
 
 def cmd_bump(new):
-    if not SEMVER.match(new):
-        fail(f"{new} is not X.Y.Z")
     old = current()
     if tuple(map(int, new.split("."))) <= tuple(map(int, old.split("."))):
         fail(f"{new} is not above the current {old}")
@@ -156,18 +166,18 @@ def main(argv):
         return
     cmd, rest = argv[0], argv[1:]
     if cmd == "check" and len(rest) <= 1:
-        cmd_check(rest[0].lstrip("v") if rest else None)
+        cmd_check(version_arg(rest[0]) if rest else None)
     elif cmd == "bump" and len(rest) == 1:
-        cmd_bump(rest[0].lstrip("v"))
+        cmd_bump(version_arg(rest[0]))
     elif cmd == "tag" and not rest:
         cmd_tag()
     elif cmd == "notes" and len(rest) == 1:
-        body = section(rest[0].lstrip("v"))
+        body = section(version_arg(rest[0]))
         if not body:
             fail(f"no ## [{rest[0]}] section in CHANGELOG.md")
         print(body)
     elif cmd == "title" and len(rest) == 1:
-        cmd_title(rest[0].lstrip("v"))
+        cmd_title(version_arg(rest[0]))
     else:
         fail("usage: release.py check [X.Y.Z] | bump X.Y.Z | tag | notes X.Y.Z | title X.Y.Z")
 

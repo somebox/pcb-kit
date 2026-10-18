@@ -240,6 +240,7 @@ skills/            SKILL.md folders, one per workflow (Claude Code plugin manife
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
 docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), images/
+scripts/release.py version bump, check and tag; CHANGELOG.md lists each release, AGENTS.md says how to cut one
 ```
 
 ## Status

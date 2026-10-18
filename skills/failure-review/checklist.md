@@ -13,8 +13,10 @@ it mattered.
   None floating unless the datasheet gives an internal pull (the CH224K has none on CFG2/CFG3; the CH224A does).
 - Absolute maximum of each pin in every state, including with the chip unpowered while its neighbours are not.
 - Decoupling as the datasheet asks, at the pins it names.
-- The state at power-up before any firmware runs: enables, gates, outputs. A FET gate driven from a GPIO has a
-  pull-down, so the load stays off while the pin floats at reset.
+- The state at power-up before any firmware runs: enables, gates, outputs. A FET switched from a GPIO is held off
+  by a resistor from gate to source while the pin floats at reset: a pull-down for a low-side N-FET, a pull-up to
+  the source rail for a high-side P-FET (a pull-down there turns it on). dodeca v1.3's USB gate does both: R113 holds
+  P-FET Q101's gate at its source, R114 holds its N-FET driver Q102 off.
 
 ## Power input and protection
 

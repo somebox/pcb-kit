@@ -13,8 +13,9 @@ Worked example: `~/Documents/Projects/esp32-s3-ha-node` (`boards/node/enclosure.
    the frame; scale from the millimetre ticks and expect about 0.5 mm accuracy on flat features and over 1 mm
    error on tall ones (bosses, standoffs) from parallax.
 2. **Describe it** in `boards/<b>/enclosure.json`: board size and corner radius, mounting holes (hole and boss
-   diameter), keep-outs (lid bosses), cut-outs around bosses (clearance, fillet), and reference drawings (lid
-   inside, plateau, connector zones). Write where each number came from.
+   diameter; `"head"`, the screw head's diameter, when the screws go in from the top: a courtyard ring and an F.Cu
+   keep-out for tracks, vias and fills under it), keep-outs (lid bosses), cut-outs around bosses (clearance,
+   fillet), and reference drawings (lid inside, plateau, connector zones). Write where each number came from.
 3. **Apply:** `pcbkit outline boards/<b>/<b>.kicad_pcb boards/<b>/enclosure.json --fit-check docs/fit-check.pdf`.
    Rerunnable; it replaces only what it made.
 4. **Print and cut.** The user prints at 100 %, measures the 50 mm scale bar and a dimension line, cuts along the

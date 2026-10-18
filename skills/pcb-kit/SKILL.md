@@ -18,6 +18,7 @@ the interpreter.
 | Is the board clean? | `pcbkit drc BOARD --save` (refills zones and writes the board back; 0 errors, 0 unconnected, 0 parity) |
 | Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds), `pcbkit cleanup BOARD --dry-run` (after a scripted route: `--dangling` too) |
 | Where should this block go? Which output drives which net? | `pcbkit place-score BOARD --study scripts/place_study.py --search --svg out.svg --png out.png`; see the placement-study skill; route only the winner |
+| Route a board by script | a project script under KiCad's Python: `pcbkit.route.complete_nets(board, P, area, plan, track, via, outline=..)` with `plan = [(net regex, [layers], width)]` and `QUICK`, `CONN_SECONDS` and `DEADLINE` in `P` so a run has an end; then `snap_to_pad_centres`, `audit_track_ends`, `pcbkit cleanup --dangling`, `pcbkit drc --save`. Worked example: esp32-s3-ha-node `scripts/route_pcb.py` |
 | Review a power stage | `pcbkit netview BOARD out.svg X0 Y0 X1 Y1 --layer B.Cu --png out.png`, then look at the PNG |
 | Update the docs' pictures | `pcbkit previews BOARD docs/previews/<board>` |
 | Order files | `pcbkit fab BOARD build/fab/<board>`; panels: `pcbkit panel BOARD build/panels/<board> --style both` |

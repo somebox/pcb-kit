@@ -4,6 +4,6 @@
   "description": "Shared KiCad workflow skills for pi-agent (the pcbkit CLI is installed separately with uv)",
   "private": true,
   "pi": {
-    "skills": ["skills/pcb-kit", "skills/visual-review", "skills/power-sim", "skills/bom-cost", "skills/enclosure-fit", "skills/placement-study"]
+    "skills": ["skills/pcb-kit", "skills/visual-review", "skills/power-sim", "skills/bom-cost", "skills/enclosure-fit", "skills/placement-study", "skills/failure-review"]
   }
 }

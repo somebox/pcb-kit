@@ -118,6 +118,16 @@ LED rail voltage and inductor current through load steps, an overload and start-
 
 <img src="docs/images/sim-load-steps.png" width="720" alt="Six panels of simulated LED rail voltage and inductor current for load steps, overload and start-up">
 
+### Find what could fail before ordering
+
+The failure-review skill checks each block against its datasheets, the vendor's reference design and what earlier
+boards taught, lists what could go wrong once the boards are back, with how each failure would show up on the
+bench and how to tell it from the others, and settles the doubtful ones by calculation or simulation. It plans test
+points, 0 Ω links and DNP options for the measurements and rework a finding might need, and ends with a briefing for
+the user to decide from before anything is changed. Its examples are the dodeca v1.3 power review, where a
+simulation caught a test that would have misread good boards, and siebenuhr's analysis of a controller that failed
+in the field.
+
 ### Know what the board costs
 
 bomi keeps the BOM in sync with the schematic and refreshes stock and price from JLC/LCSC; `pcbkit jlc` searches
@@ -150,6 +160,7 @@ panels with rails, fiducials and tooling holes, and runs DRC on each.
 | [power-sim](skills/power-sim/SKILL.md) | one ngspice script per design question; averaged models when vendor models stall |
 | [bom-cost](skills/bom-cost/SKILL.md) | the proven-parts catalog first, then bomi: stock checks, Extended-part fees, what goes into BOM.md |
 | [placement-study](skills/placement-study/SKILL.md) | scoring placements by their ratsnest, the study file, searching, and routing only the winner |
+| [failure-review](skills/failure-review/SKILL.md) | before an order: datasheets and reference designs, failure modes and how to diagnose them, test points, a briefing before any change |
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the project layout and writing style they all assume: dated status
 lines, numbered decisions, generated files that say what made them.
@@ -238,5 +249,5 @@ repos; see [docs/HARVEST.md](docs/HARVEST.md) for where each piece came from and
 siebenuhr, the message sign and the spotlight use the kit; dodeca still runs its own tools until v1.3 is ordered.
 Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), `pcbkit spice` (2026-10-11,
 from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), placement
-scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron), and the router's time limits
-(2026-10-17, for esp32-s3-ha-node).
+scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron), the router's time limits
+(2026-10-17, for esp32-s3-ha-node), and the failure-review skill (2026-10-18, from the dodeca and siebenuhr reviews).

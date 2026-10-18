@@ -28,10 +28,12 @@ the interpreter.
 | Which part did we use for this before? | `library/PARTS.md` in this kit; `pcbkit parts TEXT` shows its current stock |
 | Find a part quickly | `pcbkit jlc --desc "%...%" --package "0402%" --basic`; for a researched BOM use bomi |
 | Does a rail survive a load step, does reset trip? | `pcbkit spice deck.cir --gear-retry`; see the power-sim skill |
+| Is it ready to order? What could fail once it's built? Where do test points go? | the failure-review skill: references, failure modes, tests, a briefing in `docs/reviews/`; no edits until the user has read it |
 
 Related skills in this kit: **visual-review** (which picture answers which question), **power-sim** (ngspice),
 **bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test), **placement-study**
-(score placements by their ratsnest, route only the winner).
+(score placements by their ratsnest, route only the winner), **failure-review** (what could fail after fab, how
+we'd find it, test points).
 
 ## Rules
 

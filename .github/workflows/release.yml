@@ -1,0 +1,43 @@
+name: Release
+
+# On a pull request: the four version strings agree and CHANGELOG.md has the current version's section.
+# On a pushed v* tag (made by `python3 scripts/release.py tag`): the same check against the tag, then a GitHub
+# release titled and described from that CHANGELOG.md section. Nothing is built: projects use a checkout of the kit.
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    name: Versions agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # The tag name reaches the shell only through the environment, quoted: a v* tag can hold ; $ ( ) and the like,
+      # and release.py refuses anything that is not vX.Y.Z before it is used.
+      - env:
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: python3 scripts/release.py check ${TAG:+"$TAG"}
+
+  publish:
+    name: Publish release
+    needs: versions
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    steps:
+      - uses: actions/checkout@v5
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release.py notes "$TAG" > notes.md
+          gh release create "$TAG" --verify-tag --title "$(python3 scripts/release.py title "$TAG")" --notes-file notes.md

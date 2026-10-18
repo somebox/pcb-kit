@@ -14,3 +14,19 @@ sees inside a project.
 - Test a change on more than one project's boards before committing: the sign, siebenuhr, spotlight and dodeca
   repos are the corpus.
 - Commit messages: imperative, prefixed with the area (`checks:`, `release:`, `schematic:`, `skills:`, `docs:`).
+
+## Releases
+
+Versions follow semver; before 1.0 a minor version may change a command, a flag or a skill's instructions. A change
+that a project or an agent would notice gets a line under `## [Unreleased]` in CHANGELOG.md, in the same PR.
+To cut a release:
+
+```bash
+python3 scripts/release.py bump 0.4.0   # on a branch: the four version strings, and [Unreleased] -> [0.4.0] - today
+                                        # commit as "release: 0.4.0", open a PR, merge it
+git switch main && git pull
+python3 scripts/release.py tag          # checks main is clean and pushed, then makes the annotated tag v0.4.0
+git push origin v0.4.0                  # .github/workflows/release.yml publishes the release from CHANGELOG.md
+```
+
+`python3 scripts/release.py check` says whether the four version strings agree; the workflow runs it on every PR.

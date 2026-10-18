@@ -10,7 +10,7 @@ design notes stay in the board's repo and call `pcbkit`.
 Three parts:
 
 - **`pcbkit`**, a Python package and CLI: checks, release files, enclosure outlines, EasyEDA import, net views,
-  simulation runs, a schematic builder for konnect.
+  placement scoring, a maze router, simulation runs, a schematic builder for konnect.
 - **`skills/`**, agent skills in SKILL.md form, used by Claude Code and pi.
 - **`templates/`** and **`library/`**: the project skeleton, conventions and trusted parts.
 
@@ -29,17 +29,21 @@ Three parts:
 `pcbkit new` scaffolds a hardware repo: README, DESIGN, LAYOUT and PRODUCTION documents with status lines, an empty
 KiCad project with library tables, `scripts/`, a bomi project and a first commit. `pcbkit import-easyeda` brings an
 EasyEDA Std schematic and PCB across with symbols and footprints into the project library and runs ERC, DRC and
-parity on the result. The esp32-ha-protoboard was converted this way, and esp32-s3-ha-node was started with `new`.
+parity on the result. It converts every sheet, and a rerun writes the same library footprints, so an import can be
+repeated. The esp32-ha-protoboard was converted this way, and esp32-s3-ha-node was started with `new`.
 
 ### Fit a board to a box
 
 Measure the enclosure (drawing, calipers, or a photo against a ruler), write the numbers into an `enclosure.json`,
 and `pcbkit outline` draws the board outline with notches around the lid bosses, the mounting holes with their
-standoff rings, keep-outs, and the box's walls for reference. `--fit-check` exports a 1:1 PDF with dimension lines
-and a scale bar to print, cut out and screw into the box. `--parts` adds the placed parts, for a last check of the
-connectors against the walls.
+standoff rings (and a keep-out under the screw head when the screws go in from the top), keep-outs, and the box's
+walls for reference. `--fit-check` exports a 1:1 PDF with dimension lines and a scale bar to print, cut out and
+screw into the box. `--parts` adds the placed parts, for a last check of the connectors against the walls.
 
-<img src="docs/images/enclosure-fit-check.png" width="320" alt="1:1 fit-check print: board outline notched around the lid bosses, mounting holes, part outlines, dimension lines">
+The print, and one cut out and screwed onto its box's standoffs, with calipers checking the hole spacing against the
+dimension lines:
+
+<img src="docs/images/enclosure-fit-check.png" height="480" alt="1:1 fit-check print: board outline notched around the lid bosses, mounting holes, part outlines, dimension lines"> <img src="docs/images/enclosure-fit-photo.jpg" height="480" alt="A fit-check print cut out and screwed into a project box, with a steel ruler and dial calipers measuring between two mounting screws">
 
 ### See how dense a board gets before drawing the schematic
 
@@ -49,6 +53,17 @@ like, such as three terminal-block pitches. The esp32-s3-ha-node layout was sett
 
 <img src="docs/images/placement-mockup.webp" width="420" alt="3-D render of a placement mock-up: ESP32-S3 module at the top, screw terminals and USB-C on the right edge, JST connectors and side buttons on the left">
 
+### Show the whole design on one page
+
+For someone new to a design, one sheet can carry it: renders of both sides next to a block diagram, each block in
+the same colour in all of them. synth-blocks' analog voice, a semi-modular Eurorack voice, has one at its
+placement mock-up stage: the front panel in three-quarter view with each section marked along its edge, the back of
+the PCB with each section's strip tinted, the signal flow with its normalled connections, the knob colours, and a
+to-scale side view of the panel stack. Its `scripts/overview.py` renders the views with `kicad-cli`, composes them in
+an SVG and rasterises it with `rsvg-convert`; the visual-review skill has the recipe.
+
+<img src="docs/images/overview-analog-voice.webp" width="720" alt="Overview sheet of the analog voice Eurorack module: front panel render in three-quarter view, back of the PCB with colour-coded sections, signal-flow block diagram, knob colour legend and a to-scale side view">
+
 ### Place by the ratsnest, route the winner
 
 A full route of a dense board can take most of an hour; a ratsnest score takes milliseconds. `pcbkit place-score`
@@ -57,6 +72,19 @@ area over zones to keep clear (such as where the other side's vias will go), and
 register output drives which gate. With a study file it moves groups of parts through their candidate positions and
 keeps the best; `--svg` draws the ratsnest with the crossings circled. Only the winner gets routed: on Orbitchron's
 driver board the first scored placement cut the full route's unconnected items from 7 to 3.
+
+### Route from a script
+
+`pcbkit.route` is a maze router for a project's routing script. `complete_nets` takes a plan of net patterns, layers
+and widths and joins each net's copper islands one at a time, with A* on a 0.1 mm grid across the copper layers:
+vias where they clear, narrower track onto small pins, and every route ending on a pad centre. Pads are obstacles
+by their real shape on each layer they reach, so the pins of a chip set at an angle stay reachable; modelling them
+that way took Orbitchron's driver from 8 routed connections on its two angled chips to 46. A connection that can't
+be found otherwise spends its whole search budget, so `CONN_SECONDS` caps each one and `DEADLINE` the whole run,
+and what is left is reported for hand routing. Around it: GND stitching, plane and escape vias, neck-down, snapping
+other routes' ends to pad centres, and an audit of every track end. esp32-s3-ha-node's `scripts/route_pcb.py`
+routes its power nets and most signals this way in a run capped at 15 minutes; the rest was finished by hand.
+`pcbkit cleanup --dangling` then removes the dead ends a route leaves.
 
 ### Look at the copper
 
@@ -176,7 +204,7 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 | `pcbkit place-score BOARD [--study S.py] [--planes GND,..] [--search] [--write P.json] [--svg OUT.svg] [--png]` | ratsnest score of a placement (side-aware crossings, length, zones, free pin/gate choices); with a study, coordinate descent over groups of parts; the ratsnest picture |
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
-| `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards, keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
+| `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards (and a screw-head keep-out with `"head"`), keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
 | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints into `lib/`, PCB nets renamed, importer fixes, ERC/DRC/parity run |
 
 Library use from a project script:
@@ -186,7 +214,7 @@ from pcbkit import schematic as sch          # schematic sheets from Python data
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box
-from pcbkit.route import complete_nets      # maze router, plane vias, neck-down, track-end audit (KiCad's Python)
+from pcbkit.route import complete_nets      # maze router with time limits, plane vias, neck-down, track-end audit (KiCad's Python)
 from pcbkit.placement import Study, Group, Zone, Perm, assign   # a placement study (see the placement-study skill)
 from pcbkit.checks.netlist import Netlist    # netlist topology assertions
 from pcbkit.spice import run                 # ngspice deck -> measurements, wrdata files, aborted flag
@@ -209,5 +237,6 @@ Harvested on 2026-10-10 from the rp2354-messages-sign, siebenuhr controller-v2, 
 repos; see [docs/HARVEST.md](docs/HARVEST.md) for where each piece came from and what is still in the projects.
 siebenuhr, the message sign and the spotlight use the kit; dodeca still runs its own tools until v1.3 is ordered.
 Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), `pcbkit spice` (2026-10-11,
-from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), and placement
-scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron).
+from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), placement
+scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron), and the router's time limits
+(2026-10-17, for esp32-s3-ha-node).

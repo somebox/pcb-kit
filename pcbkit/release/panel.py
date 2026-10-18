@@ -1,6 +1,7 @@
 """JLC assembly panels with KiKit: stacked copies, 5 mm rails, tooling holes, fiducials, order number on the rail.
 
-  pcbkit panel BOARD.kicad_pcb OUT_DIR [--style vcut|mousebite|both] [--rows 3] [--previews DIR] [--preset X.json ...]
+  pcbkit panel BOARD.kicad_pcb OUT_DIR [--style vcut|mousebite|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]
+               [--preset X.json ...]
   pcbkit setup-kikit                  # once: installs the pinned KiKit into ~/.local/share/pcbkit
 
 Styles (presets in data/panel/):
@@ -9,8 +10,9 @@ Styles (presets in data/panel/):
              Economic or Standard; leaves small bumps to file off.
 Output, per style: OUT_DIR/<board>-panel-<style>.kicad_pcb (the fab panel) and drc-<style>.rpt. V-cut panels are
 checked on a twin (-check) with the V-cuts on Cmts.User: JLC wants them on Edge.Cuts, which KiCad reports as an open
-outline. With --previews, top/bottom renders and a printable 1:1 PDF go there too. Extra --preset files layer on top
-(a project's own rows/tabs/text tweaks). Harvested from the sign's make_panel.sh and setup_tools.sh.
+outline. With --previews, top/bottom renders and a printable 1:1 PDF go there too; --hide-refs leaves matching
+references off that PDF, as in `pcbkit previews` (a LED field's designators bury it). Extra --preset files layer on
+top (a project's own rows/tabs/text tweaks). Harvested from the sign's make_panel.sh and setup_tools.sh.
 """
 import argparse
 import json
@@ -52,7 +54,7 @@ def drc_counts(rpt):
     return g(r"^\*\* Found (\d+) DRC violations"), g(r"^\*\* Found (\d+) unconnected")
 
 
-def panel(board, out, styles=("vcut", "mousebite"), rows=3, previews=None, extra_presets=()):
+def panel(board, out, styles=("vcut", "mousebite"), rows=3, previews=None, extra_presets=(), hide_refs=None):
     if not os.path.isdir(os.path.join(kikit_dir(), "kikit")):
         sys.exit("KiKit is not installed: run `pcbkit setup-kikit`")
     board = os.path.abspath(board)
@@ -106,8 +108,10 @@ def panel(board, out, styles=("vcut", "mousebite"), rows=3, previews=None, extra
                 if r.returncode:
                     print(f"render {side} failed")
             pkg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            subprocess.run([KICAD_PYTHON, "-m", "pcbkit.release.plot_print", fab, os.path.join(previews, f"panel-{st}.pdf")],
-                           capture_output=True, env=dict(os.environ, PYTHONPATH=pkg_root))
+            cmd = [KICAD_PYTHON, "-m", "pcbkit.release.plot_print", fab, os.path.join(previews, f"panel-{st}.pdf")]
+            if hide_refs:
+                cmd += ["--hide-refs", hide_refs]
+            subprocess.run(cmd, capture_output=True, env=dict(os.environ, PYTHONPATH=pkg_root))
         print(f"{out} ({st}): panel {size.strip().splitlines()[-1] if size.strip() else '?'}; DRC {viol} violations, {unc} unconnected")
         if viol != "0":
             sys.exit(f"panel DRC violations: see {rpt}")
@@ -121,9 +125,10 @@ def main(argv=None):
     ap.add_argument("--rows", type=int, default=3)
     ap.add_argument("--previews", help="directory for renders and the printable PDF")
     ap.add_argument("--preset", action="append", default=[], help="extra KiKit preset JSON, layered on top")
+    ap.add_argument("--hide-refs", help="regex of references to leave off the printable PDF (with --previews)")
     a = ap.parse_args(argv)
     styles = ("vcut", "mousebite") if a.style == "both" else (a.style,)
-    panel(a.board, a.out, styles, a.rows, a.previews, a.preset)
+    panel(a.board, a.out, styles, a.rows, a.previews, a.preset, a.hide_refs)
 
 
 if __name__ == "__main__":

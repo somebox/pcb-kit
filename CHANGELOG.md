@@ -11,6 +11,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
 
+### Changed
+- **The README is written for people outside the somebox projects too.** It says what the skills need (macOS,
+  KiCad 10, the `pcbkit` CLI from a clone, konnect, bomi, ngspice) and what they run and send, including bomi's
+  datasheet summaries through OpenRouter. The plugin's short description says the same in one line.
+
 ## [0.3.0] - 2026-10-18
 
 Routing, placement scoring and a failure review before each order.

@@ -1,6 +1,6 @@
 {
   "name": "pcb-kit",
-  "description": "Shared KiCad workflow tooling and skills for the somebox hardware projects",
+  "description": "Skills for checking, placing, simulating, costing and ordering KiCad 10 boards with the pcbkit CLI on macOS",
   "version": "0.3.0",
   "author": { "name": "Jeremy Seitz" },
   "homepage": "https://github.com/somebox/pcb-kit",

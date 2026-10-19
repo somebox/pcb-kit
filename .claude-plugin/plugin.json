@@ -2,5 +2,8 @@
   "name": "pcb-kit",
   "description": "Shared KiCad workflow tooling and skills for the somebox hardware projects",
   "version": "0.3.0",
-  "author": { "name": "Jeremy Seitz" }
+  "author": { "name": "Jeremy Seitz" },
+  "homepage": "https://github.com/somebox/pcb-kit",
+  "repository": "https://github.com/somebox/pcb-kit",
+  "license": "MIT"
 }

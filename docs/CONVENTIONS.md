@@ -22,6 +22,13 @@ build/               fab files and panels, git-ignored, regenerated before each 
 archive/             earlier versions, kept whole
 ```
 
+**A series of boards** (synth-blocks: dozens of small boards of a few kinds) groups the boards by kind and keeps each
+board's files together: `<kind>/<name>/` in place of `boards/<name>/`, with `previews/` and `fab/` inside the board's
+folder (`fab/work/` ignored, the files of an ordered version committed in `fab/<version>/`) in place of
+`docs/previews/<board>/` and `build/`. Keep every board folder two levels below the root, so the
+`${KIPRJMOD}/../../lib/` paths that `pcbkit new` writes into its lib tables and 3-D models still hold. The project's
+AGENTS.md says it does this, since the skills default to `docs/previews/` and `build/fab/`.
+
 ## Writing
 
 - The first line under a document's title is its **status with a date**: what is done, what is next.

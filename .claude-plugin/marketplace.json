@@ -1,0 +1,12 @@
+{
+  "name": "pcb-kit",
+  "description": "Shared KiCad workflow tooling and skills for the somebox hardware projects",
+  "owner": { "name": "Jeremy Seitz", "url": "https://github.com/somebox" },
+  "plugins": [
+    {
+      "name": "pcb-kit",
+      "source": "./",
+      "description": "Skills for checking, reviewing, simulating, placing and releasing KiCad boards with the pcbkit CLI"
+    }
+  ]
+}

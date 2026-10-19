@@ -16,8 +16,16 @@ Three parts:
 
 ## Using it from an agent
 
-- **Claude Code:** `claude --plugin-dir /path-to/pcb-kit` or add this folder to a local marketplace; the skills in `skills/`
-  are then invocable. A project can also symlink `skills/pcb-kit` into its own `.claude/skills/`.
+- **Claude Code:** the repo is its own plugin marketplace. Add it one of three ways, then
+  `claude plugin install pcb-kit@pcb-kit`; the skills are `/pcb-kit:failure-review` and so on. Marketplace names are
+  unique, so a machine has one of the three, not two.
+  - `claude plugin marketplace add somebox/pcb-kit#v0.3.0` installs that release and stays on it. To move to a later
+    one, `claude plugin marketplace remove pcb-kit`, then add and install again with the new tag.
+  - `claude plugin marketplace add somebox/pcb-kit` follows `main`. A fresh install takes `main` as it is, which can
+    include commits not released yet under the current version number. Claude Code keeps one copy per version, so
+    `claude plugin update` changes it only when `plugin.json`'s version does, which is at each release's bump.
+  - `claude plugin marketplace add ~/src/pcb-kit`, for working on the skills: the checkout loads in place, and edits
+    apply after `/reload-plugins`.
 - **pi:** `pi install /path-to/pcb-kit` (the `package.json` here declares the skills), or `pi --skill /path-to/pcb-kit/skills/pcb-kit`.
 - **KiCad:** nothing to install; the commands drive `kicad-cli` and KiCad's Python, and konnect (the KiCad MCP server) is
   used from both agents and `pcbkit.schematic`.

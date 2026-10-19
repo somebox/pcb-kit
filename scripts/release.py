@@ -9,6 +9,9 @@ version, so a change released under an old number may not reach an install):
     package.json                "version": "X.Y.Z"           (pi)
     .claude-plugin/plugin.json  "version": "X.Y.Z"           (Claude Code)
 
+.claude-plugin/marketplace.json lists the plugin without a version, so plugin.json's is the only one; `check` fails
+if an entry gains one.
+
     python3 scripts/release.py check [X.Y.Z]   the four agree (and equal X.Y.Z), CHANGELOG.md has the section
     python3 scripts/release.py bump X.Y.Z      write X.Y.Z everywhere, move [Unreleased] under ## [X.Y.Z] - <today>
     python3 scripts/release.py tag             on an up-to-date main: annotated tag vX.Y.Z, then prints the push
@@ -19,6 +22,7 @@ Pushing the tag runs .github/workflows/release.yml, which checks again and publi
 Standard library only, and 3.9-compatible like the package.
 """
 import datetime
+import json
 import re
 import subprocess
 import sys
@@ -26,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = ROOT / "CHANGELOG.md"
+MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 FILES = [
     ("pyproject.toml", r'^(version = ")([^"]+)(")'),
     ("pcbkit/__init__.py", r'^(__version__ = ")([^"]+)(")'),
@@ -109,6 +114,9 @@ def cmd_check(want=None):
         fail(f"the files say {ver}, expected {want}")
     if not section(ver):
         fail(f"CHANGELOG.md has no ## [{ver}] section, or it is empty")
+    pinned = [p["name"] for p in json.loads(MARKETPLACE.read_text())["plugins"] if "version" in p]
+    if pinned:
+        fail(f"marketplace.json gives {', '.join(pinned)} a version; leave it to plugin.json")
     print(f"ok: {ver}, CHANGELOG.md has its section")
 
 

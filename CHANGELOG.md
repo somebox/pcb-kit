@@ -29,6 +29,8 @@ Routing, placement scoring and a failure review before each order.
   as `pcbkit previews` already did.
 - **Releases.** This changelog, `scripts/release.py` (bump, check, tag) and a workflow that publishes a GitHub
   release when a `v*` tag is pushed.
+- **A Claude Code marketplace.** `.claude-plugin/marketplace.json` makes the repo installable with
+  `claude plugin marketplace add somebox/pcb-kit` and `claude plugin install pcb-kit@pcb-kit`.
 
 ### Changed
 - **`pcbkit import-easyeda` converts every sheet** and turns EasyEDA net labels into global labels; before, only

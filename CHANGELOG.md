@@ -9,8 +9,7 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ### Added
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already
-  named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and `.claude-plugin/icon.png` is
-  the listing icon.
+  named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
 
 ## [0.3.0] - 2026-10-18
 

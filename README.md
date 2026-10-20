@@ -1,8 +1,9 @@
 # pcb-kit
 
-Shared tooling for the somebox KiCad hardware projects. It started as the scripts that every board ended up
-copying (DRC summaries, fab files, previews, a schematic builder) and grew into a way of working with an agent on a
-board: describe the design in text, check it with scripts, and look at pictures of it along the way.
+KiCad tooling and agent skills for designing, checking and ordering circuit boards with Claude Code. It started as
+the scripts that every board in the somebox hardware projects ended up copying (DRC summaries, fab files, previews, a
+schematic builder) and grew into a way of working with an agent on a board: describe the design in text, check it
+with scripts, and look at pictures of it along the way.
 
 The kit holds the engine; each project keeps its own data. Placement tables, net lists, power-stage geometry and
 design notes stay in the board's repo and call `pcbkit`.
@@ -13,6 +14,20 @@ Three parts:
   placement scoring, a maze router, simulation runs, a schematic builder for konnect.
 - **`skills/`**, agent skills in SKILL.md form, used by Claude Code and pi.
 - **`templates/`** and **`library/`**: the project skeleton, conventions and trusted parts.
+
+## What you need
+
+The skills have the agent run tools on your machine, so they do their work in Claude Code or pi on a Mac that has:
+
+- KiCad 10 in `/Applications/KiCad/KiCad.app`, or wherever `PCBKIT_KICAD_APP` points. `pcbkit` uses the app
+  bundle's `kicad-cli` and Python, so it runs on macOS only.
+- The `pcbkit` CLI, installed with uv from a clone of this repository; see [Install](#install).
+- For some of the work: [konnect](https://github.com/mixelpixx/Konnect) (schematic sheets, the JLCPCB parts cache),
+  [bomi](https://github.com/somebox/bomi) (BOM, stock, prices, datasheets), ngspice (power simulation), and librsvg,
+  poppler and ImageMagick (pictures and prints).
+
+In claude.ai chat and Cowork the skills load, but those sessions have none of these tools, so there the skills can
+only describe the steps.
 
 ## Using it from an agent
 
@@ -188,6 +203,7 @@ lines, numbered decisions, generated files that say what made them.
 ## Install
 
 ```bash
+git clone https://github.com/somebox/pcb-kit ~/src/pcb-kit
 uv tool install -e ~/src/pcb-kit     # gives you `pcbkit`
 pcbkit info                          # confirms where KiCad is
 pcbkit setup-kikit                   # only for panels: pins KiKit into ~/.local/share/pcbkit
@@ -203,6 +219,24 @@ Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that n
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set
 `PCBKIT_KICAD_APP` if KiCad is not at `/Applications/KiCad/KiCad.app`. Previews need `rsvg-convert` (librsvg),
 `pdfunite` (poppler) and optionally `magick` (ImageMagick); `pcbkit spice` needs `ngspice`.
+
+## What it runs and sends
+
+The plugin is skills only: no hooks, MCP servers or scripts run when it is installed or loaded. The skills tell the
+agent which commands to run, under Claude Code's usual permission prompts:
+
+- `pcbkit` and `kicad-cli` read and write the project's files on your machine. `pcbkit` makes no network requests
+  apart from `setup-kikit`, which installs KiKit with pip from GitHub at a pinned commit. `pcbkit new` makes a local
+  git repository with a first commit and pushes nothing.
+- konnect runs as an MCP server for schematic work. Its `download_jlcpcb_database` tool downloads the JLCPCB parts
+  database (from bouni/kicad-jlcpcb-tools) into `~/.konnect/`, and `pcbkit jlc` and `pcbkit parts` read that copy
+  offline.
+- bomi looks parts up on jlcpcb.com (stock, price, details) and downloads datasheet PDFs from lcsc.com. Its
+  datasheet summaries, which the failure-review skill asks for, send the datasheet to OpenRouter with the key you
+  set up in bomi; without a key, read the PDF instead.
+- The failure-review skill has the agent search the web for datasheets, reference designs, application notes, open
+  designs using a part and vendor forums. Power-sim projects download vendors' SPICE models with a script of their
+  own.
 
 ## Commands
 

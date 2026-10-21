@@ -5,18 +5,21 @@
 For every PCB (or those named, by key, path or folder):
 1. Checks, per its profile (ERC; DRC with schematic parity; nothing unconnected). A PCB that fails is a mockup: it is
    reported and left alone.
-2. Has it changed since its last release? First its source fingerprint (the board and its schematics, the version
-   and date stamps masked); if that differs, its fab fingerprint (the Gerbers, drills, BOM and CPL made from a copy
-   with neutral stamps), so a KiCad save that only reshuffles a file isn't a change and a design-rule change that
-   moves copper is.
-3. A changed board gets the next version: patch by default, --minor or --major when asked. A board without releases
-   adopts the version its title block carries ("v1.0" -> 1.0.0), or --version.
+2. Has it changed since its last release? First its source fingerprint (the board and its schematics with the version
+   and date stamps masked, its custom rules, the project file's design settings and net classes, and the fab
+   settings); if that differs, its fab fingerprint (every house's files made from a copy with neutral stamps), so a
+   KiCad save that only reshuffles a file isn't a change, and a rule change that moves copper or an MPN that changes
+   PCBWay's BOM is.
+3. A changed board gets the next version: patch by default, --minor or --major when asked, or --version (which must
+   come after the last). A board without releases adopts the version its title block carries ("v1.0" -> 1.0.0).
 4. The new version is stamped into the board and its root schematic (title block, silkscreen texts carrying the old
    label), refused while KiCad has the folder open; then DRC again: no new errors, no more silkscreen warnings.
 5. <release dir>/v<label>/ (committed, never rewritten): GERBER-<key>-v<label>.zip, the JLC BOM and CPL, PCBWay's BOM
-   and centroid, the version's schematic.pdf and board.pdf, MANIFEST.txt; releases.toml beside it. Previews are
-   rebuilt when they are of another version.
-Then `pcbkit production` brings the production record up to date. --dry-run says what it would do.
+   and centroid, schematic.pdf and board.pdf made from this version, MANIFEST.txt; releases.toml beside it, with
+   what a board of this version needs by hand (pcbkit production reads it for the orders that pin the version).
+   Previews are rebuilt when they are of another version.
+Then `pcbkit production` brings the production record up to date. --dry-run says what it would do. With
+[release] enabled = false, only step 1 runs: the checks are recorded, nothing is stamped or released.
 """
 import argparse
 import hashlib
@@ -27,8 +30,9 @@ import subprocess
 import sys
 import tempfile
 
-from .. import tomlw
+from .. import production, tomlw
 from ..config import Project
+from ..kicad import KICAD_CLI
 from . import versions as V
 
 PKG_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -45,8 +49,9 @@ def pcbkit(*args):
 
 
 def checks(pcb_path, profile):
-    """Counts of errors: ERC; DRC (zones refilled, the file left as it is), unconnected items, schematic parity; and
-    silkscreen findings of any severity (stamping may not add any)."""
+    """Counts: ERC and DRC errors (zones refilled, the file left as it is); unconnected items and schematic parity
+    findings of any severity, as pcbkit drc counts them; and silkscreen findings of any severity (stamping may not add
+    any)."""
     from ..checks import drc, erc
     c = dict(erc=0, drc=0, unconnected=0, parity=0, silk=0)
     sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"
@@ -59,25 +64,11 @@ def checks(pcb_path, profile):
                         out=os.path.join(d, "drc.json"))
             v = r.get("violations", [])
             c.update(drc=errors(v), silk=sum(1 for x in v if "silk" in x.get("type", "")),
-                     unconnected=errors(r.get("unconnected_items", [])), parity=errors(r.get("schematic_parity", [])))
+                     unconnected=len(r.get("unconnected_items", [])), parity=len(r.get("schematic_parity", [])))
     return c
 
 
 FAILS = ("erc", "drc", "unconnected", "parity")
-
-
-def neutral(text):
-    """The file with neutral version and date stamps (for the fab fingerprint)."""
-    def tb(m):
-        return re.sub(r'(\n\t*\(rev ")[^"]*("\))', r"\g<1>v0.0\g<2>",
-                      re.sub(r'(\n\t*\(date ")[^"]*("\))', r"\g<1>2000-01-01\g<2>", m.group(0)))
-
-    def gr(m):
-        s = m.group(2)
-        if re.search(V.LABEL_IN_TEXT, s):
-            s = re.sub(V.DATE, "2000-01-01", re.sub(V.LABEL_IN_TEXT, "v0.0", s))
-        return m.group(1) + s + m.group(3)
-    return V.TEXT.sub(gr, V.TITLE_BLOCK.sub(tb, text))
 
 
 def fab_args(project, profile):
@@ -89,16 +80,21 @@ def fab_args(project, profile):
     return a
 
 
+def source_key(project, pcb):
+    return V.source_fingerprint(os.path.join(project.root, pcb["path"]), project.fab_settings(pcb["profile"]))
+
+
 def fab_fingerprint(project, pcb_path, profile):
+    """Every configured house's files, made from a copy of the board with neutral stamps."""
     stem = os.path.splitext(os.path.basename(pcb_path))[0]
     with tempfile.TemporaryDirectory() as d:
         open(os.path.join(d, stem + ".kicad_pcb"), "w", encoding="utf-8").write(
-            neutral(open(pcb_path, encoding="utf-8").read()))
+            V.neutral(open(pcb_path, encoding="utf-8").read()))
         for ext in (".kicad_pro", ".kicad_dru"):          # net classes and custom rules: the zone fills use them
             if os.path.exists(os.path.splitext(pcb_path)[0] + ext):
                 shutil.copy(os.path.splitext(pcb_path)[0] + ext, d)
-        pcbkit("fab", os.path.join(d, stem + ".kicad_pcb"), os.path.join(d, "out"), "--name", "fp", "--houses", "jlcpcb",
-               *fab_args(project, profile)[2:])
+        pcbkit("fab", os.path.join(d, stem + ".kicad_pcb"), os.path.join(d, "out"), "--name", "fp",
+               *fab_args(project, profile))
         return V.fab_fingerprint(os.path.join(d, "out"))
 
 
@@ -148,11 +144,13 @@ def write_release(project, pcb, pcb_path, profile, version, label, entry):
             if "pcbway" in project.release["fab"]:
                 take(f"BOM-{key}-pcbway.csv", f"BOM-{key}-{label}-pcbway.csv")
                 take(f"centroid-{key}-pcbway.csv", f"centroid-{key}-{label}-pcbway.csv")
-    pdir = project.previews_dir(pcb)
-    for f in ("schematic.pdf", "board.pdf"):
-        if os.path.exists(os.path.join(pdir, f)):
-            shutil.copy2(os.path.join(pdir, f), os.path.join(vdir, f))
-            files.append(f)
+    sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"   # this version's drawings, whatever the previews hold
+    if os.path.exists(sch):
+        subprocess.run([KICAD_CLI, "sch", "export", "pdf", "-o", os.path.join(vdir, "schematic.pdf"), sch], check=True,
+                       capture_output=True)
+        files.append("schematic.pdf")
+    pcbkit("print", pcb_path, os.path.join(vdir, "board.pdf"))
+    files.append("board.pdf")
     with open(os.path.join(vdir, "MANIFEST.txt"), "w") as fh:
         fh.write(f"{key} {label} ({version}), released {entry['date']} by pcbkit release\n"
                  f"board: {pcb['path']}\nsource fingerprint: {entry['source']}\nfab fingerprint: {entry['fab']}\n"
@@ -189,9 +187,11 @@ def release(project, pcb, part="patch", version=None, note="", dry=False):
     c = checks(pcb_path, profile)
     if any(c[k] for k in FAILS):
         return dict(state="mockup", checks=c)
+    if not project.release["enabled"]:
+        return dict(state="checked", checks=c)
     rdir = project.release_dir(pcb)
     last = V.current(rdir)
-    src = V.source_fingerprint(pcb_path)
+    src = source_key(project, pcb)
     on_board = V.title_rev(open(pcb_path, encoding="utf-8").read())
     old_label = on_board if re.fullmatch(r"v\d+(?:\.\d+){1,2}", on_board) else last["label"] if last else ""
     same = last and (src == last["source"] or src in last.get("equivalent", []))
@@ -215,21 +215,26 @@ def release(project, pcb, part="patch", version=None, note="", dry=False):
             r["note"] = "; ".join(x for x in (r.get("note"), "previews rebuilt") if x)
         return r
     if last:
+        if version and V.parse(version) <= V.parse(last["version"]):
+            return dict(state=f"not released: --version {version} doesn't come after {last['version']}", checks=c)
         new = version or V.bump(last["version"], part)
-        why = note or f"{part} after {last['version']}"
+        why = note or (f"{part} after {last['version']}" if not version else f"after {last['version']}")
     else:
         new = version or V.adopt(on_board) or "1.0.0"
         why = note or ("first release" if version or not on_board else
                        f"first release, its title block's {on_board}")
     lab = V.label(new, project.release["label"])
+    if os.path.exists(os.path.join(rdir, lab)):
+        return dict(state=f"not released: {project.rel(os.path.join(rdir, lab))} exists", checks=c)
     if dry:
         return dict(state="would release", version=new, label=lab, checks=c, note=why)
     if lab != on_board:
         stuck = restamp(pcb, profile, c, old_label, lab, str(V.today()))
         if stuck:
             return dict(state="not released: " + stuck, checks=c)
-    entry = dict(version=new, label=lab, date=V.today(), source=V.source_fingerprint(pcb_path), fab=ffp,
-                 equivalent=[], base_commit=git(project, "rev-parse", "--short", "HEAD"), note=why)
+    entry = dict(version=new, label=lab, date=V.today(), source=source_key(project, pcb), fab=ffp,
+                 equivalent=[], base_commit=git(project, "rev-parse", "--short", "HEAD"), note=why,
+                 parts=production.board_parts(project, pcb))
     pv = make_previews(project, pcb, pcb_path) if project.release["previews"] else "off"
     entry["previews"] = hashlib.sha1(V.preview_source(pcb_path).encode()).hexdigest() if pv != "off" else ""
     vdir = write_release(project, pcb, pcb_path, profile, new, lab, entry)
@@ -263,7 +268,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     project = Project()
     if not project.release["enabled"]:
-        raise SystemExit(f"releases are off in {project.path} ([release] enabled = false)")
+        print(f"releases are off in {project.path} ([release] enabled = false): checks only")
     if a.version:
         V.parse(a.version)
     part = "major" if a.major else "minor" if a.minor else "patch"
@@ -282,7 +287,6 @@ def main(argv=None):
     if not a.dry_run:
         save_state(project, results)
         if project.production["enabled"]:
-            from .. import production
             production.build(project)
 
 

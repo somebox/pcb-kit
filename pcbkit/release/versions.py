@@ -2,15 +2,18 @@
 change fingerprints that ignore the version and date stamps, and stamping a new version into the KiCad files.
 
 Where a version is written on a board:
-- the title block's rev (and its date) in the .kicad_pcb and in the root .kicad_sch;
+- the title block's rev (and its date) in the .kicad_pcb and in the root .kicad_sch, whether KiCad wrote the block
+  one field a line or a generator wrote it on one line; a file without one gets one after its (paper ...);
 - any silkscreen text (gr_text) that carries the old label as a word, e.g. "v1.0" on a front tag or
   "<name> v1.0 2026-10-19" on the back; a date in such a text becomes the release date.
 Each stamp must change exactly what it means to: the masked text before and after must be identical.
 """
+import csv
 import datetime
 import glob
 import hashlib
 import io
+import json
 import os
 import re
 import zipfile
@@ -22,7 +25,8 @@ REV = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
 LABEL_IN_TEXT = r"(?<![\w.])v\d+(?:\.\d+){1,2}(?![\w.])"
 DATE = r"\d{4}-\d{2}-\d{2}"
 TEXT = re.compile(r'(\(gr_text ")((?:[^"\\]|\\.)*)(")')
-TITLE_BLOCK = re.compile(r"\n(\t*)\(title_block\n.*?\n\1\)", re.S)
+STR = r'"(?:[^"\\]|\\.)*"'
+STAMP = re.compile(r'\s*\((?:rev|date) ' + STR + r'\)')
 
 
 def parse(v):
@@ -52,25 +56,72 @@ def adopt(rev):
     return fmt(tuple(int(x or 0) for x in m.groups())) if m and rev.strip() else None
 
 
+def title_block(text):
+    """(start, end) of the file's title block, found by its parentheses (one field a line, or all on one line), or
+    None."""
+    m = re.search(r"\(title_block\b", text)
+    if not m:
+        return None
+    depth, quoted, j = 0, False, m.start()
+    while j < len(text):
+        ch = text[j]
+        if quoted:
+            if ch == "\\":
+                j += 1
+            elif ch == '"':
+                quoted = False
+        elif ch == '"':
+            quoted = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return m.start(), j + 1
+        j += 1
+    return None
+
+
 def title_rev(text):
-    m = TITLE_BLOCK.search(text)
-    r = re.search(r'\(rev "([^"]*)"\)', m.group(0)) if m else None
+    b = title_block(text)
+    r = re.search(r'\(rev "([^"]*)"\)', text[b[0]:b[1]]) if b else None
     return r.group(1) if r else ""
+
+
+def _label_texts(text, label, date):
+    """Every silkscreen text that carries a version: its labels and dates replaced (None: masked)."""
+    def gr(m):
+        s = m.group(2)
+        if re.search(LABEL_IN_TEXT, s):
+            s = re.sub(DATE, date or "#", re.sub(LABEL_IN_TEXT, label or "v#", s))
+        return m.group(1) + s + m.group(3)
+    return TEXT.sub(gr, text)
 
 
 # ---- fingerprints ---------------------------------------------------------------------------------------------------
 def mask(text):
-    """The file with its version and date stamps blanked: every title block's rev and date, and the version label and
-    dates in any silkscreen text that carries a version."""
-    def tb(m):
-        return re.sub(r'\n\t*\((?:rev|date) "[^"]*"\)', "", m.group(0))
+    """The file with its version and date stamps blanked: the title block's rev and date (a block left empty counts as
+    none), and the version label and dates in any silkscreen text that carries a version."""
+    b = title_block(text)
+    if b:
+        s, e = b
+        block = STAMP.sub("", text[s:e])
+        if re.fullmatch(r"\(title_block\s*\)", block):
+            line = text.rfind("\n", 0, s)
+            s = line if line >= 0 and not text[line:b[0]].strip() else s
+            block = ""
+        text = text[:s] + block + text[e:]
+    return _label_texts(text, None, None)
 
-    def gr(m):
-        s = m.group(2)
-        if re.search(LABEL_IN_TEXT, s):
-            s = re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", s))
-        return m.group(1) + s + m.group(3)
-    return TEXT.sub(gr, TITLE_BLOCK.sub(tb, text))
+
+def neutral(text):
+    """The file with neutral version and date stamps, so that two versions of a board fab the same."""
+    b = title_block(text)
+    if b:
+        block = re.sub(r'(\(rev )' + STR, r'\1"v0.0"', text[b[0]:b[1]])
+        block = re.sub(r'(\(date )' + STR, r'\1"2000-01-01"', block)
+        text = text[:b[0]] + block + text[b[1]:]
+    return _label_texts(text, "v0.0", "2000-01-01")
 
 
 def design_files(pcb):
@@ -79,11 +130,31 @@ def design_files(pcb):
     return [pcb] + sorted(glob.glob(os.path.join(folder, "*.kicad_sch")))
 
 
-def source_fingerprint(pcb):
+def project_rules(pcb):
+    """What a board's fab output depends on beside its own files: its custom rules (.kicad_dru), and the project file's
+    design settings, net classes and text variables (not the window and plot state KiCad also keeps there)."""
+    base, out = os.path.splitext(pcb)[0], ""
+    if os.path.exists(base + ".kicad_dru"):
+        out += open(base + ".kicad_dru", encoding="utf-8").read()
+    if os.path.exists(base + ".kicad_pro"):
+        try:
+            pro = json.load(open(base + ".kicad_pro", encoding="utf-8"))
+        except ValueError:
+            pro = {}
+        out += json.dumps({"design_settings": pro.get("board", {}).get("design_settings"),
+                           "net_settings": pro.get("net_settings"), "text_variables": pro.get("text_variables")},
+                          sort_keys=True)
+    return out
+
+
+def source_fingerprint(pcb, settings=""):
+    """The design files with their stamps masked, the project's rules, and the fab settings the files are made with
+    (Project.fab_settings): when it is unchanged, so is the fab output."""
     h = hashlib.sha1()
     for f in design_files(pcb):
         h.update(os.path.basename(f).encode() + b"\0")
         h.update(mask(open(f, encoding="utf-8").read()).encode())
+    h.update(b"\0rules\0" + project_rules(pcb).encode() + b"\0settings\0" + settings.encode())
     return h.hexdigest()
 
 
@@ -95,8 +166,9 @@ def preview_source(pcb):
 
 
 def fab_fingerprint(out):
-    """A fab output folder (pcbkit fab, JLC files) hashed without what changes from run to run: Gerber and drill
-    header comments and attributes (dates, the project ID with its rev) and file names."""
+    """A fab output folder (pcbkit fab, every house's files) hashed without what changes from run to run: Gerber and
+    drill header comments and attributes (dates, the project ID with its rev), file names, and the description and
+    package PCBWay's BOM takes from the parts cache."""
     h = hashlib.sha1()
     for f in sorted(os.listdir(out)):
         p = os.path.join(out, f)
@@ -107,32 +179,48 @@ def fab_fingerprint(out):
                     h.update(n.split("-")[-1].encode())
                     h.update("\n".join(l for l in lines if not l.startswith(("%TF", "G04", ";", "%TA"))).encode())
         elif f.endswith(".csv"):
-            h.update(f.split("-")[0].encode() + open(p, "rb").read())
+            rows = list(csv.reader(open(p, newline="", encoding="utf-8-sig")))
+            drop = {i for i, c in enumerate(rows[0]) if c in ("Description", "Package")} \
+                if rows and f.startswith("BOM-") and f.endswith("-pcbway.csv") else set()
+            h.update(f.split("-")[0].encode() + b"\0" + "\n".join(
+                "\t".join(c for i, c in enumerate(r) if i not in drop) for r in rows).encode())
     return h.hexdigest()
 
 
 # ---- stamping -------------------------------------------------------------------------------------------------------
 def _stamp_title_block(text, new_label, date, path):
-    m = TITLE_BLOCK.search(text)
-    if not m:
-        raise SystemExit(f"{path}: no title block to stamp")
-    block, ind = m.group(0), m.group(1) + "\t"
+    b = title_block(text)
+    if not b:                          # none yet (a blank board): one after (paper ...), as KiCad places it
+        m = re.search(r"\n(\t*)\(paper [^\n]*", text)
+        if not m:
+            raise SystemExit(f"{path}: no title block, and no (paper ...) to put one after; nothing written")
+        ind = m.group(1)
+        return (text[:m.end()] + f'\n{ind}(title_block\n{ind}\t(date "{date}")\n{ind}\t(rev "{new_label}")\n{ind})'
+                + text[m.end():])
+    s, e = b
+    block = text[s:e]
+    close = re.search(r"\n(\t*)\)$", block)       # one field a line: the fields one tab in from the closing paren
     for key, val in (("date", date), ("rev", new_label)):
-        if re.search(rf'\n\t*\({key} "[^"]*"\)', block):
-            block, n = re.subn(rf'(\n\t*\({key} ")[^"]*("\))', rf"\g<1>{val}\g<2>", block)
-            assert n == 1, f"{path}: {n} {key} fields in the title block"
-        else:                          # KiCad's order: title, date, rev, company, comments
-            after = (re.search(r'\n\t*\(date "[^"]*"\)', block) if key == "rev" else None) or \
-                re.search(r'\n\t*\(title "[^"]*"\)', block)
-            at = after.end() if after else block.index("\n", 1)
-            block = block[:at] + f'\n{ind}({key} "{val}")' + block[at:]
-    return text[:m.start()] + block + text[m.end():]
+        pat = re.compile(r'(\(' + key + r' )' + STR + r'(\))')
+        n = len(pat.findall(block))
+        if n > 1:
+            raise SystemExit(f"{path}: {n} {key} fields in the title block; nothing written")
+        if n:
+            block = pat.sub(lambda m: f'{m.group(1)}"{val}"{m.group(2)}', block)
+            continue
+        after = (re.search(r'\(date ' + STR + r'\)', block) if key == "rev" else None) or \
+            re.search(r'\(title ' + STR + r'\)', block)              # KiCad's order: title, date, rev, company
+        at = after.end() if after else len("(title_block")
+        field = f'({key} "{val}")'
+        block = block[:at] + (f"\n{close.group(1)}\t{field}" if close else " " + field) + block[at:]
+    return text[:s] + block + text[e:]
 
 
 def stamp(pcb, old_label, new_label, date):
-    """Write new_label (and the date) into the board and its root schematic. Returns the files changed."""
-    changed = []
+    """Write new_label (and the date) into the board and its root schematic. Both files are checked before either is
+    written: each may change only in its stamps. Returns the files changed."""
     root_sch = os.path.splitext(pcb)[0] + ".kicad_sch"
+    edits = []
     for path in [pcb] + ([root_sch] if os.path.exists(root_sch) else []):
         before = open(path, encoding="utf-8").read()
         after = _stamp_title_block(before, new_label, date, path)
@@ -148,10 +236,11 @@ def stamp(pcb, old_label, new_label, date):
         if mask(after) != mask(before):
             raise SystemExit(f"{path}: stamping changed more than the version and date; nothing written")
         if after != before:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(after)
-            changed.append(path)
-    return changed
+            edits.append((path, after))
+    for path, after in edits:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(after)
+    return [path for path, _ in edits]
 
 
 def locked(pcb):

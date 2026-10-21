@@ -9,18 +9,21 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ### Added
 - **`pcbkit release`: a version for every board that changed, stamped into its KiCad files.** Each run checks
-  every board (ERC, DRC with parity, nothing unconnected; a board that fails is reported as a mockup), compares its
-  fab output with its last release, and gives a changed board the next version: v1.0 becomes v1.0.1, or the next
+  every board (ERC, DRC, and no unconnected items or parity findings of any severity; a board that fails is reported
+  as a mockup), compares its fab output for every fab house with its last release, and gives a changed board the next
+  version: v1.0 becomes v1.0.1, or the next
   minor or major with `--minor`/`--major`. The version and date go into the title blocks and the silkscreen texts
   that carried the old label, refused while KiCad has the board open and checked by DRC afterwards. Its Gerbers,
   BOMs, placement files, PDFs and a manifest go into a release folder that is never rewritten, with releases.toml
-  beside it; previews are rebuilt. A KiCad save or a schematic note that leaves the fab output alone is recorded as
-  equivalent, not a new version.
+  beside it, with what a board of that version needs by hand; previews are rebuilt. A KiCad save or a schematic note
+  that leaves the fab output alone is recorded as equivalent, not a new version; a change to the custom rules, the
+  net classes or the fab settings is compared. With releases turned off it only checks.
 - **`pcbkit production`: one overview of versions, orders and stock.** It reads each order's order.toml (pinned
   versions; dated events with status, order number, price, note) and stock.toml, and writes PRODUCTION.md's
   generated section between its markers: boards in production, every board's version in KiCad and released, parts
-  cost from the parts cache, latest order and stock, the parts the open orders need against what is on hand, and
-  problems such as a board changed since its release. Each order gets an ORDER.md and an upload folder. `--check`
+  cost from the parts cache, latest order and stock, the parts the open orders need against what is on hand (as the
+  versions they pin need them; every part for a board ordered bare), and problems such as a board changed since its
+  release or an order whose release lacks the files its fab house needs. Each order gets an ORDER.md and an upload folder. `--check`
   exits 1 on problems.
 - **`pcbkit.toml`, a project's settings** for both: where boards, releases, previews and the production record live,
   per-board profiles (checks, Gerbers only, extra layers), which parts the assembler places, rules for the panel

@@ -11,6 +11,7 @@ panel/), e.g. "{folder}/fab{sub}" or "releases/{key}".
 import copy
 import fnmatch
 import glob
+import json
 import os
 import subprocess
 
@@ -101,12 +102,20 @@ class Project:
                                     folder=self.rel(folder), sub=sub, profile=self.profile(rel),
                                     excluded=any(fnmatch.fnmatch(rel, x) or fnmatch.fnmatch(self.rel(folder), x)
                                                  for x in b["exclude"])))
+        paths = {}
+        for p in out:
+            paths.setdefault(p["key"], []).append(p["path"])
+        dup = {k: v for k, v in paths.items() if len(v) > 1}
+        if dup:
+            raise SystemExit("PCBs are known by their file names, and these share one: "
+                             + "; ".join(f"{k}: {', '.join(v)}" for k, v in dup.items()) + ". Rename one.")
         return out
 
     def pcb(self, name):
-        """A PCB by key, path or folder."""
+        """A PCB by key, or by its path or folder: relative to the project's root, or to the current folder."""
+        names = {os.path.normpath(name), self.rel(name)}
         for p in self.pcbs():
-            if name == p["key"] or os.path.normpath(name) in (p["path"], p["folder"]):
+            if name == p["key"] or p["path"] in names or p["folder"] in names:
                 return p
         raise SystemExit(f"{name}: no such PCB in {self.root} (pcbkit.toml [boards] folders)")
 
@@ -115,6 +124,12 @@ class Project:
             if fnmatch.fnmatch(rel, prof.get("match", "*")):
                 return dict(DEFAULT_PROFILE, **prof)
         return dict(DEFAULT_PROFILE)
+
+    def fab_settings(self, profile):
+        """The settings a PCB's fab files are made with, as text: part of its source fingerprint, so changing them is
+        a change to compare."""
+        return json.dumps(dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
+                               extra_layers=profile["extra_layers"]), sort_keys=True)
 
     def fill(self, template, pcb):
         return os.path.join(self.root, template.format(key=pcb["key"], folder=pcb["folder"], sub=pcb["sub"]))

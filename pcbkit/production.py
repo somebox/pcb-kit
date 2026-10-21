@@ -20,17 +20,21 @@ Writes:
   from the pinned release, the board's README and previews (upload/ is not committed).
 
 What a board needs besides the parts the assembler places: its hand-soldered parts (not placed, in the BOM, with
-an MPN or LCSC number), and what [[production.part]] rules add from a field, first match wins:
+an MPN or LCSC number), and what [[production.part]] rules add from a field, first match wins. A board ordered bare
+(assembled = 0) needs the placed parts by hand too. pcbkit release records these with each version, so an order
+counts what the version it pins needs, not what the board needs now.
   pcb = "boards/*"  field = "Panel"  match = '\\((B\\d+K)\\)'  part = ["9 mm pot {1}", "knob"]
 ({0} is the whole match, {1} the first group; part = "" for nothing.)
 Parts costs come from konnect's JLC parts cache (unit prices: an estimate, not a quote).
 
 --check writes nothing and exits 1 on problems: a board whose KiCad version isn't its last release's, changes not
-released, an order pinning a version that doesn't exist, malformed data, or a page that is out of date.
+released, an order pinning a version that doesn't exist or lacks the files its house needs, malformed data, or a page
+that is out of date.
 """
 import argparse
 import datetime
 import fnmatch
+import glob
 import hashlib
 import os
 import re
@@ -76,20 +80,26 @@ def placed_by(project, profile):
         and not fp["flags"] & {"exclude_from_bom", "exclude_from_pos_files"}
 
 
+def part_name(f):
+    """A part's name in the needs and in stock.toml: its MPN without a " (...)" note, else its LCSC number."""
+    return NOTE.sub("", f.get("MPN", "")) or f.get("LCSC", "")
+
+
 def board_parts(project, pcb):
-    """dict(placed={LCSC: n}, hand={name: n}, extra={name: n}) for one PCB."""
+    """What one PCB needs: placed {LCSC: n} (for costs) and placed_named {name: n} (for a bare board), hand {name: n},
+    extra {name: n} from the part rules."""
     fps = footprints(os.path.join(project.root, pcb["path"]))
     is_placed = placed_by(project, pcb["profile"])
-    placed, hand, extra = {}, {}, {}
+    placed, placed_named, hand, extra = {}, {}, {}, {}
     for fp in fps:
         f = fp["fields"]
         if "dnp" in fp["flags"]:
             continue
         if is_placed(fp):
             placed[f["LCSC"]] = placed.get(f["LCSC"], 0) + 1
+            placed_named[part_name(f)] = placed_named.get(part_name(f), 0) + 1
         elif "exclude_from_bom" not in fp["flags"] and (f.get("MPN") or f.get("LCSC")):
-            name = NOTE.sub("", f.get("MPN", "")) or f["LCSC"]
-            hand[name] = hand.get(name, 0) + 1
+            hand[part_name(f)] = hand.get(part_name(f), 0) + 1
         for rule in project.production["part"]:
             if not fnmatch.fnmatch(pcb["path"], rule.get("pcb", "*")):
                 continue
@@ -99,7 +109,15 @@ def board_parts(project, pcb):
                 for name in (n.format(*([m.group(0)] + list(m.groups()))) for n in names if n):
                     extra[name] = extra.get(name, 0) + 1
                 break
-    return dict(placed=placed, hand=hand, extra=extra)
+    return dict(placed=placed, placed_named=placed_named, hand=hand, extra=extra)
+
+
+def pinned_parts(project, p, version):
+    """What a board of this version needs, as its release recorded it; (parts, recorded)."""
+    r = next((r for r in p["releases"] if r["version"] == version), None)
+    if r and r.get("parts"):
+        return {k: dict(r["parts"].get(k, {})) for k in ("placed", "placed_named", "hand", "extra")}, True
+    return board_parts(project, p), False
 
 
 class Cache:
@@ -171,10 +189,15 @@ def load_orders(project, pcbs, problems):
                 problems.append(f"{where}: no PCB {b.get('pcb')!r} in the project")
             elif not any(r["version"] == b["version"] for r in pcbs[b["pcb"]]["releases"]):
                 problems.append(f"{where}: {b['pcb']} has no release {b['version']}")
-            elif b["pcb"] in pcbs and pcbs[b["pcb"]]["last"]["version"] != b["version"]:
-                b["newer"] = pcbs[b["pcb"]]["last"]["version"]
+            else:
+                if pcbs[b["pcb"]]["last"]["version"] != b["version"]:
+                    b["newer"] = pcbs[b["pcb"]]["last"]["version"]
+                missing = release_files(pcbs[b["pcb"]], b["version"], b["house"], b["assembled"])[2]
+                if missing:
+                    problems.append(f"{where}: {b['pcb']} {b['version']} has no {', '.join(missing)} for "
+                                    f"{b['house']}" + (", which assembles it" if b["assembled"] else ""))
             if b["house"] not in HOUSES:
-                problems.append(f"{where}: {b['pcb']}: house {b['house']!r} is not one of {', '.join(HOUSES)}")
+                problems.append(f"{where}: {b.get('pcb')}: house {b['house']!r} is not one of {', '.join(HOUSES)}")
         events = sorted(o.get("event", []), key=lambda e: str(e.get("date", "")))
         for e in events:
             if e.get("status") not in STATUSES:
@@ -231,7 +254,7 @@ def survey(project, problems, watch):
         if pcb["excluded"]:
             p["state"] = "excluded"
         elif last:
-            src = V.source_fingerprint(path)
+            src = V.source_fingerprint(path, project.fab_settings(pcb["profile"]))
             p["state"] = "released"
             if src != last["source"] and src not in last.get("equivalent", []):
                 p["state"] = "changed"
@@ -247,7 +270,7 @@ def survey(project, problems, watch):
         elif chk.get("state") == "mockup":
             p["state"] = "mockup"
         elif chk:
-            p["state"] = "not released"
+            p["state"] = "checked" if chk.get("state") == "checked" else "not released"
         else:
             p["state"] = "not checked"
         pcbs[key] = p
@@ -277,8 +300,14 @@ def link(frm, to, text):
     return f"[{text}]({os.path.relpath(to, frm)})"
 
 
-def needs(parts):
-    return {**parts["hand"], **{k: v + parts["hand"].get(k, 0) for k, v in parts["extra"].items()}}
+def needs(parts, bare=False):
+    """What finishing one board takes by hand: its hand parts and the rules' parts, and for a bare board (ordered
+    without assembly) the parts the assembler would have placed."""
+    out = {}
+    for group in ("hand", "extra") + (("placed_named",) if bare else ()):
+        for k, n in parts.get(group, {}).items():
+            out[k] = out.get(k, 0) + n
+    return out
 
 
 def can_build(need, have):
@@ -292,18 +321,17 @@ def stock_line(b):
 
 
 def release_files(p, version, house, assembled):
-    """The files a fab house takes from a release, and the release's folder."""
-    import glob
+    """The release's folder, the files a fab house takes from it, and the patterns it has no file for."""
     r = next((r for r in p["releases"] if r["version"] == version), None)
-    if not r:
-        return None, []
+    if not r or house not in HOUSES:
+        return None, [], []
     vdir = os.path.join(p["rdir"], r["label"])
     _, base, asm = HOUSES[house]
-    pats = base + (asm if assembled else [])
-    return vdir, [f for pat in pats for f in sorted(glob.glob(os.path.join(vdir, pat)))]
+    found = [(pat, sorted(glob.glob(os.path.join(vdir, pat)))) for pat in base + (asm if assembled else [])]
+    return vdir, [f for _, fs in found for f in fs], [pat for pat, fs in found if not fs]
 
 
-def order_md(project, o, pcbs, parts, cache):
+def order_md(project, o, pcbs, cache):
     d = o["dir"]
     out = [f"# Order {o['name']}" + (f": {o['title']}" if o.get("title") else ""), "",
            "Generated by `pcbkit production` from [order.toml](order.toml); edit that, not this.", ""]
@@ -311,7 +339,7 @@ def order_md(project, o, pcbs, parts, cache):
     for b in o["board"]:
         p = pcbs.get(b["pcb"])
         lab = V.label(b["version"], project.release["label"]) if _semver(b["version"]) else b["version"]
-        vdir, files = release_files(p, b["version"], b["house"], b["assembled"]) if p else (None, [])
+        vdir = release_files(p, b["version"], b["house"], b["assembled"])[0] if p else None
         rows.append([b["pcb"], link(d, vdir, lab) if vdir else lab + " (no release)", HOUSES.get(b["house"], [b["house"]])[0],
                      b["pcbs"], b["assembled"], b["status"] + (f" ({b['since']})" if b["since"] else ""),
                      b["order_no"], money(b["price"], b["currency"]), b["note"]])
@@ -334,18 +362,19 @@ def order_md(project, o, pcbs, parts, cache):
         p = pcbs.get(b["pcb"])
         if not p:
             continue
-        vdir, files = release_files(p, b["version"], b["house"], b["assembled"])
+        vdir, files, missing = release_files(p, b["version"], b["house"], b["assembled"])
         house = HOUSES.get(b["house"], [b["house"]])[0]
         out.append(f"### {b['pcb']} {b['version']} at {house}")
         out.append("")
-        if not files:
-            out += ["No release of this version.", ""]
+        if not files or missing:
+            out += [f"Not ready: {'no release of this version' if not vdir else 'no ' + ', '.join(missing)} "
+                    "(Problems in PRODUCTION.md).", ""]
             continue
         names = [os.path.basename(f) for f in files]
         out.append(f"- PCB: `{names[0]}`, {b['pcbs']} boards" + (f", {b['assembled']} assembled" if b["assembled"] else ""))
         if b["assembled"]:
             out.append(f"- Assembly: {', '.join(f'`{n}`' for n in names[1:])}")
-            pp = parts[b["pcb"]]
+            pp = b["parts"]
             c = cache.cost(pp["placed"])
             out.append(f"- Placed parts: {sum(pp['placed'].values())} ({len(pp['placed'])} part numbers), "
                        f"about {c['total']:.2f} USD a board, {len(c['extended'])} Extended"
@@ -355,9 +384,10 @@ def order_md(project, o, pcbs, parts, cache):
                      and cache.get(lcsc) and cache.get(lcsc)["stock"] < n * b["assembled"]]
             if short:
                 out.append(f"- Low at JLC (cache of {cache.date}): {', '.join(short)}")
-        need = needs(parts[b["pcb"]])
+        need = needs(b["parts"], bare=not b["assembled"])
         if need:
-            out.append("- By hand, a board: " + ", ".join(f"{n} × {k}" for k, n in sorted(need.items())))
+            out.append(f"- By hand, a board{' (bare: every part)' if not b['assembled'] and b['parts']['placed'] else ''}: "
+                       + ", ".join(f"{n} × {k}" for k, n in sorted(need.items())))
         out.append("")
     if o["events"]:
         out += ["## Events", "", table(["date", "boards", "status", "order no.", "price", "note"], [
@@ -378,8 +408,8 @@ def build_upload(project, o, pcbs):
         p = pcbs.get(b["pcb"])
         if not p:
             continue
-        vdir, files = release_files(p, b["version"], b["house"], b["assembled"])
-        if not files:
+        vdir, files, missing = release_files(p, b["version"], b["house"], b["assembled"])
+        if not files or missing:
             continue
         dst = os.path.join(up, b["pcb"])
         os.makedirs(dst)
@@ -447,13 +477,14 @@ def section(project, pcbs, parts, orders, stock, cache, problems, watch):
     total = {}
     for o in orders:
         for b in o["board"]:
-            if b["status"] in CLOSED or b["pcb"] not in parts:
+            if b["status"] in CLOSED or not b.get("parts"):
                 continue
-            for k, n in needs(parts[b["pcb"]]).items():
+            for k, n in needs(b["parts"], bare=not b["assembled"]).items():
                 total[k] = total.get(k, 0) + n * (b["assembled"] or b["pcbs"])
     rows = [[k, n, have.get(k, 0), max(0, n - have.get(k, 0)) or ""] for k, n in sorted(total.items())]
     out += ["### Parts for the open orders", "",
-            "To finish every board of the open orders (assembled ones, else every PCB) by hand.", "",
+            "To finish every board of the open orders by hand: the assembled ones, or every PCB of a bare order "
+            "(with the parts the assembler would have placed), as the versions they pin need.", "",
             table(["part", "needed", "on hand", "short"], rows)]
     # orders
     rows = [[link(page_dir, os.path.join(o["dir"], "ORDER.md"), o["name"]), o.get("title", ""),
@@ -483,11 +514,17 @@ def build(project=None, check=False):
     cache = Cache()
     for o in orders:
         for b in o["board"]:
+            b["parts"] = None
+            if b.get("pcb") in pcbs:
+                b["parts"], recorded = pinned_parts(project, pcbs[b["pcb"]], b["version"])
+                if not recorded and o["open"]:
+                    watch.append(f"{o['name']} {b['pcb']} {b['version']}: its release has no record of the parts it "
+                                 "needs; counted from the board as it is now")
             if b["status"] == "problem" and b["pcb"]:
                 watch.append(f"{o['name']} {b['pcb']}: {b['note'] or 'a problem was reported'}")
             if b.get("newer") and b["status"] in ("draft", "problem"):
                 watch.append(f"{o['name']} {b['pcb']}: pins {b['version']}, the latest release is {b['newer']}")
-    outputs = {os.path.join(o["dir"], "ORDER.md"): order_md(project, o, pcbs, parts, cache) for o in orders}
+    outputs = {os.path.join(o["dir"], "ORDER.md"): order_md(project, o, pcbs, cache) for o in orders}
     page = os.path.join(project.root, project.production["page"])
     old = open(page, encoding="utf-8").read() if os.path.exists(page) else "# Production\n"
     stale = [p for p, text in outputs.items() if not os.path.exists(p) or open(p, encoding="utf-8").read() != text]

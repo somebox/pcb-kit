@@ -170,8 +170,18 @@ Two of the proven parts show zero stock in the 2026-09-29 cache, which is the re
 ### Order it
 
 `pcbkit previews` makes the schematic PDF, copper PNGs, a hand-assembly map, a 1:1 print and 3-D renders.
-`pcbkit fab` writes the JLC Gerber zip, BOM and CPL with rotation corrections. `pcbkit panel` builds KiKit assembly
-panels with rails, fiducials and tooling holes, and runs DRC on each.
+`pcbkit fab` writes the JLC Gerber zip, BOM and CPL with rotation corrections, and with `--houses jlcpcb,pcbway`
+PCBWay's BOM (manufacturer and part number) and centroid too. `pcbkit panel` builds KiKit assembly panels with rails,
+fiducials and tooling holes, and runs DRC on each.
+
+`pcbkit release` is the step before an order. It checks every board, and gives each one that changed since its last
+release the next version (a fix to v1.0 makes v1.0.1), stamped into the title block and the silkscreen, so the KiCad
+file always says which version it is. That version's Gerbers, BOMs, placement files and PDFs go into a committed
+release folder. A KiCad save that only reshuffles the file, or a schematic note, doesn't count as a change: only a
+different fab output does. `pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders
+in production with their state, order numbers and prices, parts costs, boards and parts in stock, and what is short.
+Orders and stock are small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says
+where everything goes and can turn either feature off.
 
 ## Skills
 
@@ -249,7 +259,9 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit cleanup BOARD [--dry-run] [--dangling]` | duplicate, zero-length and covered segments removed, collinear runs merged; `--dangling` also removes dead-end segments that no net needs; edits the file text by uuid |
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
-| `pcbkit fab BOARD OUT` | JLC Gerber zip, BOM and CPL (front-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table |
+| `pcbkit fab BOARD OUT [--houses jlcpcb,pcbway] [--placed field:NAME=VALUE] [--no-assembly] [--extra-layers L,..] [--name N]` | JLC Gerber zip, BOM (one row per LCSC number) and CPL (front-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table; PCBWay's BOM and centroid with `pcbway` |
+| `pcbkit release [PCB ..] [--minor\|--major] [--version X.Y.Z] [--dry-run]` | every board per `pcbkit.toml`: checks; a new version for each changed one (patch by default), stamped into its KiCad files; its fab files, PDFs and previews in its release folder; then `pcbkit production` |
+| `pcbkit production [--check]` | PRODUCTION.md's overview from the releases, `production/orders/*/order.toml` and `production/stock.toml`; each order's ORDER.md and upload folder; `--check` exits 1 on problems |
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
 | `pcbkit parts [TEXT] [--low N]` | the proven-parts catalog (library/PARTS.md) with current stock and price; flags low stock |
@@ -276,10 +288,10 @@ from pcbkit.spice import run                 # ngspice deck -> measurements, wrd
 ## Repository layout
 
 ```
-pcbkit/            the package (checks/, release/, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
+pcbkit/            the package (checks/, release/, config.py, production.py, tomlw.py, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
 pcbkit/data/       jlc/corrections.csv (rotations), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
-templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons and .gitignore for a new hardware repo
+templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons, pcbkit.toml and .gitignore for a new hardware repo
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
 docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), images/
 scripts/release.py version bump, check and tag; CHANGELOG.md lists each release, AGENTS.md says how to cut one

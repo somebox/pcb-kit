@@ -21,7 +21,8 @@ the interpreter.
 | Route a board by script | a project script under KiCad's Python: `pcbkit.route.complete_nets(board, P, area, plan, track, via, outline=..)` with `plan = [(net regex, [layers], width)]` and `QUICK`, `CONN_SECONDS` and `DEADLINE` in `P` so a run has an end; then `snap_to_pad_centres`, `audit_track_ends`, `pcbkit cleanup --dangling`, `pcbkit drc --save`. Worked example: esp32-s3-ha-node `scripts/route_pcb.py` |
 | Review a power stage | `pcbkit netview BOARD out.svg X0 Y0 X1 Y1 --layer B.Cu --png out.png`, then look at the PNG |
 | Update the docs' pictures | `pcbkit previews BOARD docs/previews/<board>` |
-| Order files | `pcbkit fab BOARD build/fab/<board>`; panels: `pcbkit panel BOARD build/panels/<board> --style both` |
+| Order files | `pcbkit release` (every changed board gets its next version, stamped into it, and its JLC and PCBWay files in its release folder; `--dry-run` first), then an order in `production/orders/<date>-<what>/order.toml` pinning the versions and `pcbkit production`; upload from that order's `upload/`. Panels: `pcbkit panel BOARD build/panels/<board> --style both`. Files without a version: `pcbkit fab BOARD build/fab/<board>` |
+| An order was placed, shipped, arrived or hit a problem (a stock shortage) | add an `[[event]]` to its order.toml (date, status, `pcb` when it is one board, `order_no`, `price`, `note`); boards and parts that arrived go in `production/stock.toml`; then `pcbkit production` and commit, so git has the history |
 | Start a new project | `pcbkit new ~/Documents/Projects/<name> --board <b> --title "..."`, then write DESIGN.md (requirements, constraints, candidate parts with `pcbkit jlc` stock, decisions) before any schematic |
 | Fit a board to an enclosure | measure the box (calipers, or a photo against a ruler), write `boards/<b>/enclosure.json`, then `pcbkit outline boards/<b>/<b>.kicad_pcb boards/<b>/enclosure.json`; record the numbers and their accuracy in LAYOUT.md |
 | Bring an EasyEDA design into KiCad | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project>`; archive the JSON under `archive/vN-easyeda/`, record findings in DESIGN.md, then `bomi init` + `bomi import kicad` in the board folder |
@@ -34,6 +35,29 @@ Related skills in this kit: **visual-review** (which picture answers which quest
 **bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test), **placement-study**
 (score placements by their ratsnest, route only the winner), **failure-review** (what could fail after fab, how
 we'd find it, test points).
+
+## KiCad documentation links
+
+When the user is to do or check something in KiCad themselves, or a result needs KiCad's own explanation (a DRC or
+ERC finding, a rule, a setting, an export), offer the manual sections they should review as markdown links in the
+reply, so they can open them from the chat. Link the section, not the whole manual; two or three that bear on the
+task, not a list. The KiCad 10 manuals are at `https://docs.kicad.org/10.0/en/<manual>/<manual>.html#<anchor>`;
+anchors that come up often:
+
+| Topic | Link |
+| --- | --- |
+| DRC: what each check means | [List of DRC checks](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#list-of-drc-checks), [schematic parity](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#schematic_parity_drc_checks) |
+| Board Setup: rules, net classes, severities | [constraints](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#board-setup-constraints), [net classes](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#board-setup-net-classes), [violation severity](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#board-setup-violation-severity) |
+| Custom rules (`.kicad_dru`) | [custom design rules](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#custom_rules) |
+| Zones and fills | [working with zones](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#working-with-zones) |
+| Fab outputs | [Gerber and fabrication output](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#gerber-and-fabrication-output), [drill files](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#drill-files), [position files](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#position-files) |
+| Title block, text variables | [title block](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#sheet-title-block), [text variables](https://docs.kicad.org/10.0/en/pcbnew/pcbnew.html#board-setup-text-variables) |
+| ERC and the pin conflict map | [ERC](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#erc), [severities and pin map](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#erc_violation_severity_and_pin_conflicts_map) |
+| Symbol fields, hierarchy | [symbol fields table](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#symbol-fields-table), [hierarchical schematics](https://docs.kicad.org/10.0/en/eeschema/eeschema.html#hierarchical-schematics) |
+| What pcbkit runs through kicad-cli | [pcb drc](https://docs.kicad.org/10.0/en/cli/cli.html#pcb_drc), [sch erc](https://docs.kicad.org/10.0/en/cli/cli.html#schematic_erc), [gerbers](https://docs.kicad.org/10.0/en/cli/cli.html#pcb_export_gerber), [render](https://docs.kicad.org/10.0/en/cli/cli.html#pcb_render) |
+
+For a topic not listed, find the section in the manual's contents (fetch the page and look for its `id="..."`)
+rather than guessing an anchor.
 
 ## Rules
 

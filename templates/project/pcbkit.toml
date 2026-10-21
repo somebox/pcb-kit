@@ -1,0 +1,38 @@
+# pcb-kit's settings for this project: which boards it has, how they are released (pcbkit release) and where the
+# production record lives (pcbkit production). Every key is optional; the commented values are the defaults
+# (docs/CONVENTIONS.md in pcb-kit). Paths may use {key} (the PCB's file stem), {folder} (its board folder) and
+# {sub} ("" for a folder's only PCB, "/<stem>" for any other).
+
+[boards]
+folders = ["boards/*"]                 # globs of board folders, relative to this file
+# subfolders = []                      # subfolders of a board folder with more PCBs, e.g. ["panel"]
+# exclude = []                         # PCB paths or board folders to leave out (globs)
+
+[release]
+# enabled = true                       # false: no versions or stamping; pcbkit release only checks
+# dir = "releases/{key}"               # <dir>/v<label>/ per version, releases.toml beside them (committed)
+# label = "short"                      # v1.0, then v1.0.1 after a fix; "full": always v1.0.0
+# fab = ["jlcpcb", "pcbway"]           # whose assembly files to write; the Gerber zip serves both
+# placed = "not-excluded"              # what the assembler places; or a field, e.g. "field:Assembly=jlc"
+# previews = true                      # pcbkit previews of each released version
+# previews_dir = "docs/previews/{key}"
+# previews_render = true               # false when previews_after renders them
+# previews_after = ""                  # a project command run after the previews, e.g. "scripts/render.sh {key}"
+
+# [[release.profile]]                  # per PCB, the first whose match (a glob on its path) fits
+# match = "boards/*-panel/*"
+# release = true
+# checks = ["erc", "drc", "parity"]    # a PCB that fails any is a mockup: reported, not released
+# assembly = false                     # Gerbers only
+# extra_layers = ["Cmts.User"]         # added to the Gerbers, e.g. V-score lines drawn there
+
+[production]
+# enabled = true
+# page = "PRODUCTION.md"               # its overview goes between the pcbkit:production markers
+# dir = "production"                   # orders/<name>/order.toml, stock.toml
+
+# [[production.part]]                  # what a board needs besides its hand-soldered parts, from a footprint field
+# pcb = "boards/*"
+# field = "Panel"
+# match = '\((B\d+K)\)'                # first rule that matches wins; {1} is the first group
+# part = ["9 mm pot {1}", "knob"]      # "" for nothing

@@ -1,4 +1,5 @@
 build/
+production/orders/*/upload/
 *-backups/
 *.kicad_prl
 *.lck

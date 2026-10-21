@@ -28,6 +28,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **`pcbkit.toml`, a project's settings** for both: where boards, releases, previews and the production record live,
   per-board profiles (checks, Gerbers only, extra layers), which parts the assembler places, rules for the panel
   parts a board needs, and switches to turn releases or the production record off. `pcbkit new` writes one.
+- **The pcb-kit skill offers links to the KiCad 10 manual** for what the user should review or do in KiCad: the
+  DRC and ERC checks, Board Setup, custom rules, zones, fab outputs, title blocks, kicad-cli.
 - **PCBWay files from `pcbkit fab --houses jlcpcb,pcbway`:** a BOM with manufacturer and part number (from the MPN
   field or the parts cache) and a centroid file with KiCad's own rotations, beside the JLC files.
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already

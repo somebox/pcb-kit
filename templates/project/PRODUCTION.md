@@ -4,7 +4,11 @@ How to order, what it costs, and a dated log of quotes and orders (newest first)
 
 ## Order files
 
-`scripts/make_fab.sh <board>` writes `build/fab/<board>/` (git-ignored; regenerate before each order).
+`pcbkit release` checks every board, gives a changed one its next version (stamped into its KiCad files) and writes
+that version's fab files for JLCPCB and PCBWay into `releases/<board>/v<version>/` (committed). An order is
+`production/orders/<date>-<what>/order.toml`, pinning each board's version, with an event per step (draft,
+submitted, shipped, received, problem); `pcbkit production` makes its ORDER.md and `upload/` folder, and the
+overview at the end of this page. Settings: pcbkit.toml.
 
 ## Order checklist
 
@@ -19,3 +23,9 @@ from a current-limited supply, then the bench tests from the failure review (`do
 point it is measured at and what a pass reads.
 
 ## Costs
+
+## Overview
+
+<!-- pcbkit:production:begin -->
+Run `pcbkit production` to fill this in.
+<!-- pcbkit:production:end -->

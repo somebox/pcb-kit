@@ -1,7 +1,7 @@
 """pcbkit command line. `pcbkit <command> --help` for each one.
 
 Checks:    drc, erc, nets, check, cleanup
-Release:   previews, print, fab, panel, setup-kikit
+Release:   release, production, previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
 Projects:  new, import-easyeda, outline
@@ -17,6 +17,8 @@ COMMANDS = {
     "nets": ("pcbkit.checks.netlist", "net sizes and members from a schematic"),
     "check": ("pcbkit.checks.route_check", "floating copper, stubs, loops, thin power feeds (needs pcbnew)"),
     "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered (--dangling: dead-end) segments, merge runs"),
+    "release": ("pcbkit.release.release", "version, stamp and fab every changed board (pcbkit.toml), then production"),
+    "production": ("pcbkit.production", "the production page: versions, orders, stock (--check)"),
     "previews": ("pcbkit.release.previews", "schematic PDF, copper PNGs, assembly map, 1:1 print, renders"),
     "print": ("pcbkit.release.plot_print", "printable 1:1 PDF, front then mirrored back (needs pcbnew)"),
     "fab": ("pcbkit.release.jlc_fab", "JLC Gerber zip, BOM and CPL (needs pcbnew)"),

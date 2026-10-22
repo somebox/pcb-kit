@@ -18,7 +18,9 @@ For every PCB (or those named, by key, path or folder):
    and centroid, schematic.pdf and board.pdf made from this version, MANIFEST.txt; releases.toml beside it, with
    what a board of this version needs by hand (pcbkit production reads it for the orders that pin the version).
    Previews are rebuilt when they are of another version.
-Then `pcbkit production` brings the production record up to date. --dry-run says what it would do. With
+Then `pcbkit production` brings the production record up to date. --dry-run says what it would do.
+--refresh-parts records again what a board of its last release needs by hand, for boards unchanged since that
+release, after pcbkit.toml's part rules changed; nothing else is touched. With
 [release] enabled = false, only step 1 runs: the checks are recorded, nothing is stamped or released.
 """
 import argparse
@@ -242,6 +244,26 @@ def release(project, pcb, part="patch", version=None, note="", dry=False):
     return dict(state="released", version=new, label=lab, checks=c, note=why, previews=pv, dir=project.rel(vdir))
 
 
+def refresh_parts(project, pcb, dry=False):
+    """Record the last release's parts again with the current rules, when the board is unchanged since it."""
+    if pcb["excluded"]:
+        return dict(state="excluded")
+    rdir = project.release_dir(pcb)
+    last = V.current(rdir)
+    if not last:
+        return dict(state="not released")
+    src = source_key(project, pcb)
+    if src != last["source"] and src not in last.get("equivalent", []):
+        return dict(state="changed since its last release: parts left as they were", version=last["version"],
+                    label=last["label"])
+    parts = production.board_parts(project, pcb)
+    same = parts == {k: last.get("parts", {}).get(k, {}) for k in parts}
+    if not same and not dry:
+        V.update_last(rdir, pcb["key"], parts=parts)
+    return dict(state="parts unchanged" if same else ("would record parts" if dry else "parts recorded"),
+                version=last["version"], label=last["label"])
+
+
 def save_state(project, results):
     """production/boards.toml: each PCB's last check and release state (script-owned; read by pcbkit production)."""
     pdir = os.path.join(project.root, project.production["dir"])
@@ -265,6 +287,8 @@ def main(argv=None):
     ap.add_argument("--version", help="the version for a first release (X.Y.Z)")
     ap.add_argument("--note", default="")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--refresh-parts", action="store_true",
+                    help="record the last release's hand parts again (after the part rules changed); nothing else")
     a = ap.parse_args(argv)
     project = Project()
     if not project.release["enabled"]:
@@ -273,6 +297,14 @@ def main(argv=None):
         V.parse(a.version)
     part = "major" if a.major else "minor" if a.minor else "patch"
     pcbs = [project.pcb(n) for n in a.pcbs] if a.pcbs else project.pcbs()
+    if a.refresh_parts:
+        for pcb in pcbs:
+            r = refresh_parts(project, pcb, a.dry_run)
+            ver = f" {r['label']} ({r['version']})" if r.get("version") else ""
+            print(f"{pcb['path']:60s} {r['state']}{ver}")
+        if not a.dry_run and project.production["enabled"]:
+            production.build(project)
+        return
     results = []
     for pcb in pcbs:
         r = release(project, pcb, part, a.version, a.note, a.dry_run)

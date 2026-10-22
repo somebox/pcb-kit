@@ -8,6 +8,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **A shopping list for hand assembly in each ORDER.md**, and a "where" column in PRODUCTION.md's parts table:
+  every part the order's boards need by hand, with what is on hand, what to buy and where from. Part rules gain
+  `buy` (where a part comes from; a hand part's LCSC number serves otherwise), `group` (rules in another group are
+  matched apart, so one connector can give a panel part and a cable) and `replace` (the footprint's own hand part is
+  dropped, for a breakout's pot already counted by its module). `pcbkit release --refresh-parts` records a release's
+  hand parts again after the rules change, for boards unchanged since.
 - **`pcbkit release`: a version for every board that changed, stamped into its KiCad files.** Each run checks
   every board (ERC, DRC, and no unconnected items or parity findings of any severity; a board that fails is reported
   as a mockup), compares its fab output for every fab house with its last release, and gives a changed board the next

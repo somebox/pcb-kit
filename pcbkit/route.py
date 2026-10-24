@@ -811,6 +811,60 @@ def _simplify(path):
     return pts
 
 
+def _item_gap(a, z):
+    """Gap between two copper items (layers, kind, geometry) as net_components sees them: <= 0 when they touch,
+    1.0 when they share no layer (or two rectangles don't overlap)."""
+    (la, ka, ga), (lz, kz, gz) = a, z
+    if la != "all" and lz != "all" and not (la & lz):
+        return 1.0
+    if ka == "seg" and kz == "seg":
+        return _seg_seg(ga[0], ga[1], gz[0], gz[1]) - ga[2] - gz[2]
+    if ka == "rect" and kz == "rect":
+        return 0.0 if (ga[0] <= gz[2] and gz[0] <= ga[2] and ga[1] <= gz[3] and gz[1] <= ga[3]) else 1.0
+    if kz == "rect":
+        a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
+    if ka == "rect":
+        return (_rect_dist(gz[0], ga) - gz[1]) if kz == "disc" else (_seg_rect(gz[0], gz[1], ga) - gz[2])
+    if ka == "disc" and kz == "disc":
+        return math.hypot(ga[0][0] - gz[0][0], ga[0][1] - gz[0][1]) - ga[1] - gz[1]
+    if ka == "seg":
+        a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
+    return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
+
+
+def _group_points(grp, step=1.0):
+    """Points standing for a group of copper items: pad and via centres, track ends and points every `step` mm."""
+    pts = []
+    for _ls, k, g in grp:
+        if k == "rect":
+            pts.append(((g[0] + g[2]) / 2, (g[1] + g[3]) / 2))
+        elif k == "disc":
+            pts.append(g[0])
+        else:
+            (ax, ay), (zx, zy) = g[0], g[1]
+            n = max(1, int(math.hypot(zx - ax, zy - ay) / step))
+            pts += [(ax + (zx - ax) * i / n, ay + (zy - ay) * i / n) for i in range(n + 1)]
+    return pts
+
+
+def _spanning_pairs(groups):
+    """The pairs of a net's copper groups that a shortest spanning tree joins (Prim's, by the straight-line distance
+    between their nearest points, see _group_points): [(distance, i, k)]."""
+    pts = [_group_points(g) for g in groups]
+    gap = lambda i, k: min(math.hypot(a[0] - c[0], a[1] - c[1]) for a in pts[i] for c in pts[k])
+    best = {k: (gap(0, k), 0) for k in range(1, len(groups))}
+    out = []
+    while best:
+        k = min(best, key=lambda m: (best[m][0], m))
+        d, i = best.pop(k)
+        out.append((d, i, k))
+        for m in best:
+            dm = gap(k, m)
+            if dm < best[m][0]:
+                best[m] = (dm, k)
+    return out
+
+
 def net_components(b, net_name, exclude):
     """Connected groups of a net's copper (pads as inscribed shapes, vias, tracks); zones ignored. Returns list of
     item lists."""
@@ -839,29 +893,11 @@ def net_components(b, net_name, exclude):
             par[k] = par[par[k]]
             k = par[k]
         return k
-
-    def dist(a, z):
-        (la, ka, ga), (lz, kz, gz) = a, z
-        if la != "all" and lz != "all" and not (la & lz):
-            return 1.0
-        if ka == "seg" and kz == "seg":
-            return _seg_seg(ga[0], ga[1], gz[0], gz[1]) - ga[2] - gz[2]
-        if ka == "rect" and kz == "rect":
-            return 0.0 if (ga[0] <= gz[2] and gz[0] <= ga[2] and ga[1] <= gz[3] and gz[1] <= ga[3]) else 1.0
-        if kz == "rect":
-            a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
-        if ka == "rect":
-            return (_rect_dist(gz[0], ga) - gz[1]) if kz == "disc" else (_seg_rect(gz[0], gz[1], ga) - gz[2])
-        if ka == "disc" and kz == "disc":
-            return math.hypot(ga[0][0] - gz[0][0], ga[0][1] - gz[0][1]) - ga[1] - gz[1]
-        if ka == "seg":
-            a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
-        return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
     for i, k in barrels:
         par[find(i)] = find(k)
     for i in range(len(items)):
         for k in range(i + 1, len(items)):
-            if find(i) != find(k) and dist(items[i], items[k]) <= 1e-3:
+            if find(i) != find(k) and _item_gap(items[i], items[k]) <= 1e-3:
                 par[find(i)] = find(k)
     groups = {}
     for i, it in enumerate(items):
@@ -872,6 +908,11 @@ def net_components(b, net_name, exclude):
 def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts=(), outline=None):
     """plan: [(net regex, [layer ids in preference order], width)]. For each matching net, join its copper groups
     one at a time: A* from the growing tree to the nearest other group, trying the layers in order.
+    p["ORDER"] = "longest": first collect every connection of the whole plan (for each net, the pairs of copper groups
+    a shortest spanning tree joins), then route them longest first by the straight-line distance between the two
+    groups, whatever their net or plan entry, each from the copper its first group has by then to its second's; a
+    connection whose groups another route has joined already is skipped, and a net matching two patterns is routed
+    with the first. p["DIR"]: a preferred direction per layer (see astar_ml).
     Returns (routed connections, [unrouted net names])."""
     cu = _copper(b, p)
     clr = p["CLEARANCE"]
@@ -889,6 +930,153 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     cu_layers = list(b.GetEnabledLayers().CuStack())
     done, failed = 0, []
     stop = p.get("DEADLINE")
+    order = p.get("ORDER")
+    if order not in (None, "plan", "longest"):
+        raise ValueError(f"ORDER: {order!r}; use 'longest' (or leave it out)")
+
+    def connect(net, netobj, pad_mids, layers, width, tree, rest):
+        """One connection of `net`: A* from the copper of `tree` to the nearest group of `rest`; its tracks and vias
+        go on the board and into `tree`. Returns (index in rest of the group reached, or None; its deadline)."""
+        Gs = {L: grid(L) for L in layers}
+        G0 = Gs[layers[0]]
+        src, tgt = set(), {}
+        ax = p.get("AXIAL_PADS", False)
+        for L in layers:
+            is_pad = lambda it: it[1] != "seg" or _mid(it) in pad_mids
+            src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax and is_pad(it))}
+            for gi, grp in enumerate(rest):
+                for it in grp:
+                    if it[0] == "all" or L in it[0]:
+                        for c in _cells(Gs[L], it, ax and is_pad(it)):
+                            tgt[(c, L)] = gi
+        vr = p["VIA"][0] / 2
+        vcache = {}
+
+        def via_ok(c):
+            if c not in vcache:
+                xy = G0.xy(*c)
+                vcache[c] = all(not grid(L).blocked(c, net, clr + vr + 0.02, vr)
+                                for L in cu_layers) and \
+                    cu.clear(("disc", (xy, vr)), "all", net, clr)
+            return vcache[c]
+        path = None
+        w_used = width
+        dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
+        dl = min(dl) if dl else None
+        for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
+            if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
+                continue
+            w_used = w_try
+            path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
+            if path or (dl and _time.time() > dl):
+                break
+        if not path:
+            return None, dl
+
+        def centre(items, st):                       # pad / via centre of the item holding this cell
+            xy, L = Gs[st[1]].xy(*st[0]), st[1]
+            for ls, k, g in items:
+                if ls != "all" and L not in ls:
+                    continue
+                if k == "rect" and g[0] <= xy[0] <= g[2] and g[1] <= xy[1] <= g[3]:
+                    return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)
+                if k == "disc" and math.hypot(xy[0] - g[0][0], xy[1] - g[0][1]) <= g[1]:
+                    return g[0]
+                if k == "seg" and _mid((ls, k, g)) in pad_mids and _seg_dist(xy, g[0], g[1]) <= g[2]:
+                    return _mid((ls, k, g))      # a pad at an angle: its centre
+            return None
+        c_start = centre(tree, path[0])
+        c_end = centre(rest[tgt[path[-1]]], path[-1])
+        runs, cur = [], [path[0]]
+        for st in path[1:]:
+            if st[1] != cur[-1][1]:
+                runs.append(cur); cur = [st]
+                xy = G0.xy(*st[0])
+                via_fn(xy, netobj)
+                cu.add_via(xy, vr, net)
+                for gr in grids.values():
+                    gr.add("disc", (xy, vr), net)
+                tree.append(("all", "disc", (xy, vr)))
+            else:
+                cur.append(st)
+        runs.append(cur)
+
+        def lay(a, z, w, L):
+            track(a, z, w, L, netobj)
+            seg = (a, z, w / 2)
+            cu.add_track(a, z, w / 2, L, net)
+            grids[L].add("seg", seg, net)
+            tree.append(({L}, "seg", seg))
+
+        def to_centre(a, c, L):                      # finish exactly on the pad / via centre, necked if needed
+            if not c or math.hypot(a[0] - c[0], a[1] - c[1]) < 1e-6:
+                return
+            for w in (w_used, max(0.2, round(w_used * 0.6, 2)), 0.2):
+                if cu.clear(("seg", (a, c, w / 2)), {L}, net, clr):
+                    lay(a, c, w, L)
+                    return
+        for ri, run in enumerate(runs):
+            L = run[0][1]
+            pts = [Gs[L].xy(*c) for c in _simplify([st[0] for st in run])]
+            pts = [q for i, q in enumerate(pts) if i == 0 or q != pts[i - 1]]
+            for a, z in zip(pts, pts[1:]):
+                lay(a, z, w_used, L)
+            if ri == 0:
+                to_centre(pts[0], c_start, L)
+            if ri == len(runs) - 1:
+                to_centre(pts[-1], c_end, L)
+        return tgt[path[-1]], dl
+
+    if order == "longest":
+        jobs, nets = [], {}
+        for pattern, layers, width in plan:
+            for net in [n for n in names if _re.fullmatch(pattern, n)]:
+                if net in nets:
+                    continue
+                groups = net_components(b, net, exclude)
+                if len(groups) < 2:
+                    continue
+                nets[net] = dict(layers=layers, width=width, groups=groups, par=list(range(len(groups))),
+                                 obj=b.FindNet(net), mids=_capsule_pad_mids(b, net, cu_layers))
+                jobs += [(-d, len(jobs), net, i, k) for d, i, k in _spanning_pairs(groups)]
+        jobs.sort()
+        if _VERBOSE:
+            print(f"   {_time.time() - _T0:6.1f}s {len(jobs)} connections in {len(nets)} nets, longest first", flush=True)
+
+        def find(s, k):
+            while s["par"][k] != k:
+                k = s["par"][k]
+            return k
+        for negd, _, net, i, k in jobs:
+            s = nets[net]
+            ri, rk = find(s, i), find(s, k)
+            if ri == rk:                                 # joined already, by a route that crossed it
+                continue
+            if stop and _time.time() > stop:
+                failed.append(net)
+                if _VERBOSE:
+                    print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): not tried, out of time", flush=True)
+                continue
+            tree = s["groups"][ri]
+            n0 = len(tree)
+            gi, dl = connect(net, s["obj"], s["mids"], s["layers"], s["width"], tree, [s["groups"][rk]])
+            if gi is None:
+                failed.append(net)
+            else:
+                done += 1
+                new = tree[n0:]
+                tree += s["groups"][rk]
+                s["par"][rk] = ri
+                for m in range(len(s["groups"])):         # a route can cross the net's other groups: join them too
+                    rm = find(s, m)
+                    if rm != ri and any(_item_gap(a, z) <= 1e-3 for a in new for z in s["groups"][rm]):
+                        tree += s["groups"][rm]
+                        s["par"][rm] = ri
+            if _VERBOSE:
+                why = "ok" if gi is not None else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
+                print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): {why}", flush=True)
+        return done, failed
+
     for pattern, layers, width in plan:
         for net in [n for n in names if _re.fullmatch(pattern, n)]:
             groups = net_components(b, net, exclude)
@@ -908,95 +1096,11 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     if _VERBOSE:
                         print(f"   {_time.time() - _T0:6.1f}s {net}: out of time ({len(rest)} groups left)", flush=True)
                     break
-                routed = False
-                Gs = {L: grid(L) for L in layers}
-                G0 = Gs[layers[0]]
-                src, tgt = set(), {}
-                ax = p.get("AXIAL_PADS", False)
-                for L in layers:
-                    is_pad = lambda it: it[1] != "seg" or _mid(it) in pad_mids
-                    src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax and is_pad(it))}
-                    for gi, grp in enumerate(rest):
-                        for it in grp:
-                            if it[0] == "all" or L in it[0]:
-                                for c in _cells(Gs[L], it, ax and is_pad(it)):
-                                    tgt[(c, L)] = gi
-                vr = p["VIA"][0] / 2
-                vcache = {}
-
-                def via_ok(c):
-                    if c not in vcache:
-                        xy = G0.xy(*c)
-                        vcache[c] = all(not grid(L).blocked(c, net, clr + vr + 0.02, vr)
-                                        for L in cu_layers) and \
-                            cu.clear(("disc", (xy, vr)), "all", net, clr)
-                    return vcache[c]
-                path = None
-                w_used = width
-                dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
-                dl = min(dl) if dl else None
-                for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
-                    if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
-                        continue
-                    w_used = w_try
-                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
-                    if path or (dl and _time.time() > dl):
-                        break
-                if path:
-                    def centre(items, st):                       # pad / via centre of the item holding this cell
-                        xy, L = Gs[st[1]].xy(*st[0]), st[1]
-                        for ls, k, g in items:
-                            if ls != "all" and L not in ls:
-                                continue
-                            if k == "rect" and g[0] <= xy[0] <= g[2] and g[1] <= xy[1] <= g[3]:
-                                return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)
-                            if k == "disc" and math.hypot(xy[0] - g[0][0], xy[1] - g[0][1]) <= g[1]:
-                                return g[0]
-                            if k == "seg" and _mid((ls, k, g)) in pad_mids and _seg_dist(xy, g[0], g[1]) <= g[2]:
-                                return _mid((ls, k, g))      # a pad at an angle: its centre
-                        return None
-                    c_start = centre(tree, path[0])
-                    c_end = centre(rest[tgt[path[-1]]], path[-1])
-                    runs, cur = [], [path[0]]
-                    for st in path[1:]:
-                        if st[1] != cur[-1][1]:
-                            runs.append(cur); cur = [st]
-                            xy = G0.xy(*st[0])
-                            via_fn(xy, netobj)
-                            cu.add_via(xy, vr, net)
-                            for gr in grids.values():
-                                gr.add("disc", (xy, vr), net)
-                            tree.append(("all", "disc", (xy, vr)))
-                        else:
-                            cur.append(st)
-                    runs.append(cur)
-                    def lay(a, z, w, L):
-                        track(a, z, w, L, netobj)
-                        seg = (a, z, w / 2)
-                        cu.add_track(a, z, w / 2, L, net)
-                        grids[L].add("seg", seg, net)
-                        tree.append(({L}, "seg", seg))
-
-                    def to_centre(a, c, L):                      # finish exactly on the pad / via centre, necked if needed
-                        if not c or math.hypot(a[0] - c[0], a[1] - c[1]) < 1e-6:
-                            return
-                        for w in (w_used, max(0.2, round(w_used * 0.6, 2)), 0.2):
-                            if cu.clear(("seg", (a, c, w / 2)), {L}, net, clr):
-                                lay(a, c, w, L)
-                                return
-                    for ri, run in enumerate(runs):
-                        L = run[0][1]
-                        pts = [Gs[L].xy(*c) for c in _simplify([st[0] for st in run])]
-                        pts = [q for i, q in enumerate(pts) if i == 0 or q != pts[i - 1]]
-                        for a, z in zip(pts, pts[1:]):
-                            lay(a, z, w_used, L)
-                        if ri == 0:
-                            to_centre(pts[0], c_start, L)
-                        if ri == len(runs) - 1:
-                            to_centre(pts[-1], c_end, L)
-                    tree += rest.pop(tgt[path[-1]])
+                gi, dl = connect(net, netobj, pad_mids, layers, width, tree, rest)
+                routed = gi is not None
+                if routed:
+                    tree += rest.pop(gi)
                     done += 1
-                    routed = True
                 if _VERBOSE:
                     why = "ok" if routed else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
                     print(f"   {_time.time() - _T0:6.1f}s {net}: {why} ({len(rest)} groups left)", flush=True)

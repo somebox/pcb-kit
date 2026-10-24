@@ -506,20 +506,55 @@ class Grid:
 
 
 DIRS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+DIR_COST = (1.0, 4.0, 2.0)          # preferred direction: step-cost multipliers along, across, at 45 degrees
+
+
+def _step_costs(layers, layer_cost, direction=None, dir_cost=None):
+    """Cost of each move in DIRS on each layer: its length (1 or 1.4142) x the layer's cost, and on a layer with a
+    preferred direction ({layer: "h" | "v"}) x dir_cost (along, across, diagonal; DIR_COST by default, each raised
+    to 1 at least so the A* heuristic stays a lower bound)."""
+    direction = direction or {}
+    m = [max(1.0, float(x)) for x in (dir_cost or DIR_COST)]
+    out = {}
+    for L in layers:
+        d = direction.get(L)
+        d = d.lower() if isinstance(d, str) else d
+        if d not in (None, "h", "v"):
+            raise ValueError(f"DIR: layer {L} has {d!r}; use 'h' or 'v'")
+        row = []
+        for dx, dy in DIRS:
+            k = 1.0 if d is None else m[2] if dx and dy else m[0] if (dy == 0) == (d == "h") else m[1]
+            row.append((1.4142 if dx and dy else 1.0) * k * layer_cost[L])   # k = 1: exactly the plain cost
+        out[L] = row
+    return out
 
 
 def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.0, layer_cost=None,
-             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None):
+             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None, direction=None, dir_cost=None):
     """A* over (cell, layer): 8-connected moves within a layer, or a via to another allowed layer where via_ok.
     sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. deadline: time.time() at which
-    to give up. Returns [(cell, layer)] or None."""
+    to give up. direction: {layer: "h" | "v"}, a preferred direction per layer, its moves priced by dir_cost
+    (along, across, diagonal multipliers; DIR_COST by default). Returns [(cell, layer)] or None."""
     layer_cost = layer_cost or {L: 1.0 for L in layers}
+    step = _step_costs(layers, layer_cost, direction, dir_cost)
     tl = list(targets)
     if not tl:
         return None
     bx0 = min(t[0][0] for t in tl); bx1 = max(t[0][0] for t in tl)
     by0 = min(t[0][1] for t in tl); by1 = max(t[0][1] for t in tl)
-    h = lambda c: hweight * math.hypot(max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1))
+    if direction and any(L in direction for L in layers):
+        # octile distance with the cheapest straight and diagonal step of any layer: still a lower bound on the
+        # cost to go (vias and turns only add), and much closer to it than the plain distance when the layers'
+        # directions make diagonals dear (with the default costs it is the Manhattan distance)
+        s_min = min(min(step[L][:4]) for L in layers)
+        d_min = min(min(step[L][4:]) for L in layers)
+
+        def h(c):
+            dx, dy = max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1)
+            a, b_ = max(dx, dy), min(dx, dy)
+            return hweight * (b_ * min(d_min, 2 * s_min) + (a - b_) * s_min)
+    else:
+        h = lambda c: hweight * math.hypot(max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1))
     G0 = grids[layers[0]]
     i0, j0, i1, j1 = corridor or (0, 0, G0.nx - 1, G0.ny - 1)
     openq, best, parent = [], {}, {}
@@ -553,7 +588,7 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
                 continue
             if dx and dy and (G.blocked((c[0] + dx, c[1]), net, need, hw) or G.blocked((c[0], c[1] + dy), net, need, hw)):
                 continue
-            ng = gc + (1.4142 if dx and dy else 1.0) * layer_cost[L] + (turn if di not in (-1, d) else 0.0)
+            ng = gc + step[L][d] + (turn if di not in (-1, d) else 0.0)
             if ng < best.get((ns, d), 1e18):
                 best[(ns, d)] = ng
                 parent[(ns, d)] = (st, di)
@@ -573,7 +608,8 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
 def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=None):
     """p["QUICK"]: give up early (corridors of 4 and 12 mm, 250k expansions each, no whole-board search), so a hard
     connection fails in seconds and is left for hand routing. p["HWEIGHT"] > 1 makes the A* greedier (weighted
-    heuristic): far fewer expansions, paths slightly longer than optimal."""
+    heuristic): far fewer expansions, paths slightly longer than optimal. p["DIR"] / p["DIR_COST"]: preferred
+    direction per layer (see astar_ml)."""
     import pcbnew
     allc = [s_[0] for s_ in src] + [t[0] for t in tgt]
     quick = p.get("QUICK", False)
@@ -586,7 +622,8 @@ def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=N
                         layer_cost={L: p.get("LAYER_COST", {}).get(L, p["IN1_COST"] if L == pcbnew.In1_Cu and "IN1_COST" in p
                                                                      else 1 + 0.25 * k) for k, L in enumerate(layers)},
                         corridor=cor, max_expand=250000 if quick else (600000 if m else 3000000),
-                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline)
+                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline,
+                        direction=p.get("DIR"), dir_cost=p.get("DIR_COST"))
         if path:
             return path
     return None

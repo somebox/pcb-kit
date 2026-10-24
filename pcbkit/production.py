@@ -5,8 +5,10 @@
 
 Reads what people keep (pcbkit never writes these):
 - <dir>/orders/<name>/order.toml: an order: title, house, fab notes, notes; [[board]] pcb, version (pinned, quoted),
-  pcbs, assembled, house; [[event]] date, status (draft, submitted, in-production, shipped, received, problem,
-  cancelled), and optionally pcb (one board or a list; default all), order_no, price, currency, note.
+  pcbs, assembled, house, fab (what to tell the fab for this board only: a black mask for a front panel);
+  [[extra]] part, qty, buy, note (bought with the order, not placed on a board: spares, a rework kit); [[event]]
+  date, status (draft, submitted, in-production, shipped, received, problem, cancelled), and optionally pcb (one
+  board or a list; default all), order_no, price, currency, note.
 - <dir>/stock.toml: [[board]] pcb, version, bare, assembled, built, tested; [parts] name = count, a name being a
   hand-soldered part's part number (MPN without a "(...)" note, else its LCSC number) or a [[production.part]]
   rule's part.
@@ -56,6 +58,7 @@ BEGIN, END = "<!-- pcbkit:production:begin -->", "<!-- pcbkit:production:end -->
 HOUSES = {"jlcpcb": ("JLCPCB", ["GERBER-*.zip"], ["BOM-*-jlcpcb.csv", "CPL-*-jlcpcb.csv"]),
           "pcbway": ("PCBWay", ["GERBER-*.zip"], ["BOM-*-pcbway.csv", "centroid-*-pcbway.csv"])}
 NOTE = re.compile(r"\s+\([^)]*\)\s*$")       # "BCM847BS,115 (matched pair)", not "B3B-XH-A(LF)(SN)"
+PICTURES = ("render-top.png", "pcb-front.png")  # a board's picture in ORDER.md: the first of its previews found
 
 
 # ---- the board files, read as text (no KiCad needed) ----------------------------------------------------------------
@@ -221,6 +224,13 @@ def load_orders(project, pcbs, problems):
                                     f"{b['house']}" + (", which assembles it" if b["assembled"] else ""))
             if b["house"] not in HOUSES:
                 problems.append(f"{where}: {b.get('pcb')}: house {b['house']!r} is not one of {', '.join(HOUSES)}")
+            if isinstance(b.get("fab"), str):
+                b["fab"] = [b["fab"]]
+        o.setdefault("extra", [])
+        for x in o["extra"]:
+            if not x.get("part") or not isinstance(x.get("qty"), int) or x["qty"] < 1:
+                problems.append(f"{where}: [[extra]] {x.get('part')!r}: needs a part and a qty of 1 or more")
+        o["extra"] = [x for x in o["extra"] if x.get("part") and isinstance(x.get("qty"), int) and x["qty"] > 0]
         events = sorted(o.get("event", []), key=lambda e: str(e.get("date", "")))
         for e in events:
             if e.get("status") not in STATUSES:
@@ -240,6 +250,7 @@ def load_orders(project, pcbs, problems):
             last = b["events"][-1] if b["events"] else {}
             b["status"], b["since"] = last.get("status", "draft"), last.get("date", "")
             b["note"] = last.get("note", "")
+            b["own_note"] = b["note"] if last.get("pcb") else ""    # the tables leave a note for every board to Events
             for k in ("order_no", "price", "currency"):
                 b[k] = next((e[k] for e in reversed(b["events"]) if k in e), "")
         o["open"] = any(b["status"] not in CLOSED for b in boards)
@@ -354,6 +365,16 @@ def release_files(p, version, house, assembled):
     return vdir, [f for _, fs in found for f in fs], [pat for pat, fs in found if not fs]
 
 
+def previews_of(project, p, version):
+    """The board's previews folder when its previews are of this version (their SOURCE.txt is the one the release
+    recorded), else None."""
+    rel = next((r for r in p["releases"] if r["version"] == version), None)
+    src = os.path.join(project.previews_dir(p), "SOURCE.txt")
+    if rel and os.path.exists(src) and hashlib.sha1(open(src).read().encode()).hexdigest() == rel.get("previews"):
+        return os.path.dirname(src)
+    return None
+
+
 def hand_totals(boards):
     """{part: n} to finish these order lines by hand: each board's needs times the boards to build (the assembled ones,
     or every PCB of a bare order)."""
@@ -381,7 +402,7 @@ def order_md(project, o, pcbs, cache, have, where):
         vdir = release_files(p, b["version"], b["house"], b["assembled"])[0] if p else None
         rows.append([b["pcb"], link(d, vdir, lab) if vdir else lab + " (no release)", HOUSES.get(b["house"], [b["house"]])[0],
                      b["pcbs"], b["assembled"], b["status"] + (f" ({b['since']})" if b["since"] else ""),
-                     b["order_no"], money(b["price"], b["currency"]), b["note"]])
+                     b["order_no"], money(b["price"], b["currency"]), b["own_note"]])
     out += [table(["PCB", "version", "house", "PCBs", "assembled", "status", "order no.", "price", "note"], rows)]
     if o.get("fab"):
         out += ["## Tell the fab", ""] + [f"- {x}" for x in o["fab"]] + [""]
@@ -409,8 +430,14 @@ def order_md(project, o, pcbs, cache, have, where):
             out += [f"Not ready: {'no release of this version' if not vdir else 'no ' + ', '.join(missing)} "
                     "(Problems in PRODUCTION.md).", ""]
             continue
+        pdir = previews_of(project, p, b["version"])
+        pic = next((os.path.join(pdir, f) for f in PICTURES if pdir and os.path.exists(os.path.join(pdir, f))), None)
+        if pic:
+            out += [f'<img src="{os.path.relpath(pic, d)}" width="320" alt="{b["pcb"]} {b["version"]}">', ""]
         names = [os.path.basename(f) for f in files]
         out.append(f"- PCB: `{names[0]}`, {b['pcbs']} boards" + (f", {b['assembled']} assembled" if b["assembled"] else ""))
+        for x in b.get("fab", []):
+            out.append(f"- Tell the fab: {x}")
         if b["assembled"]:
             out.append(f"- Assembly: {', '.join(f'`{n}`' for n in names[1:])}")
             pp = b["parts"]
@@ -435,6 +462,12 @@ def order_md(project, o, pcbs, cache, have, where):
                 "of a bare line. On hand is stock.toml (shared by every order); where is the rule's `buy` in "
                 "pcbkit.toml, or the part's LCSC number.", "",
                 table(["part", "needed", "on hand", "to buy", "where"], shopping(total, have, where))]
+    if o["extra"]:
+        out += ["## Extras", "", "Bought with the order, not placed on a board: spares and rework parts. On hand is "
+                "stock.toml.", "",
+                table(["part", "qty", "on hand", "to buy", "where", "why"], [
+                    [x["part"], x["qty"], have.get(x["part"], 0), max(0, x["qty"] - have.get(x["part"], 0)) or "",
+                     x.get("buy", ""), x.get("note", "")] for x in o["extra"]])]
     if o["events"]:
         out += ["## Events", "", table(["date", "boards", "status", "order no.", "price", "note"], [
             [e.get("date", ""), ", ".join([e["pcb"]] if isinstance(e.get("pcb"), str) else e.get("pcb") or ["all"]),
@@ -465,10 +498,8 @@ def build_upload(project, o, pcbs):
         readme = os.path.join(project.root, p["folder"], "README.md")
         if os.path.exists(readme) and not p["sub"]:
             shutil.copy2(readme, dst)
-        rel = next(r for r in p["releases"] if r["version"] == b["version"])
-        pdir = project.previews_dir(p)
-        src = os.path.join(pdir, "SOURCE.txt")
-        if os.path.exists(src) and hashlib.sha1(open(src).read().encode()).hexdigest() == rel.get("previews"):
+        pdir = previews_of(project, p, b["version"])
+        if pdir:
             os.makedirs(os.path.join(dst, "previews"))
             for f in os.listdir(pdir):
                 if os.path.isfile(os.path.join(pdir, f)) and f != "SOURCE.txt":
@@ -492,7 +523,7 @@ def section(project, pcbs, parts, orders, stock, cache, problems, watch, where):
             rows.append([link(page_dir, os.path.join(o["dir"], "ORDER.md"), o["name"]), b["pcb"], lab,
                          HOUSES.get(b["house"], [b["house"]])[0], f"{b['pcbs']} / {b['assembled']}",
                          b["status"] + (f" {b['since']}" if b["since"] else ""), b["order_no"],
-                         money(b["price"], b["currency"]), b["note"]])
+                         money(b["price"], b["currency"]), b["own_note"]])
     out += ["### In production", "", table(["order", "PCB", "version", "house", "PCBs / assembled", "status",
                                             "order no.", "price", "last note"], rows)]
     # every PCB
@@ -521,9 +552,12 @@ def section(project, pcbs, parts, orders, stock, cache, problems, watch, where):
                    "Extended parts add a setup fee each per order.\n")
     # parts the open orders need
     total = hand_totals([b for o in orders for b in o["board"] if b["status"] not in CLOSED])
+    for x in (x for o in orders if o["open"] for x in o["extra"]):
+        total[x["part"]] = total.get(x["part"], 0) + x["qty"]
     out += ["### Parts for the open orders", "",
             "To finish every board of the open orders by hand: the assembled ones, or every PCB of a bare order "
-            "(with the parts the assembler would have placed), as the versions they pin need.", "",
+            "(with the parts the assembler would have placed), as the versions they pin need; and the orders' "
+            "extras.", "",
             table(["part", "needed", "on hand", "to buy", "where"], shopping(total, have, where))]
     # orders
     rows = [[link(page_dir, os.path.join(o["dir"], "ORDER.md"), o["name"]), o.get("title", ""),
@@ -564,6 +598,8 @@ def build(project=None, check=False):
             if b.get("newer") and b["status"] in ("draft", "problem"):
                 watch.append(f"{o['name']} {b['pcb']}: pins {b['version']}, the latest release is {b['newer']}")
     where = sources(project, pcbs)
+    for x in (x for o in orders for x in o["extra"] if x.get("buy")):
+        where.setdefault(x["part"], x["buy"])
     outputs = {os.path.join(o["dir"], "ORDER.md"): order_md(project, o, pcbs, cache, stock["parts"], where)
                for o in orders}
     page = os.path.join(project.root, project.production["page"])

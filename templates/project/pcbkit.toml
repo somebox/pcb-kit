@@ -34,5 +34,8 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # [[production.part]]                  # what a board needs besides its hand-soldered parts, from a footprint field
 # pcb = "boards/*"
 # field = "Panel"
-# match = '\((B\d+K)\)'                # first rule that matches wins; {1} is the first group
+# match = '\((B\d+K)\)'                # the first rule that matches wins, in its group; {1} is the first group
 # part = ["9 mm pot {1}", "knob"]      # "" for nothing
+# buy = "Thonk"                        # where it comes from, for the shopping list in each ORDER.md
+# group = ""                           # e.g. "cable": matched apart, so a connector can give a part and a cable
+# replace = false                      # true: the footprint's own hand part is dropped (counted elsewhere)

@@ -424,6 +424,178 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
     return placed, failed
 
 
+# ---- fan-out ------------------------------------------------------------------------------------------------
+def _outline_ok(c, r, outline, edge_clr):
+    """A disc (centre c, radius r) inside the outline (rectangle, circle or polygon) and edge_clr from its edge."""
+    if not outline:
+        return True
+    e = r + edge_clr
+    if isinstance(outline, list):
+        return _in_poly(c, outline) and _poly_edge_dist(c, outline) >= e
+    if len(outline) == 3:
+        return math.hypot(c[0] - outline[0], c[1] - outline[1]) <= outline[2] - e
+    return outline[0] + e <= c[0] <= outline[2] - e and outline[1] + e <= c[1] <= outline[3] - e
+
+
+def _net_skipped(net, skip_nets):
+    """net in skip_nets: an exact name, or a regex matched in full ("+3V3" is a name, not a broken regex)."""
+    for s in ((skip_nets,) if isinstance(skip_nets, str) else skip_nets):
+        if net == s:
+            return True
+        try:
+            if _re.fullmatch(s, net):
+                return True
+        except _re.error:
+            pass
+    return False
+
+
+def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=0.2, layer=None, skip_nets=(),
+           outline=None, keepouts=(), commit=True, lateral=1.6):
+    """Dog-bone fan-out of one fine-pitch footprint (QFN/QFP: four sides; SOIC/TSSOP: two): each signal pad gets a
+    via out along its outward normal (away from the package, on the side the pad sits on), its centre `dist` mm
+    beyond the pad's outer edge, neighbouring pads alternating `dist` and `dist + stagger` so the vias fit at fine
+    pitch and leave channels between them, joined to the pad centre by a stub of `width` (at most the pad's narrow
+    side): straight, or where the via sits to the side a 45-degree jog, ending at the via or, if that is blocked,
+    earlier and then straight on, so the stubs of the outer row pass the inner row's vias (at 0.4 mm pitch they have
+    to). The via must clear other-net copper on every layer (as escape_vias), the stub on the pad's layer, both
+    checked with Copper; the stub from the pad's edge out. A blocked spot gives way to the next one: first along
+    the normal (half-stagger steps, out to the other row and beyond), then offset sideways in 0.2 mm steps up to
+    `lateral` mm, toward the end of the row first; each side is taken from its middle outward, so the middle pads go
+    straight and the outer ones fan toward the corners.
+    Skipped: pads without a net or whose net has no other pad, nets in skip_nets (names, or regexes matched in full;
+    power and plane nets get plane_vias instead), exposed and thermal pads (four times the median pad area or more),
+    through-hole pads and pads that already have a track or via of their net. pins: pad numbers to limit it to.
+    layer: the pads' copper layer (default the footprint's side). outline / keepouts as for complete_nets (EDGE_CLR
+    from the outline). commit=False plans without adding copper.
+    Returns (placed {(ref, pad): (x, y)}, failed ["ref.pad (net)"])."""
+    import pcbnew
+    T = pcbnew.ToMM
+    fp = next((f for f in b.GetFootprints() if f.GetReference() == ref), None)
+    if fp is None:
+        raise ValueError(f"fanout: no footprint {ref}")
+    layer = (pcbnew.B_Cu if fp.IsFlipped() else pcbnew.F_Cu) if layer is None else layer
+    cu = _copper(b, p)
+    vr, clr, edge_clr = p["VIA"][0] / 2, p["CLEARANCE"], p.get("EDGE_CLR", 0.3)
+    pins = None if pins is None else {str(n) for n in pins}
+    npads = Counter(q.GetNetname() for f in b.GetFootprints() for q in f.Pads())
+    pads = [q for q in fp.Pads() if q.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and q.IsOnLayer(layer) and q.GetNumber()]
+    if not pads:
+        return {}, []
+    areas = sorted(T(q.GetSize(layer).x) * T(q.GetSize(layer).y) for q in pads)
+    med = areas[len(areas) // 2]
+    pads = [q for q in pads if T(q.GetSize(layer).x) * T(q.GetSize(layer).y) < 4 * med]   # no exposed pad
+    # the footprint's own axes on the board (KiCad: y down, angles counter-clockwise on screen)
+    th = math.radians(fp.GetOrientationDegrees())
+    ux, uy = (math.cos(th), -math.sin(th)), (math.sin(th), math.cos(th))
+    fx, fy = T(fp.GetPosition().x), T(fp.GetPosition().y)
+    loc = {}
+    for q in pads:
+        dx, dy = T(q.GetPosition().x) - fx, T(q.GetPosition().y) - fy
+        loc[q.GetNumber()] = (dx * ux[0] + dy * ux[1], dx * uy[0] + dy * uy[1])
+    xs, ys = [v[0] for v in loc.values()], [v[1] for v in loc.values()]
+    cx, cy, hx, hy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (max(xs) - min(xs)) / 2, (max(ys) - min(ys)) / 2
+    side, info = {}, {}
+    for q in pads:
+        lx, ly = loc[q.GetNumber()]
+        sx, sy = T(q.GetSize(layer).x), T(q.GetSize(layer).y)
+        ph = math.radians(q.GetOrientationDegrees() - fp.GetOrientationDegrees())    # the pad in the footprint
+        ax = (math.cos(ph), -math.sin(ph)) if sx >= sy else (math.sin(ph), math.cos(ph))  # its long axis
+        if abs(sx - sy) > 0.05 * max(sx, sy):
+            along_x = abs(ax[0]) >= abs(ax[1])               # a pad points out of the package along its long side
+        else:
+            along_x = abs(lx - cx) * (hy or 1) >= abs(ly - cy) * (hx or 1)
+        o = (lx - cx) if along_x else (ly - cy)
+        if abs(o) < 1e-3:
+            continue                                         # a pad in the middle: no side
+        sgn = 1 if o > 0 else -1
+        key = ("x" if along_x else "y", sgn)
+        n_loc = (sgn, 0.0) if along_x else (0.0, sgn)
+        s = (ly - cy) if along_x else (lx - cx)              # position along the row, from its middle
+        long_, short = max(sx, sy), min(sx, sy)
+        half = (abs(ax[0]) if along_x else abs(ax[1])) * long_ / 2 + (abs(ax[1]) if along_x else abs(ax[0])) * short / 2
+        side.setdefault(key, []).append(s)
+        info[q.GetNumber()] = (q, key, n_loc, s, half, short)
+    rows = {}
+    for key, ss in side.items():                             # pitch of each row, for the alternation
+        ss = sorted(ss)
+        gaps = [z - a for a, z in zip(ss, ss[1:]) if z - a > 0.05]
+        rows[key] = (ss[0], min(gaps) if gaps else 1.0, max(abs(ss[0]), abs(ss[-1])) or 1.0)
+    board_vec = lambda v: (v[0] * ux[0] + v[1] * uy[0], v[0] * ux[1] + v[1] * uy[1])
+    ends = {}                                                # copper already on the pads: track ends and vias
+    for t in b.GetTracks():
+        pts = [t.GetPosition()] if t.Type() == pcbnew.PCB_VIA_T else [t.GetStart(), t.GetEnd()]
+        if t.Type() == pcbnew.PCB_VIA_T or t.GetLayer() == layer:
+            ends.setdefault(t.GetNetname(), []).extend(pts)
+    todo, placed, failed = [], {}, []
+    for num, (q, key, n_loc, s, half, short) in info.items():
+        net = q.GetNetname()
+        if pins is not None and num not in pins:
+            continue
+        if not net or net.startswith("unconnected") or npads[net] < 2 or _net_skipped(net, skip_nets):
+            continue
+        if any(q.HitTest(e) for e in ends.get(net, ())):
+            continue
+        s0, pitch, smax = rows[key]
+        k = int(round((s - s0) / pitch))
+        todo.append((abs(s) / smax, key, s, num, q, n_loc, half, short, dist + (stagger if k % 2 else 0.0)))
+    todo.sort(key=lambda it: it[:3])
+    h = stagger / 2 if stagger > 0 else 0.35
+    for _, key, s, num, q, n_loc, half, short, D in todo:
+        net = q.GetNetname()
+        n = board_vec(n_loc)
+        t = board_vec((0.0, 1.0) if key[0] == "x" else (1.0, 0.0))   # along the row, towards larger s
+        out = 1 if s >= 0 else -1                            # towards the end of the row
+        w = min(width, short)
+        P0 = (T(q.GetPosition().x), T(q.GetPosition().y))
+        at = lambda r, l: (P0[0] + n[0] * r + t[0] * l, P0[1] + n[1] * r + t[1] * l)
+        lo = -int((D - vr - cu.via_pad_clr) / h + 1e-9)     # as close as a via may come to the pad
+        deltas = sorted((m * h for m in range(lo, 4)), key=lambda x: (abs(x), x < 0))
+        lats = [0.0] + [sg * 0.2 * i for i in range(1, int(lateral / 0.2 + 1e-9) + 1) for sg in (out, -out)]
+        got = None
+        for l in lats:
+            for de in deltas:
+                R = half + D + de                            # via centre, from the pad centre along the normal
+                c = at(R, l)
+                if not (area[0] + vr <= c[0] <= area[2] - vr and area[1] + vr <= c[1] <= area[3] - vr):
+                    continue
+                if not _outline_ok(c, vr, outline, edge_clr) or keepout_hit(keepouts, c, vr + 0.02, "all", net) \
+                        or not cu.clear(("disc", (c, vr)), "all", net, clr):
+                    continue
+                # the stub: straight out of the pad; offset sideways, a 45-degree jog that ends at the via (late)
+                # or, to pass the vias of the inner row, earlier and then straight on to the via
+                kinks = [None] if l == 0 else [R - abs(l) - 0.2 * i for i in range(int((R - abs(l) - half) / 0.2) + 1)
+                                               if R - abs(l) - 0.2 * i >= half + 0.1]
+                for kn in kinks:
+                    pts = [P0, c] if kn is None else [P0, at(kn, 0.0), at(kn + abs(l), l), c]
+                    pts = [x for i, x in enumerate(pts) if i == 0 or math.hypot(x[0] - pts[i - 1][0], x[1] - pts[i - 1][1]) > 1e-6]
+                    segs = [(at(half, 0.0), pts[1])] + list(zip(pts[1:], pts[2:]))   # checked from the pad's edge
+                    if any(keepout_hit(keepouts, a, w / 2 + 0.02, {layer}, net, end=z) for a, z in segs):
+                        continue
+                    if isinstance(outline, list) and any(_poly_seg_dist(a, z, outline) < w / 2 + edge_clr for a, z in segs):
+                        continue
+                    if all(cu.clear(("seg", (a, z, w / 2)), {layer}, net, clr) for a, z in segs):
+                        got = (c, list(zip(pts, pts[1:])))
+                        break
+                if got:
+                    break
+            if got:
+                break
+        if not got:
+            failed.append(f"{ref}.{num} ({net.split('/')[-1]})")
+            continue
+        c, stub = got
+        placed[(ref, num)] = c
+        cu.add_via(c, vr, net)
+        for a, z in stub:
+            cu.add_track(a, z, w / 2, layer, net)
+        if commit:
+            via(c, q.GetNet())
+            for a, z in stub:
+                track(a, z, w, layer, q.GetNet())
+    return placed, failed
+
+
 # ---- maze router: complete nets -----------------------------------------------------------------------------
 _VERBOSE, _T0 = bool(_os.environ.get("ROUTE_VERBOSE")), _time.time()
 

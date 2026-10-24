@@ -1,9 +1,11 @@
 """Scripted routing on a KiCad board: a maze router that completes nets, a GND/plane via stitcher, escape vias,
-neck-down and a track-end audit. Board millimetres throughout (KiCad's frame, y down).
+fine-pitch fan-out, neck-down and a track-end audit. Board millimetres throughout (KiCad's frame, y down).
 
-    from pcbkit.route import writer, complete_nets, plane_vias, neckdown, audit_track_ends
+    from pcbkit.route import writer, complete_nets, fanout, plane_vias, neckdown, audit_track_ends
     track, via = writer(board, via_size=(0.6, 0.3))
     P = dict(CLEARANCE=0.2, EDGE_CLR=0.3, VIA=(0.6, 0.3), VIA_PAD_CLR=0.15, QUICK=True, AXIAL_PADS=True)
+    placed, failed = fanout(board, "U4", P, area, track, via, skip_nets=("GND", "+3V3"), outline=poly)
+    P.update(DIR={F_Cu: "h", B_Cu: "v"}, ORDER="longest")       # optional: route discipline, see below
     done, failed = complete_nets(board, P, area, [(r"USB_D[PN]", [F_Cu, B_Cu], 0.25), ...], track, via, outline=poly)
 
 complete_nets(plan): for each net matching a pattern, join its copper islands one at a time with A* on a 0.1 mm
@@ -15,6 +17,16 @@ CLEARANCE), CONN_SECONDS (time for one connection, all its widths and corridors;
 its whole expansion budget, which dominates a run: 40 s each in QUICK mode, minutes without), DEADLINE (time.time()
 after which complete_nets tries nothing more and reports the rest as failed). Pads are obstacles on every copper
 layer they reach, with their shape on that layer (see pad_items), unplated holes on all of them.
+Opt-in route discipline (left out, the router behaves as before):
+- DIR ({layer id: "h" | "v"}): a preferred direction per layer, e.g. {F_Cu: "h", B_Cu: "v"} on a board whose inner
+  layers are planes, so the two outer layers cross instead of wandering round chips. A move along the layer's
+  direction costs DIR_COST[0] per cell, across it DIR_COST[1], at 45 degrees DIR_COST[2] (x its length); default
+  (1.0, 4.0, 2.0), values below 1 count as 1. Layers not in DIR, LAYER_COST, the turn and via costs work as before.
+  complete_nets and tie_pads take it from P.
+- ORDER = "longest": complete_nets routes every connection of the plan longest first (straight-line distance between
+  the two copper groups it joins), across nets and plan entries, instead of net by net in plan order.
+fanout(ref): dog-bone fan-out of a fine-pitch chip before routing: a via per signal pad, out from the package in two
+staggered rows (`dist`, `dist + stagger` beyond the pad edge), so the router starts from vias that leave channels.
 `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
 and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).

@@ -36,6 +36,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
 
 ### Changed
+- **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
+  KiCad's icon in the dock for a moment. pcbkit now runs it from `KiCadCLI.app` in `~/.local/share/pcbkit`: a copy
+  of `kicad-cli` signed ad hoc, KiCad's Info.plist marked as a background app, and links to KiCad's frameworks and
+  data. It is made on first use and again when KiCad changes; DRC reports, renders, Gerbers and BOMs match KiCad's
+  own `kicad-cli` (checked on the sign, spotlight, dodeca and synth-blocks boards). `PCBKIT_KICAD_DOCK=1` runs
+  KiCad's own. `KICAD_CLI` names the copy; `KICAD_APP` and `KICAD_PYTHON` are still KiCad's.
 - **`pcbkit fab` lists each LCSC number once in the BOM**, the values joined, since JLC showed a part split over two
   rows as missing. `--placed field:NAME=VALUE` picks the parts the assembler places, `--no-assembly` writes Gerbers
   only, `--extra-layers` adds layers to them and `--name` sets the file names.

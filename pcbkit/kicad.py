@@ -4,12 +4,15 @@ Two interpreters are involved: the one pcbkit is installed in (uv's), and KiCad'
 with `pcbnew`. A command that needs pcbnew calls `ensure_pcbnew()` first; outside KiCad's Python it re-executes
 the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP.
 
-kicad-cli runs from a background copy of it, KiCadCLI.app in tools_dir(), so it shows no dock icon: from inside
-KiCad.app, macOS gives every run of it (DRC, ERC, renders, exports) the app's icon. The copy is kicad-cli signed
-again ad hoc, KiCad's Info.plist with its own bundle id and LSUIElement set, and links to KiCad's Frameworks,
-PlugIns, Resources and SharedSupport; its DRC reports and renders match KiCad's byte for byte (KiCad 10.0.6). It is
-made again when KiCad changes. PCBKIT_KICAD_DOCK=1 runs KiCad's own kicad-cli.
+kicad-cli runs from a background copy of it, KiCadCLI.app under tools_dir()/kicad-cli/, so it shows no dock icon:
+from inside KiCad.app, macOS gives every run of it (DRC, ERC, renders, exports) the app's icon. The copy is
+kicad-cli signed again ad hoc, KiCad's Info.plist with its own bundle id and LSUIElement set, and links to KiCad's
+Frameworks, PlugIns, Resources and SharedSupport; its DRC reports and renders match KiCad's byte for byte (KiCad
+10.0.6). There is one copy for each KiCad and version, made on first use and never changed, so a KICAD_CLI that a
+process holds stays valid while others make copies of another KiCad or a newer version; a copy whose KiCad has
+changed since is removed. PCBKIT_KICAD_DOCK=1 runs KiCad's own kicad-cli.
 """
+import hashlib
 import os
 import plistlib
 import shutil
@@ -36,12 +39,13 @@ def _stamp(kicad):
     return "%s %d %d" % (_plist(kicad).get("CFBundleVersion", "?"), st.st_size, int(st.st_mtime))
 
 
-def _make_background(kicad, dest):
+def _make_background(kicad, stamp, dest):
+    """Build the copy beside dest and publish it with one rename, so dest is either absent or complete."""
     info = _plist(kicad)
     info.update(CFBundleIdentifier=info["CFBundleIdentifier"] + ".cli", CFBundleExecutable="kicad-cli",
                 LSUIElement=True)
-    info[SOURCE], info[STAMP] = kicad, _stamp(kicad)
-    tmp, old = dest + ".new-%d" % os.getpid(), dest + ".old-%d" % os.getpid()
+    info[SOURCE], info[STAMP] = kicad, stamp
+    tmp = dest + ".new-%d" % os.getpid()
     try:
         os.makedirs(os.path.join(tmp, "Contents", "MacOS"))
         for d in ("Frameworks", "PlugIns", "Resources", "SharedSupport"):
@@ -53,12 +57,30 @@ def _make_background(kicad, dest):
         # KiCad's signature covers its own Info.plist: the copy is signed again, ad hoc
         subprocess.run(["codesign", "--force", "--sign", "-", exe], check=True, capture_output=True)
         subprocess.run([exe, "version"], check=True, capture_output=True)
-        if os.path.exists(dest):
-            os.rename(dest, old)
-        os.rename(tmp, dest)
+        try:
+            os.rename(tmp, dest)
+        except OSError:
+            if not os.path.exists(dest):            # else another process published the same copy first
+                raise
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-        shutil.rmtree(old, ignore_errors=True)
+    _prune(dest)
+
+
+def _prune(keep):
+    """Remove the copies whose KiCad has changed or gone: their kicad-cli no longer matches the frameworks they link."""
+    root = os.path.dirname(os.path.dirname(keep))
+    for key in os.listdir(root):
+        app = os.path.join(root, key, "KiCadCLI.app")
+        if app == keep or not os.path.exists(app):  # no KiCadCLI.app yet: a copy still being made
+            continue
+        try:
+            info = _plist(app)
+            current = _stamp(info[SOURCE]) == info[STAMP]
+        except (OSError, ValueError, KeyError):
+            current = False
+        if not current:
+            shutil.rmtree(os.path.join(root, key), ignore_errors=True)
 
 
 def _kicad(app):
@@ -71,16 +93,17 @@ def _kicad(app):
 
 
 def background_app(kicad):
-    """KiCadCLI.app, made from kicad or brought up to date; kicad itself if it can't be, or with PCBKIT_KICAD_DOCK=1."""
+    """kicad's background copy, made on first use; kicad itself if it can't be, or with PCBKIT_KICAD_DOCK=1."""
     if sys.platform != "darwin" or os.environ.get("PCBKIT_KICAD_DOCK") == "1":
         return kicad
-    dest = os.path.join(tools_dir(), "KiCadCLI.app")
     try:
-        made = _plist(dest) if os.path.exists(dest) else {}
-        if (made.get(SOURCE), made.get(STAMP)) != (kicad, _stamp(kicad)):
-            _make_background(kicad, dest)
+        stamp = _stamp(kicad)
+        key = hashlib.sha1(("%s\n%s" % (kicad, stamp)).encode()).hexdigest()[:12]
+        dest = os.path.join(tools_dir(), "kicad-cli", key, "KiCadCLI.app")
+        if not os.path.exists(dest):
+            _make_background(kicad, stamp, dest)
         return dest
-    except (OSError, ValueError, subprocess.CalledProcessError) as e:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
         print(f"pcbkit: KiCad's own kicad-cli, with its dock icon ({e})", file=sys.stderr)
         return kicad
 

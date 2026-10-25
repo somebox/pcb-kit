@@ -230,9 +230,10 @@ under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compa
 `PCBKIT_KICAD_APP` if KiCad is not at `/Applications/KiCad/KiCad.app`. Previews need `rsvg-convert` (librsvg),
 `pdfunite` (poppler) and optionally `magick` (ImageMagick); `pcbkit spice` needs `ngspice`.
 
-`kicad-cli` runs from `KiCadCLI.app` in `~/.local/share/pcbkit` (`PCBKIT_TOOLS`), made from KiCad on first use and
-again when KiCad changes: a copy of `kicad-cli` signed ad hoc, with KiCad's Info.plist marked as a background app
-and links to KiCad's frameworks and data. Run from inside KiCad.app, every DRC, render or export would put KiCad's
+`kicad-cli` runs from a `KiCadCLI.app` under `~/.local/share/pcbkit/kicad-cli/` (`PCBKIT_TOOLS`): a copy of
+`kicad-cli` signed ad hoc, with KiCad's Info.plist marked as a background app and links to KiCad's frameworks and
+data. There is one for each KiCad and version, made on first use and never changed, so runs in parallel or with
+another KiCad don't disturb each other; one whose KiCad has changed since is removed. Run from inside KiCad.app, every DRC, render or export would put KiCad's
 icon in the dock for a moment; the copy's output is the same. `PCBKIT_KICAD_DOCK=1` runs KiCad's own `kicad-cli`.
 A project script that runs `kicad-cli` can take it from `pcbkit.kicad.KICAD_CLI`, or `pcbkit info` prints it.
 

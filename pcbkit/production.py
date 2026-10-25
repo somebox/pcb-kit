@@ -123,10 +123,19 @@ def board_parts(project, pcb):
         lcsc = f"LCSC {f['LCSC']}" if f.get("LCSC") else ""
         if is_placed(fp):
             placed[f["LCSC"]] = placed.get(f["LCSC"], 0) + 1
-            add(placed_named, part_name(f), lcsc)
+            if not replaced:                 # replaced: counted elsewhere, so a bare board doesn't need it either
+                add(placed_named, part_name(f), lcsc)
         elif "exclude_from_bom" not in fp["flags"] and (f.get("MPN") or f.get("LCSC")) and not replaced:
             add(hand, part_name(f), lcsc)
     return dict(placed=placed, placed_named=placed_named, hand=hand, extra=extra, where=where)
+
+
+def hand_inputs(project, pcb):
+    """A fingerprint of what board_parts() reads from the board: every footprint's fields and flags. A board can
+    change here and keep its fab output (a Panel field is on no layer), and then needs other hand parts."""
+    rows = sorted(repr((sorted(fp["fields"].items()), sorted(fp["flags"])))
+                  for fp in footprints(os.path.join(project.root, pcb["path"])))
+    return hashlib.sha1("\n".join(rows).encode()).hexdigest()
 
 
 def sources(project, pcbs):
@@ -135,6 +144,21 @@ def sources(project, pcbs):
     for p in pcbs.values():
         for name, source in board_parts(project, p)["where"].items():
             out.setdefault(name, source)
+    return out
+
+
+def where_of(boards, extras, now):
+    """Where the parts of these order lines come from: as their pinned releases recorded it, then the extras' buy,
+    then the boards as they are now (a release recorded before sources were, a part only an extra names)."""
+    out = {}
+    for b in boards:
+        for name, source in ((b.get("parts") or {}).get("where") or {}).items():
+            out.setdefault(name, source)
+    for x in extras:
+        if x.get("buy"):
+            out.setdefault(x["part"], x["buy"])
+    for name, source in now.items():
+        out.setdefault(name, source)
     return out
 
 
@@ -597,14 +621,15 @@ def build(project=None, check=False):
                 watch.append(f"{o['name']} {b['pcb']}: {b['note'] or 'a problem was reported'}")
             if b.get("newer") and b["status"] in ("draft", "problem"):
                 watch.append(f"{o['name']} {b['pcb']}: pins {b['version']}, the latest release is {b['newer']}")
-    where = sources(project, pcbs)
-    for x in (x for o in orders for x in o["extra"] if x.get("buy")):
-        where.setdefault(x["part"], x["buy"])
-    outputs = {os.path.join(o["dir"], "ORDER.md"): order_md(project, o, pcbs, cache, stock["parts"], where)
+    now = sources(project, pcbs)
+    outputs = {os.path.join(o["dir"], "ORDER.md"):
+               order_md(project, o, pcbs, cache, stock["parts"], where_of(o["board"], o["extra"], now))
                for o in orders}
     page = os.path.join(project.root, project.production["page"])
     old = open(page, encoding="utf-8").read() if os.path.exists(page) else "# Production\n"
     stale = [p for p, text in outputs.items() if not os.path.exists(p) or open(p, encoding="utf-8").read() != text]
+    where = where_of([b for o in orders for b in o["board"] if b["status"] not in CLOSED],
+                     [x for o in orders if o["open"] for x in o["extra"]], now)    # as the open orders' parts table
     sec = section(project, pcbs, parts, orders, stock, cache, problems, watch, where)
     outputs[page] = splice(old, sec)
     if check:

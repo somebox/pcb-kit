@@ -20,7 +20,9 @@ For every PCB (or those named, by key, path or folder):
    Previews are rebuilt when they are of another version.
 Then `pcbkit production` brings the production record up to date. --dry-run says what it would do.
 --refresh-parts records again what a board of its last release needs by hand, for boards unchanged since that
-release, after pcbkit.toml's part rules changed; nothing else is touched. With
+release, after pcbkit.toml's part rules changed; nothing else is touched. A change recorded as equivalent (same fab
+output) counts as unchanged only when every footprint's fields and flags are still the release's: a Panel field
+is on no layer, and a changed one needs another hand part. With
 [release] enabled = false, only step 1 runs: the checks are recorded, nothing is stamped or released.
 """
 import argparse
@@ -236,7 +238,7 @@ def release(project, pcb, part="patch", version=None, note="", dry=False):
             return dict(state="not released: " + stuck, checks=c)
     entry = dict(version=new, label=lab, date=V.today(), source=source_key(project, pcb), fab=ffp,
                  equivalent=[], base_commit=git(project, "rev-parse", "--short", "HEAD"), note=why,
-                 parts=production.board_parts(project, pcb))
+                 parts=production.board_parts(project, pcb), parts_inputs=production.hand_inputs(project, pcb))
     pv = make_previews(project, pcb, pcb_path) if project.release["previews"] else "off"
     entry["previews"] = hashlib.sha1(V.preview_source(pcb_path).encode()).hexdigest() if pv != "off" else ""
     vdir = write_release(project, pcb, pcb_path, profile, new, lab, entry)
@@ -253,13 +255,16 @@ def refresh_parts(project, pcb, dry=False):
     if not last:
         return dict(state="not released")
     src = source_key(project, pcb)
-    if src != last["source"] and src not in last.get("equivalent", []):
+    inputs = production.hand_inputs(project, pcb)
+    # an equivalent source has the release's fab output, not necessarily its hand parts (a changed Panel field): it
+    # counts only when what the parts are read from is the release's too
+    if src != last["source"] and not (src in last.get("equivalent", []) and inputs == last.get("parts_inputs")):
         return dict(state="changed since its last release: parts left as they were", version=last["version"],
                     label=last["label"])
     parts = production.board_parts(project, pcb)
     same = parts == {k: last.get("parts", {}).get(k, {}) for k in parts}
-    if not same and not dry:
-        V.update_last(rdir, pcb["key"], parts=parts)
+    if not dry and (not same or inputs != last.get("parts_inputs")):     # an older release gets its inputs recorded
+        V.update_last(rdir, pcb["key"], parts=parts, parts_inputs=inputs)
     return dict(state="parts unchanged" if same else ("would record parts" if dry else "parts recorded"),
                 version=last["version"], label=last["label"])
 

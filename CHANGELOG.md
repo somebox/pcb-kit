@@ -11,9 +11,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **A shopping list for hand assembly in each ORDER.md**, and a "where" column in PRODUCTION.md's parts table:
   every part the order's boards need by hand, with what is on hand, what to buy and where from. Part rules gain
   `buy` (where a part comes from; a hand part's LCSC number serves otherwise), `group` (rules in another group are
-  matched apart, so one connector can give a panel part and a cable) and `replace` (the footprint's own hand part is
-  dropped, for a breakout's pot already counted by its module). `pcbkit release --refresh-parts` records a release's
-  hand parts again after the rules change, for boards unchanged since.
+  matched apart, so one connector can give a panel part and a cable) and `replace` (the footprint's own part is
+  dropped, also from a bare board's list, for a breakout's pot already counted by its module). Each shopping list
+  takes where a part comes from from the releases its order pins, then the order's extras, then the boards as they
+  are now. `pcbkit release --refresh-parts` records a release's hand parts again after the rules change, for boards
+  unchanged since; a change with the same fab output counts only if every footprint's fields are the release's
+  too, which each release now records.
 - **ORDER.md shows each board**, its picture (render-top.png, else pcb-front.png, from previews of the pinned
   version), and takes two more keys in order.toml: a board's own `fab` notes (a front panel's black mask), and
   `[[extra]]` parts bought with the order but not placed on a board (spares, a rework kit: part, qty, buy, note),

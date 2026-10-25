@@ -109,6 +109,10 @@ def background_app(kicad):
 
 
 KICAD_APP = _kicad(os.environ.get("PCBKIT_KICAD_APP", "/Applications/KiCad/KiCad.app"))
+if "PCBKIT_KICAD_APP" in os.environ:
+    # KiCad itself, not a copy named there: background_app() may remove that copy, and ensure_pcbnew()'s re-run and
+    # every other child would inherit the gone path
+    os.environ["PCBKIT_KICAD_APP"] = KICAD_APP
 KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
 KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin", "python3")
 

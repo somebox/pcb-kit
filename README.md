@@ -20,7 +20,7 @@ Three parts:
 The skills have the agent run tools on your machine, so they do their work in Claude Code or pi on a Mac that has:
 
 - KiCad 10 in `/Applications/KiCad/KiCad.app`, or wherever `PCBKIT_KICAD_APP` points. `pcbkit` uses the app
-  bundle's `kicad-cli` and Python, so it runs on macOS only.
+  bundle's `kicad-cli` (through a background copy that shows no dock icon) and Python, so it runs on macOS only.
 - The `pcbkit` CLI, installed with uv from a clone of this repository; see [Install](#install).
 - For some of the work: [konnect](https://github.com/mixelpixx/Konnect) (schematic sheets, the JLCPCB parts cache),
   [bomi](https://github.com/somebox/bomi) (BOM, stock, prices, datasheets), ngspice (power simulation), and librsvg,
@@ -229,6 +229,13 @@ Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that n
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set
 `PCBKIT_KICAD_APP` if KiCad is not at `/Applications/KiCad/KiCad.app`. Previews need `rsvg-convert` (librsvg),
 `pdfunite` (poppler) and optionally `magick` (ImageMagick); `pcbkit spice` needs `ngspice`.
+
+`kicad-cli` runs from a `KiCadCLI.app` under `~/.local/share/pcbkit/kicad-cli/` (`PCBKIT_TOOLS`): a copy of
+`kicad-cli` signed ad hoc, with KiCad's Info.plist marked as a background app and links to KiCad's frameworks and
+data. There is one for each KiCad and version, made on first use and never changed, so runs in parallel or with
+another KiCad don't disturb each other; one whose KiCad has changed since is removed. Run from inside KiCad.app, every DRC, render or export would put KiCad's
+icon in the dock for a moment; the copy's output is the same. `PCBKIT_KICAD_DOCK=1` runs KiCad's own `kicad-cli`.
+A project script that runs `kicad-cli` can take it from `pcbkit.kicad.KICAD_CLI`, or `pcbkit info` prints it.
 
 ## What it runs and sends
 

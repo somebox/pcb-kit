@@ -7,7 +7,8 @@ description: Shared KiCad workflow commands for the somebox hardware projects. U
 
 `pcbkit` is installed as a CLI (`uv tool install -e ~/src/pcb-kit`). `pcbkit --help` lists the commands,
 `pcbkit <cmd> --help` the flags. Commands that need pcbnew re-run themselves under KiCad's Python; you never choose
-the interpreter.
+the interpreter. pcbkit runs kicad-cli from a background copy, so it shows no dock icon; a project script that runs
+kicad-cli takes it from `pcbkit.kicad.KICAD_CLI` too, not from `/Applications/KiCad/...`.
 
 ## When to use what
 

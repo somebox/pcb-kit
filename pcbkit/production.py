@@ -487,11 +487,14 @@ def order_md(project, o, pcbs, cache, have, where):
                 "pcbkit.toml, or the part's LCSC number.", "",
                 table(["part", "needed", "on hand", "to buy", "where"], shopping(total, have, where))]
     if o["extra"]:
+        taken, rows = dict(total), []                # the boards above take their stock first, then each extra in turn
+        for x in o["extra"]:
+            free = max(0, have.get(x["part"], 0) - taken.get(x["part"], 0))
+            rows.append([x["part"], x["qty"], free, max(0, x["qty"] - free) or "", x.get("buy", ""), x.get("note", "")])
+            taken[x["part"]] = taken.get(x["part"], 0) + x["qty"]
         out += ["## Extras", "", "Bought with the order, not placed on a board: spares and rework parts. On hand is "
-                "stock.toml.", "",
-                table(["part", "qty", "on hand", "to buy", "where", "why"], [
-                    [x["part"], x["qty"], have.get(x["part"], 0), max(0, x["qty"] - have.get(x["part"], 0)) or "",
-                     x.get("buy", ""), x.get("note", "")] for x in o["extra"]])]
+                "what stock.toml has left after the boards above and the extras listed before.", "",
+                table(["part", "qty", "on hand", "to buy", "where", "why"], rows)]
     if o["events"]:
         out += ["## Events", "", table(["date", "boards", "status", "order no.", "price", "note"], [
             [e.get("date", ""), ", ".join([e["pcb"]] if isinstance(e.get("pcb"), str) else e.get("pcb") or ["all"]),

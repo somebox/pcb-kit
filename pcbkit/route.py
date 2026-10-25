@@ -584,6 +584,10 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
                     segs = [(at(half, 0.0), pts[1])] + list(zip(pts[1:], pts[2:]))   # checked from the pad's edge
                     if any(keepout_hit(keepouts, a, w / 2 + 0.02, {layer}, net, end=z) for a, z in segs):
                         continue
+                    # every corner of the stub (not its start, on the pad) clears the edge: enough for a rectangle
+                    # or a circle, both convex; a polygon's edges are checked against each segment too
+                    if not all(_outline_ok(z, w / 2, outline, edge_clr) for _, z in segs):
+                        continue
                     if isinstance(outline, list) and any(_poly_seg_dist(a, z, outline) < w / 2 + edge_clr for a, z in segs):
                         continue
                     if all(cu.clear(("seg", (a, z, w / 2)), {layer}, net, clr) for a, z in segs):
@@ -733,10 +737,14 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
         s_min = min(min(step[L][:4]) for L in layers)
         d_min = min(min(step[L][4:]) for L in layers)
 
+        # a straight run can be made of alternating diagonals too: it costs a cell at least the cheaper of the two
+        # (DIR_COST = (4, 4, 1): two cells across for 2.83, not 8)
+        s_run = min(s_min, d_min)
+
         def h(c):
             dx, dy = max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1)
             a, b_ = max(dx, dy), min(dx, dy)
-            return hweight * (b_ * min(d_min, 2 * s_min) + (a - b_) * s_min)
+            return hweight * (b_ * min(d_min, 2 * s_min) + (a - b_) * s_run)
     else:
         h = lambda c: hweight * math.hypot(max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1))
     G0 = grids[layers[0]]
@@ -1065,16 +1073,13 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
             if ri == rk:                                 # joined already, by a route that crossed it
                 continue
             if stop and _time.time() > stop:
-                failed.append(net)
                 if _VERBOSE:
                     print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): not tried, out of time", flush=True)
                 continue
             tree = s["groups"][ri]
             n0 = len(tree)
             gi, dl = connect(net, s["obj"], s["mids"], s["layers"], s["width"], tree, [s["groups"][rk]])
-            if gi is None:
-                failed.append(net)
-            else:
+            if gi is not None:
                 done += 1
                 new = tree[n0:]
                 tree += s["groups"][rk]
@@ -1087,7 +1092,9 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
             if _VERBOSE:
                 why = "ok" if gi is not None else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
                 print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): {why}", flush=True)
-        return done, failed
+        # the nets still in more than one piece, not the pairs that failed: a later route can cross both groups of a
+        # failed pair and join them
+        return done, [net for net, s in nets.items() if len({find(s, m) for m in range(len(s["groups"]))}) > 1]
 
     for pattern, layers, width in plan:
         for net in [n for n in names if _re.fullmatch(pattern, n)]:

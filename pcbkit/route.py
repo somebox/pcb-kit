@@ -534,11 +534,16 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
         gaps = [z - a for a, z in zip(ss, ss[1:]) if z - a > 0.05]
         rows[key] = (ss[0], min(gaps) if gaps else 1.0, max(abs(ss[0]), abs(ss[-1])) or 1.0)
     board_vec = lambda v: (v[0] * ux[0] + v[1] * uy[0], v[0] * ux[1] + v[1] * uy[1])
-    ends = {}                                                # copper already on the pads: track ends and vias
-    for t in b.GetTracks():
-        pts = [t.GetPosition()] if t.Type() == pcbnew.PCB_VIA_T else [t.GetStart(), t.GetEnd()]
-        if t.Type() == pcbnew.PCB_VIA_T or t.GetLayer() == layer:
-            ends.setdefault(t.GetNetname(), []).extend(pts)
+    ends, wires = {}, {}                                     # copper already on the pads: track ends and vias, and
+    for t in b.GetTracks():                                  # the whole copper, for a track through a pad
+        is_via = t.Type() == pcbnew.PCB_VIA_T
+        if not is_via and t.GetLayer() != layer:
+            continue
+        ends.setdefault(t.GetNetname(), []).extend([t.GetPosition()] if is_via else [t.GetStart(), t.GetEnd()])
+        wires.setdefault(t.GetNetname(), []).append(
+            ("all", "disc", ((T(t.GetPosition().x), T(t.GetPosition().y)), T(t.GetWidth(pcbnew.F_Cu)) / 2)) if is_via
+            else ({layer}, "seg", ((T(t.GetStart().x), T(t.GetStart().y)), (T(t.GetEnd().x), T(t.GetEnd().y)),
+                                   T(t.GetWidth()) / 2)))
     todo, placed, failed = [], {}, []
     for num, (q, key, n_loc, s, half, short) in info.items():
         net = q.GetNetname()
@@ -546,8 +551,9 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
             continue
         if not net or net.startswith("unconnected") or npads[net] < 2 or _net_skipped(net, skip_nets):
             continue
-        if any(q.HitTest(e) for e in ends.get(net, ())):
-            continue
+        if any(q.HitTest(e) for e in ends.get(net, ())) or any(
+                _item_gap(pi, w_) <= 1e-3 for pi in pad_items(q, [layer], cover=False) for w_ in wires.get(net, ())):
+            continue                                         # wired already: a track ends on it or runs through it
         s0, pitch, smax = rows[key]
         k = int(round((s - s0) / pitch))
         todo.append((abs(s) / smax, key, s, num, q, n_loc, half, short, dist + (stagger if k % 2 else 0.0)))

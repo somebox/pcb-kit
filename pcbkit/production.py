@@ -152,6 +152,8 @@ def where_of(boards, extras, now):
     then the boards as they are now (a release recorded before sources were, a part only an extra names)."""
     out = {}
     for b in boards:
+        if b["status"] == "cancelled":               # as hand_totals(): a cancelled line needs nothing, names no source
+            continue
         for name, source in ((b.get("parts") or {}).get("where") or {}).items():
             out.setdefault(name, source)
     for x in extras:

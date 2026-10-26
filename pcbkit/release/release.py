@@ -26,6 +26,7 @@ is on no layer, and a changed one needs another hand part. With
 [release] enabled = false, only step 1 runs: the checks are recorded, nothing is stamped or released.
 """
 import argparse
+import glob
 import hashlib
 import os
 import re
@@ -111,6 +112,10 @@ def make_previews(project, pcb, pcb_path):
     pdir = project.previews_dir(pcb)
     if previews_current(pdir, pcb_path):
         return "current"
+    # a render left from before would pass for this version's (pcbkit production shows render-top.png first): the
+    # renders there afterwards are this run's, from pcbkit previews or previews_after
+    for f in glob.glob(os.path.join(pdir, "render-*.png")):
+        os.remove(f)
     pcbkit("previews", pcb_path, pdir, *([] if project.release["previews_render"] else ["--no-render"]))
     after = project.release["previews_after"]
     if after:

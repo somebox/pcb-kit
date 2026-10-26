@@ -492,7 +492,8 @@ def order_md(project, o, pcbs, cache, have, where):
         taken, rows = dict(total), []                # the boards above take their stock first, then each extra in turn
         for x in o["extra"]:
             free = max(0, have.get(x["part"], 0) - taken.get(x["part"], 0))
-            rows.append([x["part"], x["qty"], free, max(0, x["qty"] - free) or "", x.get("buy", ""), x.get("note", "")])
+            rows.append([x["part"], x["qty"], free, max(0, x["qty"] - free) or "",
+                         x.get("buy") or where.get(x["part"], ""), x.get("note", "")])     # no buy: as the boards'
             taken[x["part"]] = taken.get(x["part"], 0) + x["qty"]
         out += ["## Extras", "", "Bought with the order, not placed on a board: spares and rework parts. On hand is "
                 "what stock.toml has left after the boards above and the extras listed before.", "",

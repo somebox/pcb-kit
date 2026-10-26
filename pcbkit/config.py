@@ -127,9 +127,16 @@ class Project:
 
     def fab_settings(self, profile):
         """The settings a PCB's fab files are made with, as text: part of its source fingerprint, so changing them is
-        a change to compare."""
-        return json.dumps(dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
-                               extra_layers=profile["extra_layers"]), sort_keys=True)
+        a change to compare. For an assembled board that includes the placement file's rotation table
+        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board."""
+        settings = dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
+                        extra_layers=profile["extra_layers"])
+        if profile["assembly"]:
+            import hashlib
+            from .kicad import data_path
+            with open(data_path("jlc", "corrections.csv"), "rb") as fh:
+                settings["rotations"] = hashlib.sha1(fh.read()).hexdigest()
+        return json.dumps(settings, sort_keys=True)
 
     def fill(self, template, pcb):
         return os.path.join(self.root, template.format(key=pcb["key"], folder=pcb["folder"], sub=pcb["sub"]))

@@ -10,7 +10,7 @@ Pattern,Rotation,Offset X,Offset Y
 ^SOT-363,0,0,0
 ^LQFP-,270,0,0
 ^TQFP-,270,0,0
-^SOP-4_,0,0,0
+^SOP-4_,270,0,0
 ^SOP-(?!18_),270,0,0
 ^TSSOP-,270,0,0
 ^SSOP-,270,0,0

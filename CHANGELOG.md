@@ -45,8 +45,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ### Changed
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
-  every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round) and the
-  Bourns 3224W trimmer 180 (it had no rule, and its wiper landed on an end pad). The rotation table is part of an
+  every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
+  270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W
+  trimmer 180 (it had no rule, and its wiper landed on an end pad). The rotation table is part of an
   assembled board's fab settings, so `pcbkit release` compares the placement files again when the table changes and
   gives a board whose CPL changed its next version.
 - **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export

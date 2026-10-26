@@ -7,7 +7,8 @@ description: Shared KiCad workflow commands for the somebox hardware projects. U
 
 `pcbkit` is installed as a CLI (`uv tool install -e ~/src/pcb-kit`). `pcbkit --help` lists the commands,
 `pcbkit <cmd> --help` the flags. Commands that need pcbnew re-run themselves under KiCad's Python; you never choose
-the interpreter.
+the interpreter. pcbkit runs kicad-cli from a background copy, so it shows no dock icon; a project script that runs
+kicad-cli takes it from `pcbkit.kicad.KICAD_CLI` too, not from `/Applications/KiCad/...`.
 
 ## When to use what
 
@@ -18,7 +19,7 @@ the interpreter.
 | Is the board clean? | `pcbkit drc BOARD --save` (refills zones and writes the board back; 0 errors, 0 unconnected, 0 parity) |
 | Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds), `pcbkit cleanup BOARD --dry-run` (after a scripted route: `--dangling` too) |
 | Where should this block go? Which output drives which net? | `pcbkit place-score BOARD --study scripts/place_study.py --search --svg out.svg --png out.png`; see the placement-study skill; route only the winner |
-| Route a board by script | a project script under KiCad's Python: `pcbkit.route.complete_nets(board, P, area, plan, track, via, outline=..)` with `plan = [(net regex, [layers], width)]` and `QUICK`, `CONN_SECONDS` and `DEADLINE` in `P` so a run has an end; then `snap_to_pad_centres`, `audit_track_ends`, `pcbkit cleanup --dangling`, `pcbkit drc --save`. Worked example: esp32-s3-ha-node `scripts/route_pcb.py` |
+| Route a board by script | a project script under KiCad's Python: `pcbkit.route.complete_nets(board, P, area, plan, track, via, outline=..)` with `plan = [(net regex, [layers], width)]` and `QUICK`, `CONN_SECONDS` and `DEADLINE` in `P` so a run has an end; then `snap_to_pad_centres`, `audit_track_ends`, `pcbkit cleanup --dangling`, `pcbkit drc --save`. Worked example: esp32-s3-ha-node `scripts/route_pcb.py`. Fine-pitch chips (0.4 to 0.65 mm) first get `fanout(board, ref, P, area, track, via, skip_nets=(power and plane nets))`: staggered dog-bone vias out from each signal pad. With only the outer layers for tracks, `P["DIR"] = {F_Cu: "h", B_Cu: "v"}` holds each to one direction (`DIR_COST` along, across, diagonal; default 1, 4, 2) and `P["ORDER"] = "longest"` routes the longest connections first; both are off unless set |
 | Review a power stage | `pcbkit netview BOARD out.svg X0 Y0 X1 Y1 --layer B.Cu --png out.png`, then look at the PNG |
 | Update the docs' pictures | `pcbkit previews BOARD docs/previews/<board>` |
 | Order files | `pcbkit release` (every changed board gets its next version, stamped into it, and its JLC and PCBWay files in its release folder; `--dry-run` first), then an order in `production/orders/<date>-<what>/order.toml` pinning the versions and `pcbkit production`; upload from that order's `upload/`. Panels: `pcbkit panel BOARD build/panels/<board> --style both`. Files without a version: `pcbkit fab BOARD build/fab/<board>` |

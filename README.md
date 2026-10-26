@@ -20,7 +20,7 @@ Three parts:
 The skills have the agent run tools on your machine, so they do their work in Claude Code or pi on a Mac that has:
 
 - KiCad 10 in `/Applications/KiCad/KiCad.app`, or wherever `PCBKIT_KICAD_APP` points. `pcbkit` uses the app
-  bundle's `kicad-cli` and Python, so it runs on macOS only.
+  bundle's `kicad-cli` (through a background copy that shows no dock icon) and Python, so it runs on macOS only.
 - The `pcbkit` CLI, installed with uv from a clone of this repository; see [Install](#install).
 - For some of the work: [konnect](https://github.com/mixelpixx/Konnect) (schematic sheets, the JLCPCB parts cache),
   [bomi](https://github.com/somebox/bomi) (BOM, stock, prices, datasheets), ngspice (power simulation), and librsvg,
@@ -108,6 +108,14 @@ and what is left is reported for hand routing. Around it: GND stitching, plane a
 other routes' ends to pad centres, and an audit of every track end. esp32-s3-ha-node's `scripts/route_pcb.py`
 routes its power nets and most signals this way in a run capped at 15 minutes; the rest was finished by hand.
 `pcbkit cleanup --dangling` then removes the dead ends a route leaves.
+
+When the inner layers are planes, the two outer layers can be held to one direction each: with
+`DIR={F_Cu: "h", B_Cu: "v"}` a move across a layer's direction costs four times as much (`DIR_COST`), so tracks
+change layer to turn instead of wandering round chips, and `ORDER="longest"` routes the plan's longest connections
+first. `fanout` gives a fine-pitch chip its dog-bone vias before routing: out from each signal pad in two staggered
+rows, with a 45-degree jog where a via has to sit to the side. On the message sign's controller (QFN-60 at 0.4 mm,
+two TSSOP-20s, 24 signal nets) fan-out plus both options routed 34 of 36 connections in 51 s, against 26 in 192 s
+without them, with the routed F.Cu 90 % horizontal and B.Cu 94 % vertical; the price is more vias and longer tracks.
 
 ### Look at the copper
 
@@ -229,6 +237,13 @@ Two interpreters are involved. `pcbkit` runs in uv's Python; the commands that n
 under KiCad's bundled Python (3.9 on macOS), so the package code stays 3.9-compatible and dependency-free. Set
 `PCBKIT_KICAD_APP` if KiCad is not at `/Applications/KiCad/KiCad.app`. Previews need `rsvg-convert` (librsvg),
 `pdfunite` (poppler) and optionally `magick` (ImageMagick); `pcbkit spice` needs `ngspice`.
+
+`kicad-cli` runs from a `KiCadCLI.app` under `~/.local/share/pcbkit/kicad-cli/` (`PCBKIT_TOOLS`): a copy of
+`kicad-cli` signed ad hoc, with KiCad's Info.plist marked as a background app and links to KiCad's frameworks and
+data. There is one for each KiCad and version, made on first use and never changed, so runs in parallel or with
+another KiCad don't disturb each other; one whose KiCad has changed since is removed. Run from inside KiCad.app, every DRC, render or export would put KiCad's
+icon in the dock for a moment; the copy's output is the same. `PCBKIT_KICAD_DOCK=1` runs KiCad's own `kicad-cli`.
+A project script that runs `kicad-cli` can take it from `pcbkit.kicad.KICAD_CLI`, or `pcbkit info` prints it.
 
 ## What it runs and sends
 

@@ -22,6 +22,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   `[[extra]]` parts bought with the order but not placed on a board (spares, a rework kit: part, qty, buy, note),
   listed in ORDER.md's Extras and counted in PRODUCTION.md's parts for the open orders. The tables' note column
   shows only notes of events that name the board; notes for the whole order stay in Events.
+- **Routing discipline in `pcbkit.route`, all opt-in.** `P["DIR"] = {layer: "h" | "v"}` gives each layer a preferred
+  direction, priced by `P["DIR_COST"]` (along, across, diagonal; default 1, 4, 2), so on a board with plane layers
+  F.Cu and B.Cu cross instead of wandering round chips; `complete_nets` and `tie_pads` take it from P, and the A*
+  heuristic follows it (faster runs). `P["ORDER"] = "longest"` makes `complete_nets` route every connection of the
+  plan longest first, across nets. `fanout(board, ref, ...)` gives a QFN, QFP, SOIC or TSSOP dog-bone vias out from
+  each signal pad, in two staggered rows (`dist`, `dist + stagger` beyond the pad edge), with a 45-degree jog where
+  a via has to sit to the side; it skips power nets (`skip_nets`), exposed pads and pads already wired. Without the
+  new parameters the router gives the same copper as before.
 - **`pcbkit release`: a version for every board that changed, stamped into its KiCad files.** Each run checks
   every board (ERC, DRC, and no unconnected items or parity findings of any severity; a board that fails is reported
   as a mockup), compares its fab output for every fab house with its last release, and gives a changed board the next
@@ -50,6 +58,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
 
 ### Changed
+- **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
+  KiCad's icon in the dock for a moment. pcbkit now runs it from a `KiCadCLI.app` under
+  `~/.local/share/pcbkit/kicad-cli/`: a copy of `kicad-cli` signed ad hoc, KiCad's Info.plist marked as a
+  background app, and links to KiCad's frameworks and data. There is one for each KiCad and version, made on first
+  use and never changed, so parallel runs and a second KiCad don't disturb each other. DRC reports, renders, Gerbers
+  and BOMs match KiCad's own `kicad-cli` (checked on the sign, spotlight, dodeca and synth-blocks boards).
+  `PCBKIT_KICAD_DOCK=1` runs KiCad's own. `KICAD_CLI` names the copy; `KICAD_APP` and `KICAD_PYTHON` are still
+  KiCad's.
 - **`pcbkit fab` lists each LCSC number once in the BOM**, the values joined, since JLC showed a part split over two
   rows as missing. `--placed field:NAME=VALUE` picks the parts the assembler places, `--no-assembly` writes Gerbers
   only, `--extra-layers` adds layers to them and `--name` sets the file names.

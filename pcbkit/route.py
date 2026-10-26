@@ -590,9 +590,11 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
                     segs = [(at(half, 0.0), pts[1])] + list(zip(pts[1:], pts[2:]))   # checked from the pad's edge
                     if any(keepout_hit(keepouts, a, w / 2 + 0.02, {layer}, net, end=z) for a, z in segs):
                         continue
-                    # every corner of the stub (not its start, on the pad) clears the edge: enough for a rectangle
-                    # or a circle, both convex; a polygon's edges are checked against each segment too
-                    if not all(_outline_ok(z, w / 2, outline, edge_clr) for _, z in segs):
+                    # every corner of the stub (not its start, on the pad) clears the edge and stays in `area`, as the
+                    # via does: enough for a rectangle or a circle, both convex; a polygon's edges are checked against
+                    # each segment too
+                    if not all(_outline_ok(z, w / 2, outline, edge_clr) and area[0] + w / 2 <= z[0] <= area[2] - w / 2
+                               and area[1] + w / 2 <= z[1] <= area[3] - w / 2 for _, z in segs):
                         continue
                     if isinstance(outline, list) and any(_poly_seg_dist(a, z, outline) < w / 2 + edge_clr for a, z in segs):
                         continue

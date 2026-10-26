@@ -1,9 +1,11 @@
 """Scripted routing on a KiCad board: a maze router that completes nets, a GND/plane via stitcher, escape vias,
-neck-down and a track-end audit. Board millimetres throughout (KiCad's frame, y down).
+fine-pitch fan-out, neck-down and a track-end audit. Board millimetres throughout (KiCad's frame, y down).
 
-    from pcbkit.route import writer, complete_nets, plane_vias, neckdown, audit_track_ends
+    from pcbkit.route import writer, complete_nets, fanout, plane_vias, neckdown, audit_track_ends
     track, via = writer(board, via_size=(0.6, 0.3))
     P = dict(CLEARANCE=0.2, EDGE_CLR=0.3, VIA=(0.6, 0.3), VIA_PAD_CLR=0.15, QUICK=True, AXIAL_PADS=True)
+    placed, failed = fanout(board, "U4", P, area, track, via, skip_nets=("GND", "+3V3"), outline=poly)
+    P.update(DIR={F_Cu: "h", B_Cu: "v"}, ORDER="longest")       # optional: route discipline, see below
     done, failed = complete_nets(board, P, area, [(r"USB_D[PN]", [F_Cu, B_Cu], 0.25), ...], track, via, outline=poly)
 
 complete_nets(plan): for each net matching a pattern, join its copper islands one at a time with A* on a 0.1 mm
@@ -15,6 +17,16 @@ CLEARANCE), CONN_SECONDS (time for one connection, all its widths and corridors;
 its whole expansion budget, which dominates a run: 40 s each in QUICK mode, minutes without), DEADLINE (time.time()
 after which complete_nets tries nothing more and reports the rest as failed). Pads are obstacles on every copper
 layer they reach, with their shape on that layer (see pad_items), unplated holes on all of them.
+Opt-in route discipline (left out, the router behaves as before):
+- DIR ({layer id: "h" | "v"}): a preferred direction per layer, e.g. {F_Cu: "h", B_Cu: "v"} on a board whose inner
+  layers are planes, so the two outer layers cross instead of wandering round chips. A move along the layer's
+  direction costs DIR_COST[0] per cell, across it DIR_COST[1], at 45 degrees DIR_COST[2] (x its length); default
+  (1.0, 4.0, 2.0), values below 1 count as 1. Layers not in DIR, LAYER_COST, the turn and via costs work as before.
+  complete_nets and tie_pads take it from P.
+- ORDER = "longest": complete_nets routes every connection of the plan longest first (straight-line distance between
+  the two copper groups it joins), across nets and plan entries, instead of net by net in plan order.
+fanout(ref): dog-bone fan-out of a fine-pitch chip before routing: a via per signal pad, out from the package in two
+staggered rows (`dist`, `dist + stagger` beyond the pad edge), so the router starts from vias that leave channels.
 `outline`: rectangle (x0, y0, x1, y1), circle (cx, cy, r) or polygon [(x, y)].
 `keepouts`: [(shape, allowed net or None, layer)], shape a rectangle (x0, y0, x1, y1) or a polygon [(x, y)]; track
 and via edges stay out (keepout_hit tests a disc or a capsule against them, e.g. for hand-placed vias).
@@ -424,6 +436,213 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
     return placed, failed
 
 
+# ---- fan-out ------------------------------------------------------------------------------------------------
+def _pad_size(q, layer):
+    """A pad's width and height in its own axes and its copper's area (mm2) on layer. A custom pad's size is only its
+    anchor's (0.005 mm in footprints from EasyEDA), so its width and height come from its copper, twice the farthest
+    reach from the anchor each way (the pad's edge is never nearer than the copper's), and its area is the copper's."""
+    import pcbnew
+    T = pcbnew.ToMM
+    if q.GetShape(layer) != pcbnew.PAD_SHAPE_CUSTOM:
+        w, h = T(q.GetSize(layer).x), T(q.GetSize(layer).y)
+        return w, h, w * h
+    th = math.radians(q.GetOrientationDegrees())
+    cx, cy = T(q.GetPosition().x), T(q.GetPosition().y)
+    poly, xs, ys = q.GetEffectivePolygon(layer), [0.0], [0.0]
+    for k in range(poly.OutlineCount()):
+        o = poly.Outline(k)
+        for i in range(o.PointCount()):
+            dx, dy = T(o.CPoint(i).x) - cx, T(o.CPoint(i).y) - cy
+            xs.append(abs(dx * math.cos(th) - dy * math.sin(th)))
+            ys.append(abs(dx * math.sin(th) + dy * math.cos(th)))
+    return 2 * max(xs), 2 * max(ys), poly.Area() / pcbnew.FromMM(1) ** 2
+
+
+def _outline_ok(c, r, outline, edge_clr):
+    """A disc (centre c, radius r) inside the outline (rectangle, circle or polygon) and edge_clr from its edge."""
+    if not outline:
+        return True
+    e = r + edge_clr
+    if isinstance(outline, list):
+        return _in_poly(c, outline) and _poly_edge_dist(c, outline) >= e
+    if len(outline) == 3:
+        return math.hypot(c[0] - outline[0], c[1] - outline[1]) <= outline[2] - e
+    return outline[0] + e <= c[0] <= outline[2] - e and outline[1] + e <= c[1] <= outline[3] - e
+
+
+def _net_skipped(net, skip_nets):
+    """net in skip_nets: an exact name, or a regex matched in full ("+3V3" is a name, not a broken regex)."""
+    for s in ((skip_nets,) if isinstance(skip_nets, str) else skip_nets):
+        if net == s:
+            return True
+        try:
+            if _re.fullmatch(s, net):
+                return True
+        except _re.error:
+            pass
+    return False
+
+
+def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=0.2, layer=None, skip_nets=(),
+           outline=None, keepouts=(), commit=True, lateral=1.6):
+    """Dog-bone fan-out of one fine-pitch footprint (QFN/QFP: four sides; SOIC/TSSOP: two): each signal pad gets a
+    via out along its outward normal (away from the package, on the side the pad sits on), its centre `dist` mm
+    beyond the pad's outer edge, neighbouring pads alternating `dist` and `dist + stagger` so the vias fit at fine
+    pitch and leave channels between them, joined to the pad centre by a stub of `width` (at most the pad's narrow
+    side): straight, or where the via sits to the side a 45-degree jog, ending at the via or, if that is blocked,
+    earlier and then straight on, so the stubs of the outer row pass the inner row's vias (at 0.4 mm pitch they have
+    to). The via must clear other-net copper on every layer (as escape_vias), the stub on the pad's layer, both
+    checked with Copper; the stub from the pad's edge out. A blocked spot gives way to the next one: first along
+    the normal (half-stagger steps, out to the other row and beyond), then offset sideways in 0.2 mm steps up to
+    `lateral` mm, toward the end of the row first; each side is taken from its middle outward, so the middle pads go
+    straight and the outer ones fan toward the corners.
+    Skipped: pads without a net or whose net has no other pad, nets in skip_nets (names, or regexes matched in full;
+    power and plane nets get plane_vias instead), exposed and thermal pads (four times the median pad area or more),
+    through-hole pads and pads that already have a track or via of their net. pins: pad numbers to limit it to.
+    layer: the pads' copper layer (default the footprint's side). outline / keepouts as for complete_nets (EDGE_CLR
+    from the outline). commit=False plans without adding copper.
+    Returns (placed {(ref, pad): (x, y)}, failed ["ref.pad (net)"])."""
+    import pcbnew
+    T = pcbnew.ToMM
+    fp = next((f for f in b.GetFootprints() if f.GetReference() == ref), None)
+    if fp is None:
+        raise ValueError(f"fanout: no footprint {ref}")
+    layer = (pcbnew.B_Cu if fp.IsFlipped() else pcbnew.F_Cu) if layer is None else layer
+    cu = _copper(b, p)
+    vr, clr, edge_clr = p["VIA"][0] / 2, p["CLEARANCE"], p.get("EDGE_CLR", 0.3)
+    pins = None if pins is None else {str(n) for n in pins}
+    npads = Counter(q.GetNetname() for f in b.GetFootprints() for q in f.Pads())
+    pads = [q for q in fp.Pads() if q.GetAttribute() == pcbnew.PAD_ATTRIB_SMD and q.IsOnLayer(layer) and q.GetNumber()]
+    if not pads:
+        return {}, []
+    areas = sorted(_pad_size(q, layer)[2] for q in pads)
+    med = areas[len(areas) // 2]
+    pads = [q for q in pads if _pad_size(q, layer)[2] < 4 * med]                         # no exposed pad
+    # the footprint's own axes on the board (KiCad: y down, angles counter-clockwise on screen)
+    th = math.radians(fp.GetOrientationDegrees())
+    ux, uy = (math.cos(th), -math.sin(th)), (math.sin(th), math.cos(th))
+    fx, fy = T(fp.GetPosition().x), T(fp.GetPosition().y)
+    loc = {}
+    for q in pads:
+        dx, dy = T(q.GetPosition().x) - fx, T(q.GetPosition().y) - fy
+        loc[q.GetNumber()] = (dx * ux[0] + dy * ux[1], dx * uy[0] + dy * uy[1])
+    xs, ys = [v[0] for v in loc.values()], [v[1] for v in loc.values()]
+    cx, cy, hx, hy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (max(xs) - min(xs)) / 2, (max(ys) - min(ys)) / 2
+    side, info = {}, {}
+    for q in pads:
+        lx, ly = loc[q.GetNumber()]
+        sx, sy, _ = _pad_size(q, layer)                      # a custom pad by its copper, not its anchor
+        ph = math.radians(q.GetOrientationDegrees() - fp.GetOrientationDegrees())    # the pad in the footprint
+        ax = (math.cos(ph), -math.sin(ph)) if sx >= sy else (math.sin(ph), math.cos(ph))  # its long axis
+        if abs(sx - sy) > 0.05 * max(sx, sy):
+            along_x = abs(ax[0]) >= abs(ax[1])               # a pad points out of the package along its long side
+        else:
+            along_x = abs(lx - cx) * (hy or 1) >= abs(ly - cy) * (hx or 1)
+        o = (lx - cx) if along_x else (ly - cy)
+        if abs(o) < 1e-3:
+            continue                                         # a pad in the middle: no side
+        sgn = 1 if o > 0 else -1
+        key = ("x" if along_x else "y", sgn)
+        n_loc = (sgn, 0.0) if along_x else (0.0, sgn)
+        s = (ly - cy) if along_x else (lx - cx)              # position along the row, from its middle
+        long_, short = max(sx, sy), min(sx, sy)
+        half = (abs(ax[0]) if along_x else abs(ax[1])) * long_ / 2 + (abs(ax[1]) if along_x else abs(ax[0])) * short / 2
+        side.setdefault(key, []).append(s)
+        info[q.GetNumber()] = (q, key, n_loc, s, half, short)
+    rows = {}
+    for key, ss in side.items():                             # pitch of each row, for the alternation
+        ss = sorted(ss)
+        gaps = [z - a for a, z in zip(ss, ss[1:]) if z - a > 0.05]
+        rows[key] = (ss[0], min(gaps) if gaps else 1.0, max(abs(ss[0]), abs(ss[-1])) or 1.0)
+    board_vec = lambda v: (v[0] * ux[0] + v[1] * uy[0], v[0] * ux[1] + v[1] * uy[1])
+    ends, wires = {}, {}                                     # copper already on the pads: track ends and vias, and
+    for t in b.GetTracks():                                  # the whole copper, for a track through a pad
+        is_via = t.Type() == pcbnew.PCB_VIA_T
+        if not is_via and t.GetLayer() != layer:
+            continue
+        ends.setdefault(t.GetNetname(), []).extend([t.GetPosition()] if is_via else [t.GetStart(), t.GetEnd()])
+        wires.setdefault(t.GetNetname(), []).append(
+            ("all", "disc", ((T(t.GetPosition().x), T(t.GetPosition().y)), T(t.GetWidth(pcbnew.F_Cu)) / 2)) if is_via
+            else ({layer}, "seg", ((T(t.GetStart().x), T(t.GetStart().y)), (T(t.GetEnd().x), T(t.GetEnd().y)),
+                                   T(t.GetWidth()) / 2)))
+    todo, placed, failed = [], {}, []
+    for num, (q, key, n_loc, s, half, short) in info.items():
+        net = q.GetNetname()
+        if pins is not None and num not in pins:
+            continue
+        if not net or net.startswith("unconnected") or npads[net] < 2 or _net_skipped(net, skip_nets):
+            continue
+        if any(q.HitTest(e) for e in ends.get(net, ())) or any(
+                _item_gap(pi, w_) <= 1e-3 for pi in pad_items(q, [layer], cover=False) for w_ in wires.get(net, ())):
+            continue                                         # wired already: a track ends on it or runs through it
+        s0, pitch, smax = rows[key]
+        k = int(round((s - s0) / pitch))
+        todo.append((abs(s) / smax, key, s, num, q, n_loc, half, short, dist + (stagger if k % 2 else 0.0)))
+    todo.sort(key=lambda it: it[:3])
+    h = stagger / 2 if stagger > 0 else 0.35
+    for _, key, s, num, q, n_loc, half, short, D in todo:
+        net = q.GetNetname()
+        n = board_vec(n_loc)
+        t = board_vec((0.0, 1.0) if key[0] == "x" else (1.0, 0.0))   # along the row, towards larger s
+        out = 1 if s >= 0 else -1                            # towards the end of the row
+        w = min(width, short)
+        P0 = (T(q.GetPosition().x), T(q.GetPosition().y))
+        at = lambda r, l: (P0[0] + n[0] * r + t[0] * l, P0[1] + n[1] * r + t[1] * l)
+        lo = -int((D - vr - cu.via_pad_clr) / h + 1e-9)     # as close as a via may come to the pad
+        deltas = sorted((m * h for m in range(lo, 4)), key=lambda x: (abs(x), x < 0))
+        lats = [0.0] + [sg * 0.2 * i for i in range(1, int(lateral / 0.2 + 1e-9) + 1) for sg in (out, -out)]
+        got = None
+        for l in lats:
+            for de in deltas:
+                R = half + D + de                            # via centre, from the pad centre along the normal
+                c = at(R, l)
+                if not (area[0] + vr <= c[0] <= area[2] - vr and area[1] + vr <= c[1] <= area[3] - vr):
+                    continue
+                if not _outline_ok(c, vr, outline, edge_clr) or keepout_hit(keepouts, c, vr + 0.02, "all", net) \
+                        or not cu.clear(("disc", (c, vr)), "all", net, clr):
+                    continue
+                # the stub: straight out of the pad; offset sideways, a 45-degree jog that ends at the via (late)
+                # or, to pass the vias of the inner row, earlier and then straight on to the via
+                kinks = [None] if l == 0 else [R - abs(l) - 0.2 * i for i in range(int((R - abs(l) - half) / 0.2) + 1)
+                                               if R - abs(l) - 0.2 * i >= half + 0.1]
+                for kn in kinks:
+                    pts = [P0, c] if kn is None else [P0, at(kn, 0.0), at(kn + abs(l), l), c]
+                    pts = [x for i, x in enumerate(pts) if i == 0 or math.hypot(x[0] - pts[i - 1][0], x[1] - pts[i - 1][1]) > 1e-6]
+                    segs = [(at(half, 0.0), pts[1])] + list(zip(pts[1:], pts[2:]))   # checked from the pad's edge
+                    if any(keepout_hit(keepouts, a, w / 2 + 0.02, {layer}, net, end=z) for a, z in segs):
+                        continue
+                    # every corner of the stub (not its start, on the pad) clears the edge and stays in `area`, as the
+                    # via does: enough for a rectangle or a circle, both convex; a polygon's edges are checked against
+                    # each segment too
+                    if not all(_outline_ok(z, w / 2, outline, edge_clr) and area[0] + w / 2 <= z[0] <= area[2] - w / 2
+                               and area[1] + w / 2 <= z[1] <= area[3] - w / 2 for _, z in segs):
+                        continue
+                    if isinstance(outline, list) and any(_poly_seg_dist(a, z, outline) < w / 2 + edge_clr for a, z in segs):
+                        continue
+                    # other-net copper against the whole stub, from the pad centre: behind a rounded tip a stub as
+                    # wide as the pad leaves the pad's copper at its corners
+                    if all(cu.clear(("seg", (a, z, w / 2)), {layer}, net, clr) for a, z in zip(pts, pts[1:])):
+                        got = (c, list(zip(pts, pts[1:])))
+                        break
+                if got:
+                    break
+            if got:
+                break
+        if not got:
+            failed.append(f"{ref}.{num} ({net.split('/')[-1]})")
+            continue
+        c, stub = got
+        placed[(ref, num)] = c
+        cu.add_via(c, vr, net)
+        for a, z in stub:
+            cu.add_track(a, z, w / 2, layer, net)
+        if commit:
+            via(c, q.GetNet())
+            for a, z in stub:
+                track(a, z, w, layer, q.GetNet())
+    return placed, failed
+
+
 # ---- maze router: complete nets -----------------------------------------------------------------------------
 _VERBOSE, _T0 = bool(_os.environ.get("ROUTE_VERBOSE")), _time.time()
 
@@ -506,20 +725,59 @@ class Grid:
 
 
 DIRS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+DIR_COST = (1.0, 4.0, 2.0)          # preferred direction: step-cost multipliers along, across, at 45 degrees
+
+
+def _step_costs(layers, layer_cost, direction=None, dir_cost=None):
+    """Cost of each move in DIRS on each layer: its length (1 or 1.4142) x the layer's cost, and on a layer with a
+    preferred direction ({layer: "h" | "v"}) x dir_cost (along, across, diagonal; DIR_COST by default, each raised
+    to 1 at least so the A* heuristic stays a lower bound)."""
+    direction = direction or {}
+    m = [max(1.0, float(x)) for x in (dir_cost or DIR_COST)]
+    out = {}
+    for L in layers:
+        d = direction.get(L)
+        d = d.lower() if isinstance(d, str) else d
+        if d not in (None, "h", "v"):
+            raise ValueError(f"DIR: layer {L} has {d!r}; use 'h' or 'v'")
+        row = []
+        for dx, dy in DIRS:
+            k = 1.0 if d is None else m[2] if dx and dy else m[0] if (dy == 0) == (d == "h") else m[1]
+            row.append((1.4142 if dx and dy else 1.0) * k * layer_cost[L])   # k = 1: exactly the plain cost
+        out[L] = row
+    return out
 
 
 def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.0, layer_cost=None,
-             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None):
+             corridor=None, max_expand=600000, turn=0.6, hweight=1.0, deadline=None, direction=None, dir_cost=None):
     """A* over (cell, layer): 8-connected moves within a layer, or a via to another allowed layer where via_ok.
     sources/targets: sets of (cell, layer). corridor: (i0, j0, i1, j1) cell bounds. deadline: time.time() at which
-    to give up. Returns [(cell, layer)] or None."""
+    to give up. direction: {layer: "h" | "v"}, a preferred direction per layer, its moves priced by dir_cost
+    (along, across, diagonal multipliers; DIR_COST by default). Returns [(cell, layer)] or None."""
     layer_cost = layer_cost or {L: 1.0 for L in layers}
+    step = _step_costs(layers, layer_cost, direction, dir_cost)
     tl = list(targets)
     if not tl:
         return None
     bx0 = min(t[0][0] for t in tl); bx1 = max(t[0][0] for t in tl)
     by0 = min(t[0][1] for t in tl); by1 = max(t[0][1] for t in tl)
-    h = lambda c: hweight * math.hypot(max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1))
+    if direction and any(L in direction for L in layers):
+        # octile distance with the cheapest straight and diagonal step of any layer: still a lower bound on the
+        # cost to go (vias and turns only add), and much closer to it than the plain distance when the layers'
+        # directions make diagonals dear (with the default costs it is the Manhattan distance)
+        s_min = min(min(step[L][:4]) for L in layers)
+        d_min = min(min(step[L][4:]) for L in layers)
+
+        # a straight run can be made of alternating diagonals too: it costs a cell at least the cheaper of the two
+        # (DIR_COST = (4, 4, 1): two cells across for 2.83, not 8)
+        s_run = min(s_min, d_min)
+
+        def h(c):
+            dx, dy = max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1)
+            a, b_ = max(dx, dy), min(dx, dy)
+            return hweight * (b_ * min(d_min, 2 * s_min) + (a - b_) * s_run)
+    else:
+        h = lambda c: hweight * math.hypot(max(bx0 - c[0], 0, c[0] - bx1), max(by0 - c[1], 0, c[1] - by1))
     G0 = grids[layers[0]]
     i0, j0, i1, j1 = corridor or (0, 0, G0.nx - 1, G0.ny - 1)
     openq, best, parent = [], {}, {}
@@ -553,7 +811,7 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
                 continue
             if dx and dy and (G.blocked((c[0] + dx, c[1]), net, need, hw) or G.blocked((c[0], c[1] + dy), net, need, hw)):
                 continue
-            ng = gc + (1.4142 if dx and dy else 1.0) * layer_cost[L] + (turn if di not in (-1, d) else 0.0)
+            ng = gc + step[L][d] + (turn if di not in (-1, d) else 0.0)
             if ng < best.get((ns, d), 1e18):
                 best[(ns, d)] = ng
                 parent[(ns, d)] = (st, di)
@@ -573,7 +831,8 @@ def astar_ml(grids, layers, net, need, hw, sources, targets, via_ok, via_cost=6.
 def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=None):
     """p["QUICK"]: give up early (corridors of 4 and 12 mm, 250k expansions each, no whole-board search), so a hard
     connection fails in seconds and is left for hand routing. p["HWEIGHT"] > 1 makes the A* greedier (weighted
-    heuristic): far fewer expansions, paths slightly longer than optimal."""
+    heuristic): far fewer expansions, paths slightly longer than optimal. p["DIR"] / p["DIR_COST"]: preferred
+    direction per layer (see astar_ml)."""
     import pcbnew
     allc = [s_[0] for s_ in src] + [t[0] for t in tgt]
     quick = p.get("QUICK", False)
@@ -586,7 +845,8 @@ def _route_once(Gs, layers, net, clr, width, src, tgt, via_ok, G0, p, deadline=N
                         layer_cost={L: p.get("LAYER_COST", {}).get(L, p["IN1_COST"] if L == pcbnew.In1_Cu and "IN1_COST" in p
                                                                      else 1 + 0.25 * k) for k, L in enumerate(layers)},
                         corridor=cor, max_expand=250000 if quick else (600000 if m else 3000000),
-                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline)
+                        hweight=p.get("HWEIGHT", 1.0), deadline=deadline,
+                        direction=p.get("DIR"), dir_cost=p.get("DIR_COST"))
         if path:
             return path
     return None
@@ -600,6 +860,60 @@ def _simplify(path):
             pts.append(m)
     pts.append(path[-1])
     return pts
+
+
+def _item_gap(a, z):
+    """Gap between two copper items (layers, kind, geometry) as net_components sees them: <= 0 when they touch,
+    1.0 when they share no layer (or two rectangles don't overlap)."""
+    (la, ka, ga), (lz, kz, gz) = a, z
+    if la != "all" and lz != "all" and not (la & lz):
+        return 1.0
+    if ka == "seg" and kz == "seg":
+        return _seg_seg(ga[0], ga[1], gz[0], gz[1]) - ga[2] - gz[2]
+    if ka == "rect" and kz == "rect":
+        return 0.0 if (ga[0] <= gz[2] and gz[0] <= ga[2] and ga[1] <= gz[3] and gz[1] <= ga[3]) else 1.0
+    if kz == "rect":
+        a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
+    if ka == "rect":
+        return (_rect_dist(gz[0], ga) - gz[1]) if kz == "disc" else (_seg_rect(gz[0], gz[1], ga) - gz[2])
+    if ka == "disc" and kz == "disc":
+        return math.hypot(ga[0][0] - gz[0][0], ga[0][1] - gz[0][1]) - ga[1] - gz[1]
+    if ka == "seg":
+        a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
+    return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
+
+
+def _group_points(grp, step=1.0):
+    """Points standing for a group of copper items: pad and via centres, track ends and points every `step` mm."""
+    pts = []
+    for _ls, k, g in grp:
+        if k == "rect":
+            pts.append(((g[0] + g[2]) / 2, (g[1] + g[3]) / 2))
+        elif k == "disc":
+            pts.append(g[0])
+        else:
+            (ax, ay), (zx, zy) = g[0], g[1]
+            n = max(1, int(math.hypot(zx - ax, zy - ay) / step))
+            pts += [(ax + (zx - ax) * i / n, ay + (zy - ay) * i / n) for i in range(n + 1)]
+    return pts
+
+
+def _spanning_pairs(groups):
+    """The pairs of a net's copper groups that a shortest spanning tree joins (Prim's, by the straight-line distance
+    between their nearest points, see _group_points): [(distance, i, k)]."""
+    pts = [_group_points(g) for g in groups]
+    gap = lambda i, k: min(math.hypot(a[0] - c[0], a[1] - c[1]) for a in pts[i] for c in pts[k])
+    best = {k: (gap(0, k), 0) for k in range(1, len(groups))}
+    out = []
+    while best:
+        k = min(best, key=lambda m: (best[m][0], m))
+        d, i = best.pop(k)
+        out.append((d, i, k))
+        for m in best:
+            dm = gap(k, m)
+            if dm < best[m][0]:
+                best[m] = (dm, k)
+    return out
 
 
 def net_components(b, net_name, exclude):
@@ -630,29 +944,11 @@ def net_components(b, net_name, exclude):
             par[k] = par[par[k]]
             k = par[k]
         return k
-
-    def dist(a, z):
-        (la, ka, ga), (lz, kz, gz) = a, z
-        if la != "all" and lz != "all" and not (la & lz):
-            return 1.0
-        if ka == "seg" and kz == "seg":
-            return _seg_seg(ga[0], ga[1], gz[0], gz[1]) - ga[2] - gz[2]
-        if ka == "rect" and kz == "rect":
-            return 0.0 if (ga[0] <= gz[2] and gz[0] <= ga[2] and ga[1] <= gz[3] and gz[1] <= ga[3]) else 1.0
-        if kz == "rect":
-            a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
-        if ka == "rect":
-            return (_rect_dist(gz[0], ga) - gz[1]) if kz == "disc" else (_seg_rect(gz[0], gz[1], ga) - gz[2])
-        if ka == "disc" and kz == "disc":
-            return math.hypot(ga[0][0] - gz[0][0], ga[0][1] - gz[0][1]) - ga[1] - gz[1]
-        if ka == "seg":
-            a, z = z, a; (la, ka, ga), (lz, kz, gz) = a, z
-        return _seg_dist(ga[0], gz[0], gz[1]) - ga[1] - gz[2]
     for i, k in barrels:
         par[find(i)] = find(k)
     for i in range(len(items)):
         for k in range(i + 1, len(items)):
-            if find(i) != find(k) and dist(items[i], items[k]) <= 1e-3:
+            if find(i) != find(k) and _item_gap(items[i], items[k]) <= 1e-3:
                 par[find(i)] = find(k)
     groups = {}
     for i, it in enumerate(items):
@@ -663,6 +959,11 @@ def net_components(b, net_name, exclude):
 def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts=(), outline=None):
     """plan: [(net regex, [layer ids in preference order], width)]. For each matching net, join its copper groups
     one at a time: A* from the growing tree to the nearest other group, trying the layers in order.
+    p["ORDER"] = "longest": first collect every connection of the whole plan (for each net, the pairs of copper groups
+    a shortest spanning tree joins), then route them longest first by the straight-line distance between the two
+    groups, whatever their net or plan entry, each from the copper its first group has by then to its second's; a
+    connection whose groups another route has joined already is skipped, and a net matching two patterns is routed
+    with the first. p["DIR"]: a preferred direction per layer (see astar_ml).
     Returns (routed connections, [unrouted net names])."""
     cu = _copper(b, p)
     clr = p["CLEARANCE"]
@@ -680,6 +981,152 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
     cu_layers = list(b.GetEnabledLayers().CuStack())
     done, failed = 0, []
     stop = p.get("DEADLINE")
+    order = p.get("ORDER")
+    if order not in (None, "plan", "longest"):
+        raise ValueError(f"ORDER: {order!r}; use 'longest' (or leave it out)")
+
+    def connect(net, netobj, pad_mids, layers, width, tree, rest):
+        """One connection of `net`: A* from the copper of `tree` to the nearest group of `rest`; its tracks and vias
+        go on the board and into `tree`. Returns (index in rest of the group reached, or None; its deadline)."""
+        Gs = {L: grid(L) for L in layers}
+        G0 = Gs[layers[0]]
+        src, tgt = set(), {}
+        ax = p.get("AXIAL_PADS", False)
+        for L in layers:
+            is_pad = lambda it: it[1] != "seg" or _mid(it) in pad_mids
+            src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax and is_pad(it))}
+            for gi, grp in enumerate(rest):
+                for it in grp:
+                    if it[0] == "all" or L in it[0]:
+                        for c in _cells(Gs[L], it, ax and is_pad(it)):
+                            tgt[(c, L)] = gi
+        vr = p["VIA"][0] / 2
+        vcache = {}
+
+        def via_ok(c):
+            if c not in vcache:
+                xy = G0.xy(*c)
+                vcache[c] = all(not grid(L).blocked(c, net, clr + vr + 0.02, vr)
+                                for L in cu_layers) and \
+                    cu.clear(("disc", (xy, vr)), "all", net, clr)
+            return vcache[c]
+        path = None
+        w_used = width
+        dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
+        dl = min(dl) if dl else None
+        for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
+            if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
+                continue
+            w_used = w_try
+            path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
+            if path or (dl and _time.time() > dl):
+                break
+        if not path:
+            return None, dl
+
+        def centre(items, st):                       # pad / via centre of the item holding this cell
+            xy, L = Gs[st[1]].xy(*st[0]), st[1]
+            for ls, k, g in items:
+                if ls != "all" and L not in ls:
+                    continue
+                if k == "rect" and g[0] <= xy[0] <= g[2] and g[1] <= xy[1] <= g[3]:
+                    return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)
+                if k == "disc" and math.hypot(xy[0] - g[0][0], xy[1] - g[0][1]) <= g[1]:
+                    return g[0]
+                if k == "seg" and _mid((ls, k, g)) in pad_mids and _seg_dist(xy, g[0], g[1]) <= g[2]:
+                    return _mid((ls, k, g))      # a pad at an angle: its centre
+            return None
+        c_start = centre(tree, path[0])
+        c_end = centre(rest[tgt[path[-1]]], path[-1])
+        runs, cur = [], [path[0]]
+        for st in path[1:]:
+            if st[1] != cur[-1][1]:
+                runs.append(cur); cur = [st]
+                xy = G0.xy(*st[0])
+                via_fn(xy, netobj)
+                cu.add_via(xy, vr, net)
+                for gr in grids.values():
+                    gr.add("disc", (xy, vr), net)
+                tree.append(("all", "disc", (xy, vr)))
+            else:
+                cur.append(st)
+        runs.append(cur)
+
+        def lay(a, z, w, L):
+            track(a, z, w, L, netobj)
+            seg = (a, z, w / 2)
+            cu.add_track(a, z, w / 2, L, net)
+            grids[L].add("seg", seg, net)
+            tree.append(({L}, "seg", seg))
+
+        def to_centre(a, c, L):                      # finish exactly on the pad / via centre, necked if needed
+            if not c or math.hypot(a[0] - c[0], a[1] - c[1]) < 1e-6:
+                return
+            for w in (w_used, max(0.2, round(w_used * 0.6, 2)), 0.2):
+                if cu.clear(("seg", (a, c, w / 2)), {L}, net, clr):
+                    lay(a, c, w, L)
+                    return
+        for ri, run in enumerate(runs):
+            L = run[0][1]
+            pts = [Gs[L].xy(*c) for c in _simplify([st[0] for st in run])]
+            pts = [q for i, q in enumerate(pts) if i == 0 or q != pts[i - 1]]
+            for a, z in zip(pts, pts[1:]):
+                lay(a, z, w_used, L)
+            if ri == 0:
+                to_centre(pts[0], c_start, L)
+            if ri == len(runs) - 1:
+                to_centre(pts[-1], c_end, L)
+        return tgt[path[-1]], dl
+
+    if order == "longest":
+        jobs, nets = [], {}
+        for pattern, layers, width in plan:
+            for net in [n for n in names if _re.fullmatch(pattern, n)]:
+                if net in nets:
+                    continue
+                groups = net_components(b, net, exclude)
+                if len(groups) < 2:
+                    continue
+                nets[net] = dict(layers=layers, width=width, groups=groups, par=list(range(len(groups))),
+                                 obj=b.FindNet(net), mids=_capsule_pad_mids(b, net, cu_layers))
+                jobs += [(-d, len(jobs), net, i, k) for d, i, k in _spanning_pairs(groups)]
+        jobs.sort()
+        if _VERBOSE:
+            print(f"   {_time.time() - _T0:6.1f}s {len(jobs)} connections in {len(nets)} nets, longest first", flush=True)
+
+        def find(s, k):
+            while s["par"][k] != k:
+                k = s["par"][k]
+            return k
+        for negd, _, net, i, k in jobs:
+            s = nets[net]
+            ri, rk = find(s, i), find(s, k)
+            if ri == rk:                                 # joined already, by a route that crossed it
+                continue
+            if stop and _time.time() > stop:
+                if _VERBOSE:
+                    print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): not tried, out of time", flush=True)
+                continue
+            tree = s["groups"][ri]
+            n0 = len(tree)
+            gi, dl = connect(net, s["obj"], s["mids"], s["layers"], s["width"], tree, [s["groups"][rk]])
+            if gi is not None:
+                done += 1
+                new = tree[n0:]
+                tree += s["groups"][rk]
+                s["par"][rk] = ri
+                for m in range(len(s["groups"])):         # a route can cross the net's other groups: join them too
+                    rm = find(s, m)
+                    if rm != ri and any(_item_gap(a, z) <= 1e-3 for a in new for z in s["groups"][rm]):
+                        tree += s["groups"][rm]
+                        s["par"][rm] = ri
+            if _VERBOSE:
+                why = "ok" if gi is not None else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
+                print(f"   {_time.time() - _T0:6.1f}s {net} ({-negd:.1f} mm): {why}", flush=True)
+        # the nets still in more than one piece, not the pairs that failed: a later route can cross both groups of a
+        # failed pair and join them
+        return done, [net for net, s in nets.items() if len({find(s, m) for m in range(len(s["groups"]))}) > 1]
+
     for pattern, layers, width in plan:
         for net in [n for n in names if _re.fullmatch(pattern, n)]:
             groups = net_components(b, net, exclude)
@@ -699,95 +1146,11 @@ def complete_nets(b, p, area, plan, track, via_fn, exclude=frozenset(), keepouts
                     if _VERBOSE:
                         print(f"   {_time.time() - _T0:6.1f}s {net}: out of time ({len(rest)} groups left)", flush=True)
                     break
-                routed = False
-                Gs = {L: grid(L) for L in layers}
-                G0 = Gs[layers[0]]
-                src, tgt = set(), {}
-                ax = p.get("AXIAL_PADS", False)
-                for L in layers:
-                    is_pad = lambda it: it[1] != "seg" or _mid(it) in pad_mids
-                    src |= {(c, L) for it in tree if it[0] == "all" or L in it[0] for c in _cells(Gs[L], it, ax and is_pad(it))}
-                    for gi, grp in enumerate(rest):
-                        for it in grp:
-                            if it[0] == "all" or L in it[0]:
-                                for c in _cells(Gs[L], it, ax and is_pad(it)):
-                                    tgt[(c, L)] = gi
-                vr = p["VIA"][0] / 2
-                vcache = {}
-
-                def via_ok(c):
-                    if c not in vcache:
-                        xy = G0.xy(*c)
-                        vcache[c] = all(not grid(L).blocked(c, net, clr + vr + 0.02, vr)
-                                        for L in cu_layers) and \
-                            cu.clear(("disc", (xy, vr)), "all", net, clr)
-                    return vcache[c]
-                path = None
-                w_used = width
-                dl = [t for t in (p.get("CONN_SECONDS") and _time.time() + p["CONN_SECONDS"], stop) if t]
-                dl = min(dl) if dl else None
-                for w_try in (width, max(0.3, round(width * 0.6, 2)), 0.2):   # neck down onto small pins
-                    if w_try > width or (p.get("QUICK") and w_try not in (width, 0.2)):
-                        continue
-                    w_used = w_try
-                    path = _route_once(Gs, layers, net, clr, w_try, src, tgt, via_ok, G0, p, dl) if src and tgt else None
-                    if path or (dl and _time.time() > dl):
-                        break
-                if path:
-                    def centre(items, st):                       # pad / via centre of the item holding this cell
-                        xy, L = Gs[st[1]].xy(*st[0]), st[1]
-                        for ls, k, g in items:
-                            if ls != "all" and L not in ls:
-                                continue
-                            if k == "rect" and g[0] <= xy[0] <= g[2] and g[1] <= xy[1] <= g[3]:
-                                return ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)
-                            if k == "disc" and math.hypot(xy[0] - g[0][0], xy[1] - g[0][1]) <= g[1]:
-                                return g[0]
-                            if k == "seg" and _mid((ls, k, g)) in pad_mids and _seg_dist(xy, g[0], g[1]) <= g[2]:
-                                return _mid((ls, k, g))      # a pad at an angle: its centre
-                        return None
-                    c_start = centre(tree, path[0])
-                    c_end = centre(rest[tgt[path[-1]]], path[-1])
-                    runs, cur = [], [path[0]]
-                    for st in path[1:]:
-                        if st[1] != cur[-1][1]:
-                            runs.append(cur); cur = [st]
-                            xy = G0.xy(*st[0])
-                            via_fn(xy, netobj)
-                            cu.add_via(xy, vr, net)
-                            for gr in grids.values():
-                                gr.add("disc", (xy, vr), net)
-                            tree.append(("all", "disc", (xy, vr)))
-                        else:
-                            cur.append(st)
-                    runs.append(cur)
-                    def lay(a, z, w, L):
-                        track(a, z, w, L, netobj)
-                        seg = (a, z, w / 2)
-                        cu.add_track(a, z, w / 2, L, net)
-                        grids[L].add("seg", seg, net)
-                        tree.append(({L}, "seg", seg))
-
-                    def to_centre(a, c, L):                      # finish exactly on the pad / via centre, necked if needed
-                        if not c or math.hypot(a[0] - c[0], a[1] - c[1]) < 1e-6:
-                            return
-                        for w in (w_used, max(0.2, round(w_used * 0.6, 2)), 0.2):
-                            if cu.clear(("seg", (a, c, w / 2)), {L}, net, clr):
-                                lay(a, c, w, L)
-                                return
-                    for ri, run in enumerate(runs):
-                        L = run[0][1]
-                        pts = [Gs[L].xy(*c) for c in _simplify([st[0] for st in run])]
-                        pts = [q for i, q in enumerate(pts) if i == 0 or q != pts[i - 1]]
-                        for a, z in zip(pts, pts[1:]):
-                            lay(a, z, w_used, L)
-                        if ri == 0:
-                            to_centre(pts[0], c_start, L)
-                        if ri == len(runs) - 1:
-                            to_centre(pts[-1], c_end, L)
-                    tree += rest.pop(tgt[path[-1]])
+                gi, dl = connect(net, netobj, pad_mids, layers, width, tree, rest)
+                routed = gi is not None
+                if routed:
+                    tree += rest.pop(gi)
                     done += 1
-                    routed = True
                 if _VERBOSE:
                     why = "ok" if routed else "FAILED" + (" (time)" if dl and _time.time() > dl else "")
                     print(f"   {_time.time() - _T0:6.1f}s {net}: {why} ({len(rest)} groups left)", flush=True)

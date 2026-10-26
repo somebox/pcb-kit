@@ -8,6 +8,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **Routing discipline in `pcbkit.route`, all opt-in.** `P["DIR"] = {layer: "h" | "v"}` gives each layer a preferred
+  direction, priced by `P["DIR_COST"]` (along, across, diagonal; default 1, 4, 2), so on a board with plane layers
+  F.Cu and B.Cu cross instead of wandering round chips; `complete_nets` and `tie_pads` take it from P, and the A*
+  heuristic follows it (faster runs). `P["ORDER"] = "longest"` makes `complete_nets` route every connection of the
+  plan longest first, across nets. `fanout(board, ref, ...)` gives a QFN, QFP, SOIC or TSSOP dog-bone vias out from
+  each signal pad, in two staggered rows (`dist`, `dist + stagger` beyond the pad edge), with a 45-degree jog where
+  a via has to sit to the side; it skips power nets (`skip_nets`), exposed pads and pads already wired. Without the
+  new parameters the router gives the same copper as before.
 - **`pcbkit release`: a version for every board that changed, stamped into its KiCad files.** Each run checks
   every board (ERC, DRC, and no unconnected items or parity findings of any severity; a board that fails is reported
   as a mockup), compares its fab output for every fab house with its last release, and gives a changed board the next

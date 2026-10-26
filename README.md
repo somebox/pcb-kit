@@ -109,6 +109,14 @@ other routes' ends to pad centres, and an audit of every track end. esp32-s3-ha-
 routes its power nets and most signals this way in a run capped at 15 minutes; the rest was finished by hand.
 `pcbkit cleanup --dangling` then removes the dead ends a route leaves.
 
+When the inner layers are planes, the two outer layers can be held to one direction each: with
+`DIR={F_Cu: "h", B_Cu: "v"}` a move across a layer's direction costs four times as much (`DIR_COST`), so tracks
+change layer to turn instead of wandering round chips, and `ORDER="longest"` routes the plan's longest connections
+first. `fanout` gives a fine-pitch chip its dog-bone vias before routing: out from each signal pad in two staggered
+rows, with a 45-degree jog where a via has to sit to the side. On the message sign's controller (QFN-60 at 0.4 mm,
+two TSSOP-20s, 24 signal nets) fan-out plus both options routed 34 of 36 connections in 51 s, against 26 in 192 s
+without them, with the routed F.Cu 90 % horizontal and B.Cu 94 % vertical; the price is more vias and longer tracks.
+
 ### Look at the copper
 
 `pcbkit netview` draws one layer of a board region with every net in its own colour, pads labelled and courtyards

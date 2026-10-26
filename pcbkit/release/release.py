@@ -297,6 +297,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     project = Project()
     if not project.release["enabled"]:
+        if a.refresh_parts:                          # nothing is released, so no release's record is rewritten either
+            print(f"releases are off in {project.path} ([release] enabled = false): no release's parts refreshed")
+            return
         print(f"releases are off in {project.path} ([release] enabled = false): checks only")
     if a.version:
         V.parse(a.version)

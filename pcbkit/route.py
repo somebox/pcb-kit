@@ -596,7 +596,9 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
                         continue
                     if isinstance(outline, list) and any(_poly_seg_dist(a, z, outline) < w / 2 + edge_clr for a, z in segs):
                         continue
-                    if all(cu.clear(("seg", (a, z, w / 2)), {layer}, net, clr) for a, z in segs):
+                    # other-net copper against the whole stub, from the pad centre: behind a rounded tip a stub as
+                    # wide as the pad leaves the pad's copper at its corners
+                    if all(cu.clear(("seg", (a, z, w / 2)), {layer}, net, clr) for a, z in zip(pts, pts[1:])):
                         got = (c, list(zip(pts, pts[1:])))
                         break
                 if got:

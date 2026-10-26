@@ -437,6 +437,23 @@ def escape_vias(b, fps, p, area, track, via, pins, commit=True, radius=6.0, step
 
 
 # ---- fan-out ------------------------------------------------------------------------------------------------
+def _custom_size(q, layer):
+    """A custom pad's width and height in its own axes, from its copper on layer (its size is the anchor's): twice
+    the copper's farthest reach from the anchor each way, so the pad's edge is never nearer than the copper's."""
+    import pcbnew
+    T = pcbnew.ToMM
+    th = math.radians(q.GetOrientationDegrees())
+    cx, cy = T(q.GetPosition().x), T(q.GetPosition().y)
+    poly, xs, ys = q.GetEffectivePolygon(layer), [0.0], [0.0]
+    for k in range(poly.OutlineCount()):
+        o = poly.Outline(k)
+        for i in range(o.PointCount()):
+            dx, dy = T(o.CPoint(i).x) - cx, T(o.CPoint(i).y) - cy
+            xs.append(abs(dx * math.cos(th) - dy * math.sin(th)))
+            ys.append(abs(dx * math.sin(th) + dy * math.cos(th)))
+    return 2 * max(xs), 2 * max(ys)
+
+
 def _outline_ok(c, r, outline, edge_clr):
     """A disc (centre c, radius r) inside the outline (rectangle, circle or polygon) and edge_clr from its edge."""
     if not outline:
@@ -511,6 +528,8 @@ def fanout(b, ref, p, area, track, via, pins=None, dist=1.6, stagger=0.7, width=
     for q in pads:
         lx, ly = loc[q.GetNumber()]
         sx, sy = T(q.GetSize(layer).x), T(q.GetSize(layer).y)
+        if q.GetShape(layer) == pcbnew.PAD_SHAPE_CUSTOM:     # its size is only the anchor's (0.005 mm from EasyEDA)
+            sx, sy = _custom_size(q, layer)
         ph = math.radians(q.GetOrientationDegrees() - fp.GetOrientationDegrees())    # the pad in the footprint
         ax = (math.cos(ph), -math.sin(ph)) if sx >= sy else (math.sin(ph), math.cos(ph))  # its long axis
         if abs(sx - sy) > 0.05 * max(sx, sy):

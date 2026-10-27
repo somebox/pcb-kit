@@ -40,7 +40,8 @@ DEFAULTS = {
         "enabled": True,
         "page": "PRODUCTION.md",       # gets a generated section between pcbkit's markers
         "dir": "production",           # orders/<name>/order.toml, stock.toml
-        "part": [],                    # rules: what a board needs besides its hand-soldered parts
+        "part": [],                    # rules: what a board needs besides its hand-soldered parts (pcb, field,
+                                       # match, part; buy, group, replace: production.py)
     },
 }
 DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity"], "assembly": True,

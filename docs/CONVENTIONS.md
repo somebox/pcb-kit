@@ -55,7 +55,10 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
   board's version and records what happened as dated events: draft, submitted (with the order number and price),
   in-production, shipped, received, problem (a stock shortage, a question from the fab), cancelled. Edit it by
   hand, or tell an agent what happened, then run `pcbkit production` and commit: git log of the order file is its
-  history, and PRODUCTION.md's overview shows every board's version, state, orders and stock at a glance.
+  history, and PRODUCTION.md's overview shows every board's version, state, orders and stock at a glance. A board
+  that needs other fab settings than the order's (a front panel's black mask) says so in its own `fab`; parts
+  bought with the order but not placed on a board (spare ICs, a rework kit) are `[[extra]]`s: part, qty, buy, note.
+  Two drafts that are to ship together are merged into one order rather than one being cancelled.
 - `production/stock.toml` counts boards by version (bare, assembled, built, tested) and the parts on hand for
   finishing them, by the names the overview uses.
 

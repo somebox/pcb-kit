@@ -56,6 +56,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   field or the parts cache) and a centroid file with KiCad's own rotations, beside the JLC files.
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
+- **`pcbkit fab --keep-silk-in-mask`, and `keep_silk_in_mask = true` in a board's pcbkit.toml profile**, for a
+  board that prints silkscreen inside mask openings on purpose (white numerals in a black face panel's windows):
+  its Gerbers keep that silkscreen instead of having the mask openings subtracted from it. `pcbkit release` passes it
+  on and counts it among the board's fab settings, so turning it on is a change it compares; boards without it keep
+  their fingerprints and give the same Gerbers as before. `pcbkit new`'s pcbkit.toml lists it.
 
 ### Changed
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put

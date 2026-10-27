@@ -82,6 +82,8 @@ def fab_args(project, profile):
         a.append("--no-assembly")
     if profile["extra_layers"]:
         a += ["--extra-layers", ",".join(profile["extra_layers"])]
+    if profile["keep_silk_in_mask"]:
+        a.append("--keep-silk-in-mask")
     return a
 
 

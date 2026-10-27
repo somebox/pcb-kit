@@ -27,11 +27,13 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   " / " comment); the summary names those rows, to tick by hand.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
 - CPL rotation is KiCad's, with (180 - angle) on the bottom, plus the correction from data/jlc/corrections.csv.
-  That file began as kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule whose pattern is a bare
-  LCSC number (C7843) is for that part and comes first; otherwise a rule matches the reference, value or footprint
-  name, anchored matches first. The correction turns KiCad's footprint onto the part's EasyEDA footprint, which JLC
-  places from, and is the same on both sides. JLC's SOT-23-5 and SOT-23-6 parts come both ways (EasyEDA footprints
-  ending -BL need -90, -BR 180), so those package rules carry per-part exceptions. Checked in JLC's placement preview
+  That file began as kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule matches the reference,
+  value or footprint name, anchored matches first. A rule whose pattern is a bare LCSC number (C7843) is an exception
+  for that part to whichever rule matched: it replaces that rule's correction, and a footprint no rule matches (one
+  imported from EasyEDA, already in JLC's orientation) gets none from it either. The correction turns KiCad's
+  footprint onto the part's EasyEDA footprint, which JLC places from, and is the same on both sides. JLC's SOT-23-5
+  and SOT-23-6 parts come both ways (EasyEDA footprints ending -BL need -90, -BR 180), so those package rules carry
+  per-part exceptions. Checked in JLC's placement preview
   (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
   the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
   3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
@@ -69,17 +71,17 @@ PART_RULE = re.compile(r"C\d+")        # a pattern that is a bare LCSC number: a
 
 
 def correction(fp, corrections, lcsc=""):
-    """The rule for a footprint: (pattern, rotation, offset, checked, what it matched: LCSC, reference, value or
-    footprint), or None."""
-    for rx, rot, off, checked in corrections:
-        if rx == lcsc and PART_RULE.fullmatch(rx):
-            return rx, rot, off, checked, "LCSC"
+    """The rule for a footprint: (pattern, rotation, offset, checked, what it matched: reference, value or footprint,
+    or LCSC for a part rule; the package rule a part rule stands in for, else ""), or None."""
+    part = next(((rx, rot, off, checked) for rx, rot, off, checked in corrections
+                 if rx == lcsc and PART_RULE.fullmatch(rx)), None)
     for on, value in (("reference", fp.GetReference()), ("value", fp.GetValue()),
                       ("footprint", str(fp.GetFPID().GetLibItemName()))):
         for anchored in (True, False):
             for rx, rot, off, checked in corrections:
                 if not PART_RULE.fullmatch(rx) and re.search(f"(?:{rx})$" if anchored else rx, value):
-                    return rx, rot, off, checked, on
+                    # a part rule only for a footprint some rule turns
+                    return part + ("LCSC", rx) if part else (rx, rot, off, checked, on, "")
     return None
 
 

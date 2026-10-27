@@ -11,9 +11,9 @@ compared with pad 1's position. The checklist lists those parts and the numbers 
   Two-pad parts drawn symmetrically (resistors, capacitors, inductors, fuses) are left out, and so are one-pad parts.
 - A table by part (one line per LCSC number, footprint and rule, with its references), then one row per part:
   LCSC number and footprint; KiCad's angle, the correction and the CPL's angle; the rule the correction came from in
-  data/jlc/corrections.csv (an LCSC number, or a pattern and the field it matched) and the date in that rule's
-  Checked column, the day it was last seen right in JLC's preview ("never" when it has none); pad 1 and the part's
-  centre as the CPL gives it.
+  data/jlc/corrections.csv (a pattern and the field it matched, or an LCSC number and the package rule it stands
+  in for) and the date in that rule's Checked column, the day it was last seen right in JLC's preview ("never" when
+  it has none); pad 1 and the part's centre as the CPL gives it.
 - Pad 1 is the pad numbered 1, else A1, else K, else the first in number order (KiCad numbers a diode's or LED's
   cathode 1). Its position is the middle of its copper, which for a custom pad is not its anchor.
 - Positions are in mm from the drill/place (aux) origin, Y up: the frame of the Gerbers (kicad-cli plots them from
@@ -139,9 +139,9 @@ def _rule(rule):
     """The Corr., Rule and Checked cells for a corrections.csv row, or None."""
     if not rule:
         return "", "", ""
-    pat, corr, off, checked, on = rule
+    pat, corr, off, checked, on, over = rule
     return (f"{corr:+g}" + (f", offset {off[0]:g}, {off[1]:g}" if off[0] or off[1] else ""),
-            f"`{pat}`" + ("" if on == "LCSC" else f" ({on})"), checked or "**never**")
+            f"`{pat}`" + (f" in place of `{over}`" if over else f" ({on})"), checked or "**never**")
 
 
 def _row(cells):
@@ -150,7 +150,7 @@ def _row(cells):
 
 def write(board, placed, placement, out, name):
     """placed: the footprints in CPL-<name>-both.csv; placement(fp) -> (x, y, rotation, side, rule), as the CPL has
-    them, rule a corrections.csv row (pattern, rotation, offset, checked, field) or None. Writes PLACEMENT-<name>.md;
+    them, rule as jlc_fab.correction gives it or None. Writes PLACEMENT-<name>.md;
     returns its path, the rows by side, and the rows under a rule never checked."""
     import pcbnew
     mm = pcbnew.ToMM
@@ -192,8 +192,8 @@ def write(board, placed, placement, out, name):
              + " KiCad's status bar shows the same numbers with Preferences, PCB Editor, Origins & Axes set to the "
              "drill/place file origin and the Y axis increasing up.", "",
              "*CPL* is KiCad's angle (on the bottom, 180 minus KiCad's) plus *Corr.*, the correction from pcbkit's "
-             "rotation table (data/jlc/corrections.csv). *Rule* is the table's row: an LCSC number, or a pattern "
-             "and the field it matched. *Checked* is the last time that row was seen right in JLC's preview; it was "
+             "rotation table (data/jlc/corrections.csv). *Rule* is the table's row: a pattern and the field it "
+             "matched, or an LCSC number and the package rule it stands in for. *Checked* is the last time that row was seen right in JLC's preview; it was "
              "right for the parts checked then, and JLC's footprint for another part in the same package can still "
              "differ (SOT-23-5 comes both ways). **never**: no check on record, look at these first.", ""]
     if never:

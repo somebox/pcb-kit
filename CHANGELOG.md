@@ -81,7 +81,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   assembled board's fab settings, so `pcbkit release` compares the placement files again when the table changes and
   gives a board whose CPL changed its next version.
 - **JLC rotations for one LCSC part, and SOT-23-5/6 by part.** A row in `data/jlc/corrections.csv` whose pattern is a
-  bare LCSC number (`C7843`) is a rule for that part and outranks the package rules, as in kicad-jlcpcb-tools. JLC
+  bare LCSC number (`C7843`) is a rule for that part and outranks the package rule that matched its footprint; a
+  footprint no package rule matches (imported from EasyEDA, already in JLC's orientation) gets no turn from it. JLC
   places from each part's EasyEDA footprint, and its SOT-23-5 and SOT-23-6 footprints come both ways (names ending
   -BL need -90, -BR 180). KiCad's SOT-23-5 now gets 180 (the old `^SOT-23` rule gave every SOT-23-5 -90, a quarter
   turn off for the TLV62569 and SN74LVC1G04), with C485147 at -90; SOT-23-6 keeps -90, with C7843 and C55266 at 180.

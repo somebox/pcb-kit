@@ -14,7 +14,8 @@ overview at the end of this page. Settings: pcbkit.toml.
 
 - PCB: layers, thickness, stackup, panel settings.
 - Assembly: service, side(s); the BOM page must say "Your BOM: JLCPCB Part #".
-- Placement preview: polarity and rotation of <parts that have bitten before>.
+- Placement preview: every part in the release's `PLACEMENT-*-jlcpcb.md` (rules marked **never** first), and the
+  polarity and rotation of <parts that have bitten before>.
 
 ## Bring-up
 

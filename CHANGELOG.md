@@ -8,6 +8,17 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **A checklist for JLC's placement preview, `PLACEMENT-<name>.md`, beside the BOM and CPL from `pcbkit fab`**, and
+  in each release folder as `PLACEMENT-<board>-v<version>-jlcpcb.md` (copied to an order's `upload/`). It lists
+  every placed part whose orientation matters (more than two pads, two pads that differ, or a silkscreen or fab mark
+  on one of two pads), by side then reference: KiCad's angle, the correction and the CPL's angle, the rotation rule
+  behind it and when that rule was last seen right in the preview, and where pad 1 and the part's centre are, in mm
+  from the drill/place origin with Y up, the frame of the Gerbers and the CPL. A table by part comes first.
+  Symmetric two-pad parts are left out. `pcbkit fab`'s summary counts the parts, and the ones under a rule never
+  checked. `data/jlc/corrections.csv` gains a Checked column with the date each rule was seen right in JLC's
+  preview (2026-10-26: SOT-23, SOT-23-5, SOT-23-6, SOT-363, SOP-4, SOIC, SSOP, TSSOP, the HRO USB-C, the 1.27 mm
+  socket and the Bourns 3224W); the column is left out of the table's hash in the fab settings, so it changes no
+  board's fingerprint.
 - **A shopping list for hand assembly in each ORDER.md**, and a "where" column in PRODUCTION.md's parts table:
   every part the order's boards need by hand, with what is on hand, what to buy and where from. Part rules gain
   `buy` (where a part comes from; a hand part's LCSC number serves otherwise), `group` (rules in another group are

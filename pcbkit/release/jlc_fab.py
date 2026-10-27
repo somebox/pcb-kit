@@ -9,6 +9,10 @@ Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release pass
   silkscreen has the mask openings subtracted (no ink on pads), unless --keep-silk-in-mask.
 - BOM-<name>-front.csv and CPL-<name>-front.csv: JLC assembles the front only and the back is hand-soldered.
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
+- PLACEMENT-<name>.md: the checklist for JLC's placement preview (release/jlc_preview.py). Every placed part whose
+  orientation matters, by side then reference, with its CPL angle, the rotation rule behind it and when that rule was
+  last seen right in the preview, and where its pad 1 and centre are in the frame JLC places parts in. The summary
+  counts them, and the ones under a rule never checked in the preview.
 
 A part goes into the BOM and CPL if it has an LCSC number and is neither DNP nor excluded from BOM / position files.
 That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for every
@@ -31,8 +35,10 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
   the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
   3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
-  the preview is -90 on either side.
-Check rotations and polarity in JLC's placement preview before ordering. Harvested from the sign's jlc_fab.py.
+  the preview is -90 on either side. The table's Checked column dates the rules seen right there; a rule without
+  a date has no check on record, and PLACEMENT-<name>.md marks the parts under it.
+Check rotations and polarity in JLC's placement preview before ordering, with PLACEMENT-<name>.md. Harvested from the
+sign's jlc_fab.py.
 --houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
 board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
 lines are drawn. --keep-silk-in-mask leaves silkscreen inside mask openings in the Gerbers, for a board that prints
@@ -55,22 +61,25 @@ DESIGNATOR_MAX = 2000                  # JLC's BOM limit is 2048 characters per 
 
 def load_corrections():
     with open(data_path("jlc", "corrections.csv"), newline="") as fh:
-        return [(r["Pattern"], int(float(r["Rotation"])), (float(r["Offset X"]), float(r["Offset Y"])))
-                for r in csv.DictReader(fh)]
+        return [(r["Pattern"], int(float(r["Rotation"])), (float(r["Offset X"]), float(r["Offset Y"])),
+                 (r.get("Checked") or "").strip()) for r in csv.DictReader(fh)]
 
 
 PART_RULE = re.compile(r"C\d+")        # a pattern that is a bare LCSC number: a rule for that one part
 
 
 def correction(fp, corrections, lcsc=""):
-    for rx, rot, off in corrections:
+    """The rule for a footprint: (pattern, rotation, offset, checked, what it matched: LCSC, reference, value or
+    footprint), or None."""
+    for rx, rot, off, checked in corrections:
         if rx == lcsc and PART_RULE.fullmatch(rx):
-            return rot, off
-    for value in (fp.GetReference(), fp.GetValue(), str(fp.GetFPID().GetLibItemName())):
+            return rx, rot, off, checked, "LCSC"
+    for on, value in (("reference", fp.GetReference()), ("value", fp.GetValue()),
+                      ("footprint", str(fp.GetFPID().GetLibItemName()))):
         for anchored in (True, False):
-            for rx, rot, off in corrections:
+            for rx, rot, off, checked in corrections:
                 if not PART_RULE.fullmatch(rx) and re.search(f"(?:{rx})$" if anchored else rx, value):
-                    return rot, off
+                    return rx, rot, off, checked, on
     return None
 
 
@@ -135,15 +144,15 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         rot = fp.GetOrientation().AsDegrees()
         if bottom:
             rot = (180 - rot) % 360
-        corr = correction(fp, corrections, field(fp, "LCSC"))
-        if corr:
-            rot = (rot + corr[0]) % 360
-            dx, dy = corr[1]
+        rule = correction(fp, corrections, field(fp, "LCSC"))
+        if rule:
+            rot = (rot + rule[1]) % 360
+            dx, dy = rule[2]
             if dx or dy:
-                a = math.radians(rot - corr[0])
+                a = math.radians(rot - rule[1])
                 ox, oy = dx * math.cos(a) + dy * math.sin(a), -dx * math.sin(a) + dy * math.cos(a)
                 x, y = x + (-ox if bottom else ox), y + oy
-        return x, -y, rot % 360, "bottom" if bottom else "top"
+        return x, -y, rot % 360, "bottom" if bottom else "top", rule
 
     parts = [fp for fp in sorted(b.GetFootprints(), key=lambda f: f.GetReference()) if field(fp, "LCSC") and not fp.IsDNP()]
     for variant, sides in (("front", {"top"}), ("both", {"top", "bottom"})):
@@ -174,7 +183,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
             w = csv.writer(fh)
             w.writerow(["Designator", "Val", "Package", "Mid X", "Mid Y", "Rotation", "Layer"])
             for fp in placed:
-                x, y, rot, layer = placement(fp)
+                x, y, rot, layer, _ = placement(fp)
                 w.writerow([fp.GetReference(), fp.GetValue(), str(fp.GetFPID().GetLibItemName()),
                             f"{x:.4f}", f"{y:.4f}", f"{rot:g}", layer])
         hand = len(sel) - len(placed)
@@ -184,6 +193,12 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         if lettered:
             print(f"       JLC leaves {', '.join(sorted(lettered))} unticked at quantity 0 (designators ending in a"
                   " letter): tick each on JLC's BOM page")
+    from .jlc_preview import write as checklist
+    path, rows, never = checklist(b, [fp for fp in parts if is_placed(fp)], placement, out, name)
+    top, bottom = len(rows["top"]), len(rows["bottom"])
+    print(f"check: {top + bottom} polarised or asymmetric parts for JLC's placement preview ({top} top, {bottom} bottom"
+          + (f"; {len(never)} by a rotation rule never checked there" if never else "")
+          + f"): {os.path.basename(path)}")
     if "pcbway" in houses:
         from .pcbway import write
         write(b, [fp for fp in parts if is_placed(fp)], out, name, field)

@@ -72,7 +72,8 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 6. `pcbkit previews` regenerated and looked at: assembly map, silkscreen, plane coverage.
 7. `pcbkit release` (which reruns ERC and DRC and refuses a board with errors), and `pcbkit panel` for panels; BOM
    reviewed against bomi for stock and extended-part fees; an order.toml pinning the released versions, then
-   `pcbkit production` and the upload from its `upload/` folder.
+   `pcbkit production` and the upload from its `upload/` folder. The fab-order skill covers the forms, the BOM page and
+   the placement viewer, where every polarised part is checked before the order goes into the cart.
 
 ## Scripting rules
 

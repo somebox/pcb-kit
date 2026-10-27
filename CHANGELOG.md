@@ -42,6 +42,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   field or the parts cache) and a centroid file with KiCad's own rotations, beside the JLC files.
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
+- **The fab-order skill** puts an order into the user's JLC and LCSC carts, in their browser, and never pays. It
+  covers choosing what JLC assembles (Standard or Economic, what to solder by hand), the PCB and assembly forms as
+  they were in 2026-10, and the BOM page's traps. Those include lines with letter-suffixed designators, which come
+  up unticked at quantity 0. It also covers checking every polarised part in the placement viewer, the LCSC cart
+  for hand assembly, and what to record. From Orbitchron's first v2 order, where the viewer caught a USB-C turned
+  180° and SOT-23 parts a quarter turn out.
 
 ### Changed
 - **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
@@ -58,6 +64,10 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **The README is written for people outside the somebox projects too.** It says what the skills need (macOS,
   KiCad 10, the `pcbkit` CLI from a clone, konnect, bomi, ngspice) and what they run and send, including bomi's
   datasheet summaries through OpenRouter. The plugin's short description says the same in one line.
+- **The bom-cost skill has JLC's assembly fees** for Standard and Economic PCBA, from 2026-10-26 quotes. Under
+  Standard, every unique part pays the same loading fee, Basic or Extended, so swapping an Extended part for a Basic
+  one saves only the price difference. BOM.md gains an assembly estimate. A new rule says hand-soldering pays only
+  when it takes a whole side off the order.
 
 ## [0.3.0] - 2026-10-18
 

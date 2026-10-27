@@ -35,7 +35,8 @@ kicad-cli takes it from `pcbkit.kicad.KICAD_CLI` too, not from `/Applications/Ki
 Related skills in this kit: **visual-review** (which picture answers which question), **power-sim** (ngspice),
 **bom-cost** (bomi, stock, Extended fees), **enclosure-fit** (box to outline to paper test), **placement-study**
 (score placements by their ratsnest, route only the winner), **failure-review** (what could fail after fab, how
-we'd find it, test points).
+we'd find it, test points), **fab-order** (the JLC and LCSC carts in the browser: options, BOM page, placement
+viewer, quotes).
 
 ## KiCad documentation links
 

@@ -8,6 +8,20 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **A shopping list for hand assembly in each ORDER.md**, and a "where" column in PRODUCTION.md's parts table:
+  every part the order's boards need by hand, with what is on hand, what to buy and where from. Part rules gain
+  `buy` (where a part comes from; a hand part's LCSC number serves otherwise), `group` (rules in another group are
+  matched apart, so one connector can give a panel part and a cable) and `replace` (the footprint's own part is
+  dropped, also from a bare board's list, for a breakout's pot already counted by its module). Each shopping list
+  takes where a part comes from from the releases its order pins, then the order's extras, then the boards as they
+  are now. `pcbkit release --refresh-parts` records a release's hand parts again after the rules change, for boards
+  unchanged since; a change with the same fab output counts only if every footprint's fields are the release's
+  too, which each release now records.
+- **ORDER.md shows each board**, its picture (render-top.png, else pcb-front.png, from previews of the pinned
+  version), and takes two more keys in order.toml: a board's own `fab` notes (a front panel's black mask), and
+  `[[extra]]` parts bought with the order but not placed on a board (spares, a rework kit: part, qty, buy, note),
+  listed in ORDER.md's Extras and counted in PRODUCTION.md's parts for the open orders. The tables' note column
+  shows only notes of events that name the board; notes for the whole order stay in Events.
 - **Routing discipline in `pcbkit.route`, all opt-in.** `P["DIR"] = {layer: "h" | "v"}` gives each layer a preferred
   direction, priced by `P["DIR_COST"]` (along, across, diagonal; default 1, 4, 2), so on a board with plane layers
   F.Cu and B.Cu cross instead of wandering round chips; `complete_nets` and `tie_pads` take it from P, and the A*
@@ -42,6 +56,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   field or the parts cache) and a centroid file with KiCad's own rotations, beside the JLC files.
 - **A license and an icon for the plugin listing.** The repo carries the MIT LICENSE that pyproject.toml already
   named; `.claude-plugin/plugin.json` gives the license, homepage and repository, and the plugin has a listing icon.
+- **`pcbkit fab --keep-silk-in-mask`, and `keep_silk_in_mask = true` in a board's pcbkit.toml profile**, for a
+  board that prints silkscreen inside mask openings on purpose (white numerals in a black face panel's windows):
+  its Gerbers keep that silkscreen instead of having the mask openings subtracted from it. `pcbkit release` passes it
+  on and counts it among the board's fab settings, so turning it on is a change it compares; boards without it keep
+  their fingerprints and give the same Gerbers as before. `pcbkit new`'s pcbkit.toml lists it.
 - **The fab-order skill** puts an order into the user's JLC and LCSC carts, in their browser, and never pays. It
   covers choosing what JLC assembles (Standard or Economic, what to solder by hand), the PCB and assembly forms as
   they were in 2026-10, and the BOM page's traps. Those include lines with letter-suffixed designators, which come
@@ -50,6 +69,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   180° and SOT-23 parts a quarter turn out.
 
 ### Changed
+- **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
+  every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
+  270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W
+  trimmer 180 (it had no rule, and its wiper landed on an end pad). The rotation table is part of an
+  assembled board's fab settings, so `pcbkit release` compares the placement files again when the table changes and
+  gives a board whose CPL changed its next version.
 - **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
   KiCad's icon in the dock for a moment. pcbkit now runs it from a `KiCadCLI.app` under
   `~/.local/share/pcbkit/kicad-cli/`: a copy of `kicad-cli` signed ad hoc, KiCad's Info.plist marked as a

@@ -2,14 +2,15 @@ Pattern,Rotation,Offset X,Offset Y
 ^R_Array_Convex_,90,0,0
 ^R_Array_Concave_,90,0,0
 ^SOT-223,180,0,0
+^SOT-23$,180,0,0
 ^SOT-23,-90,0,0
 ^SOT-89,180,0,0
 ^TSOT-23,180,0,0
 ^SOT-353,180,0,0
-^SOT-363,180,0,0
+^SOT-363,0,0,0
 ^LQFP-,270,0,0
 ^TQFP-,270,0,0
-^SOP-4_,0,0,0
+^SOP-4_,270,0,0
 ^SOP-(?!18_),270,0,0
 ^TSSOP-,270,0,0
 ^SSOP-,270,0,0
@@ -58,3 +59,4 @@ Pattern,Rotation,Offset X,Offset Y
 ^PinHeader_2x05_P1\.27mm_Vertical,90,2.54,0.635
 ^LED_WS2812B-2020_PLCC4_2.0x2.0mm,90,0,0
 ^^WSON-8-1EP_6x5mm_P1.27mm,-90,0,0
+^Potentiometer_Bourns_3224W,180,0,0

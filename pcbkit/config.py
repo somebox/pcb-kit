@@ -40,11 +40,12 @@ DEFAULTS = {
         "enabled": True,
         "page": "PRODUCTION.md",       # gets a generated section between pcbkit's markers
         "dir": "production",           # orders/<name>/order.toml, stock.toml
-        "part": [],                    # rules: what a board needs besides its hand-soldered parts
+        "part": [],                    # rules: what a board needs besides its hand-soldered parts (pcb, field,
+                                       # match, part; buy, group, replace: production.py)
     },
 }
 DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity"], "assembly": True,
-                   "extra_layers": []}
+                   "extra_layers": [], "keep_silk_in_mask": False}
 
 
 def _merge(base, over):
@@ -127,9 +128,19 @@ class Project:
 
     def fab_settings(self, profile):
         """The settings a PCB's fab files are made with, as text: part of its source fingerprint, so changing them is
-        a change to compare."""
-        return json.dumps(dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
-                               extra_layers=profile["extra_layers"]), sort_keys=True)
+        a change to compare. For an assembled board that includes the placement file's rotation table
+        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board. keep_silk_in_mask is
+        there only when set, so the boards that don't use it keep the fingerprints their releases recorded."""
+        settings = dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
+                        extra_layers=profile["extra_layers"])
+        if profile["keep_silk_in_mask"]:
+            settings["keep_silk_in_mask"] = True
+        if profile["assembly"]:
+            import hashlib
+            from .kicad import data_path
+            with open(data_path("jlc", "corrections.csv"), "rb") as fh:
+                settings["rotations"] = hashlib.sha1(fh.read()).hexdigest()
+        return json.dumps(settings, sort_keys=True)
 
     def fill(self, template, pcb):
         return os.path.join(self.root, template.format(key=pcb["key"], folder=pcb["folder"], sub=pcb["sub"]))

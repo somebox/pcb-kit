@@ -21,7 +21,10 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
 - CPL rotation is KiCad's, with (180 - angle) on the bottom, plus the correction from data/jlc/corrections.csv.
   That file is kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule matches the reference, value
-  or footprint name; anchored matches are tried first.
+  or footprint name; anchored matches are tried first. Checked in JLC's placement preview (2026-10-26, synth-blocks'
+  VCO): KiCad's SOT-23 needs 180 (the table's -90 put it a quarter turn off; the SOT-23-5/6 rule is unchecked),
+  SOT-363_SC-70-6 0 (180 turned it half round) and the Bourns 3224W trimmer 180; SOIC, SOD-123, SOD-323 and the
+  0603/0805 LEDs were right.
 Check rotations and polarity in JLC's placement preview before ordering. Harvested from the sign's jlc_fab.py.
 --houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
 board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score

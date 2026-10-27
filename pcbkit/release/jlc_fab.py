@@ -20,11 +20,15 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   over several rows of the same part.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
 - CPL rotation is KiCad's, with (180 - angle) on the bottom, plus the correction from data/jlc/corrections.csv.
-  That file is kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule matches the reference, value
-  or footprint name; anchored matches are tried first. Checked in JLC's placement preview (2026-10-26, synth-blocks'
-  VCO): KiCad's SOT-23 needs 180 (the table's -90 put it a quarter turn off; the SOT-23-5/6 rule is unchecked),
-  SOT-363_SC-70-6 0 (180 turned it half round) and the Bourns 3224W trimmer 180; SOIC, SOD-123, SOD-323 and the
-  0603/0805 LEDs were right.
+  That file began as kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule whose pattern is a bare
+  LCSC number (C7843) is for that part and comes first; otherwise a rule matches the reference, value or footprint
+  name, anchored matches first. The correction turns KiCad's footprint onto the part's EasyEDA footprint, which JLC
+  places from, and is the same on both sides. JLC's SOT-23-5 and SOT-23-6 parts come both ways (EasyEDA footprints
+  ending -BL need -90, -BR 180), so those package rules carry per-part exceptions. Checked in JLC's placement preview
+  (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
+  the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
+  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
+  the preview is -90 on either side.
 Check rotations and polarity in JLC's placement preview before ordering. Harvested from the sign's jlc_fab.py.
 --houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
 board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
@@ -51,11 +55,17 @@ def load_corrections():
                 for r in csv.DictReader(fh)]
 
 
-def correction(fp, corrections):
+PART_RULE = re.compile(r"C\d+")        # a pattern that is a bare LCSC number: a rule for that one part
+
+
+def correction(fp, corrections, lcsc=""):
+    for rx, rot, off in corrections:
+        if rx == lcsc and PART_RULE.fullmatch(rx):
+            return rot, off
     for value in (fp.GetReference(), fp.GetValue(), str(fp.GetFPID().GetLibItemName())):
         for anchored in (True, False):
             for rx, rot, off in corrections:
-                if re.search(f"(?:{rx})$" if anchored else rx, value):
+                if not PART_RULE.fullmatch(rx) and re.search(f"(?:{rx})$" if anchored else rx, value):
                     return rot, off
     return None
 
@@ -120,7 +130,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         rot = fp.GetOrientation().AsDegrees()
         if bottom:
             rot = (180 - rot) % 360
-        corr = correction(fp, corrections)
+        corr = correction(fp, corrections, field(fp, "LCSC"))
         if corr:
             rot = (rot + corr[0]) % 360
             dx, dy = corr[1]

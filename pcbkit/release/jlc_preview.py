@@ -35,36 +35,35 @@ def natural(ref):
 
 
 def _drawing(fp, layer):
-    """The footprint's drawing on one layer as points (x, y, r): a circle's centre and radius, the corners, ends and
-    mid points of everything else (r 0). Texts carrying a field (${REFERENCE}) are left out; other texts count by
-    position."""
+    """The footprint's drawing on one layer as elements compared whole, so a swap of the pads must map each line onto
+    a line (not just its ends onto some ends: a "[" outline's bar ends on the corners of the lines beside it):
+    ("line", a, b) for a segment and for each edge of a rectangle or polygon, ("arc", a, mid, b), ("circle", centre,
+    radius), ("curve", a, c1, c2, b), ("text", position). Texts carrying a field (${REFERENCE}) are left out."""
     import pcbnew
-    pts = []
+    out = []
     for g in fp.GraphicalItems():
         if g.GetLayer() != layer:
             continue
         if isinstance(g, pcbnew.PCB_TEXT):
             if not g.GetText().startswith("${"):
-                pts.append((g.GetPosition().x, g.GetPosition().y, 0))
+                out.append(("text", (g.GetPosition().x, g.GetPosition().y)))
             continue
         if not isinstance(g, pcbnew.PCB_SHAPE):
             continue
         s = g.GetShape()
+        xy = lambda v: (v.x, v.y)      # noqa: E731
         if s == pcbnew.SHAPE_T_CIRCLE:
-            pts.append((g.GetCenter().x, g.GetCenter().y, g.GetRadius()))
-            continue
-        if s == pcbnew.SHAPE_T_ARC:
-            vs = [g.GetStart(), g.GetArcMid(), g.GetEnd()]
-        elif s == pcbnew.SHAPE_T_RECTANGLE:
-            vs = list(g.GetRectCorners())
-        elif s == pcbnew.SHAPE_T_POLY:
-            vs = list(g.GetPolyPoints())
+            out.append(("circle", xy(g.GetCenter()), g.GetRadius()))
+        elif s == pcbnew.SHAPE_T_ARC:
+            out.append(("arc", xy(g.GetStart()), xy(g.GetArcMid()), xy(g.GetEnd())))
         elif s == pcbnew.SHAPE_T_BEZIER:
-            vs = [g.GetStart(), g.GetBezierC1(), g.GetBezierC2(), g.GetEnd()]
+            out.append(("curve", xy(g.GetStart()), xy(g.GetBezierC1()), xy(g.GetBezierC2()), xy(g.GetEnd())))
+        elif s in (pcbnew.SHAPE_T_RECTANGLE, pcbnew.SHAPE_T_POLY):
+            vs = [xy(v) for v in (g.GetRectCorners() if s == pcbnew.SHAPE_T_RECTANGLE else g.GetPolyPoints())]
+            out += [("line", vs[i], vs[(i + 1) % len(vs)]) for i in range(len(vs)) if len(vs) > 1]
         else:
-            vs = [g.GetStart(), g.GetEnd()]
-        pts += [(v.x, v.y, 0) for v in vs]
-    return pts
+            out.append(("line", xy(g.GetStart()), xy(g.GetEnd())))
+    return out
 
 
 def _swaps(a, b):
@@ -72,18 +71,29 @@ def _swaps(a, b):
     cx, cy = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
     dx, dy = b[0] - a[0], b[1] - a[1]
     n = (dx * dx + dy * dy) ** 0.5
-    maps = [lambda x, y: (2 * cx - x, 2 * cy - y)]
+    maps = [lambda p: (2 * cx - p[0], 2 * cy - p[1])]
     if n:
         ux, uy = dx / n, dy / n
-        maps.append(lambda x, y: (x - 2 * ((x - cx) * ux + (y - cy) * uy) * ux,
-                                  y - 2 * ((x - cx) * ux + (y - cy) * uy) * uy))
+        maps.append(lambda p: (p[0] - 2 * ((p[0] - cx) * ux + (p[1] - cy) * uy) * ux,
+                               p[1] - 2 * ((p[0] - cx) * ux + (p[1] - cy) * uy) * uy))
     return maps
 
 
-def _symmetric(pts, maps):
+def _same(e, f):
+    """Whether two drawing elements coincide, within TOL; a line, arc or curve read from either end."""
+    if e[0] != f[0]:
+        return False
+    near = lambda p, q: abs(p[0] - q[0]) <= TOL and abs(p[1] - q[1]) <= TOL      # noqa: E731
+    if e[0] == "circle":
+        return near(e[1], f[1]) and abs(e[2] - f[2]) <= TOL
+    return all(map(near, e[1:], f[1:])) or all(map(near, e[1:], f[:0:-1]))
+
+
+def _symmetric(elements, maps):
     for f in maps:
-        if all(any(abs(fx - x) <= TOL and abs(fy - y) <= TOL and abs(r - s) <= TOL for x, y, s in pts)
-               for fx, fy, r in ((*f(x, y), r) for x, y, r in pts)):
+        image = [(e[0], f(e[1]), e[2]) if e[0] == "circle" else (e[0],) + tuple(f(p) for p in e[1:])
+                 for e in elements]
+        if all(any(_same(i, e) for e in elements) for i in image):
             return True
     return False
 

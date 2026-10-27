@@ -24,8 +24,8 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 
 1. The checks in this kit's `docs/CONVENTIONS.md`, "Checks before an order", and the project's PRODUCTION.md.
 2. The files from `pcbkit release`, or from `pcbkit fab` for a quote. Regenerate them after any change to the kit's
-   rotation table. Write down the placement counts `pcbkit fab` prints for each variant: JLC's BOM page must show
-   the same numbers.
+   rotation table. Write down the placement count of the files you will upload: `pcbkit fab` prints it for each
+   variant; for a release it is the CPL's rows less the header. JLC's BOM page must come to the same total.
 3. Know each board's PCB options from the order guide (layers, thickness, mask, finish, order number) and what JLC
    assembles. Write any options that aren't there into the guide first.
 
@@ -54,17 +54,21 @@ has the fee table.
 - The order number: JLC offers only "Remove Mark" (the default) or a 2D barcode. "Specify a location" is gone. Keep
   "Remove Mark" wherever a number would show.
 - Write anything deliberate that looks like a mistake into the order remark. For example, silkscreen printed inside
-  mask openings: JLC's engineers would clip it otherwise. `pcbkit fab` subtracts the mask openings from the
-  silkscreen, so export such a board with kicad-cli directly (Orbitchron's `scripts/make_diffuser.sh`).
+  mask openings: JLC's engineers would clip it otherwise. Such a board needs `keep_silk_in_mask = true` in its
+  pcbkit.toml profile (or `pcbkit fab --keep-silk-in-mask`), or the Gerbers lose that silkscreen before JLC sees it.
 
 ## The assembly form
 
-1. The side, Standard or Economic, the quantity, and the files for that variant: `-both`, `-front`, or a `-back`
-   pair from the project (Orbitchron's `scripts/fab_side.py`; `pcbkit fab` writes only the first two).
+1. The side, Standard or Economic, the quantity, and the BOM and CPL for those sides. A release folder holds one
+   pair, `BOM-<board>-<label>-jlcpcb.csv` and `CPL-<board>-<label>-jlcpcb.csv`: both sides when JLC places a part on
+   the back, the front otherwise. For another split, upload `pcbkit fab`'s `-front` or `-both` pair, or a `-back`
+   pair from the project (Orbitchron's `scripts/fab_side.py`). The sides in the form must be the CPL's: a CPL with
+   any `bottom` row needs both sides assembled, one with only `top` rows the top side.
 2. **The BOM page:**
    - It must say "Your BOM: JLCPCB Part #", so parts are matched by LCSC number, not by value.
-   - Check every line's quantity against `pcbkit fab`'s counts. A part with more than 400 designators comes as two
-     lines (`pcbkit fab` splits it); add them up.
+   - Check every line's quantity against the Quantity column of the BOM CSV you uploaded. A part whose designator
+     list would pass 2,000 characters (JLC's cell limit) is split over several rows of the same LCSC number; add
+     those rows up. All the lines together must come to the placement count.
    - A line whose designators end in a letter (J1B, J1C) comes up unticked at quantity 0, with "There may be
      multiple types of parts, but one type of part has been matched". The comment is not the cause. Tick it and
      check the quantity.

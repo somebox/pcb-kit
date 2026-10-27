@@ -25,6 +25,7 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # checks = ["erc", "drc", "parity"]    # a PCB that fails any is a mockup: reported, not released
 # assembly = false                     # Gerbers only
 # extra_layers = ["Cmts.User"]         # added to the Gerbers, e.g. V-score lines drawn there
+# keep_silk_in_mask = true             # silkscreen inside mask openings stays in the Gerbers (a face panel's legends)
 
 [production]
 # enabled = true

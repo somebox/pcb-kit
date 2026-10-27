@@ -1,11 +1,12 @@
 """JLCPCB fabrication and assembly files for a board or panel, matching kicad-jlcpcb-tools' output; PCBWay's too.
 
   pcbkit fab BOARD.kicad_pcb OUT_DIR [--name NAME] [--houses jlcpcb,pcbway] [--placed field:Assembly=jlc]
-                                     [--no-assembly] [--extra-layers Cmts.User]
+                                     [--no-assembly] [--extra-layers Cmts.User] [--keep-silk-in-mask]
 
 Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release passes "<board>-v<version>"):
 - GERBER-<name>.zip: copper, mask, paste and silk layers plus Edge.Cuts (which carries a panel's V-cut lines), and the
-  PTH/NPTH Excellon drill files. Gerbers and drills use the drill/place (aux) origin. Zones are refilled first.
+  PTH/NPTH Excellon drill files. Gerbers and drills use the drill/place (aux) origin. Zones are refilled first. The
+  silkscreen has the mask openings subtracted (no ink on pads), unless --keep-silk-in-mask.
 - BOM-<name>-front.csv and CPL-<name>-front.csv: JLC assembles the front only and the back is hand-soldered.
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
 
@@ -28,7 +29,8 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
 Check rotations and polarity in JLC's placement preview before ordering. Harvested from the sign's jlc_fab.py.
 --houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
 board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
-lines are drawn.
+lines are drawn. --keep-silk-in-mask leaves silkscreen inside mask openings in the Gerbers, for a board that prints
+there on purpose (legends in a face panel's mask windows); say so in the order remark, or the fab house may clip it.
 """
 import argparse
 import csv
@@ -64,13 +66,14 @@ def field(fp, key):
     return fp.GetFieldText(key).strip() if fp.HasField(key) else ""
 
 
-def gerbers(src, out, name, n_cu, extra_layers=()):
+def gerbers(src, out, name, n_cu, extra_layers=(), keep_silk_in_mask=False):
     layers = ["F.Cu"] + [f"In{i}.Cu" for i in range(1, n_cu - 1)] + ["B.Cu", "F.SilkS", "B.SilkS", "F.Mask", "B.Mask",
                                                                        "F.Paste", "B.Paste", "Edge.Cuts"] + list(extra_layers)
+    subtract = [] if keep_silk_in_mask else ["--subtract-soldermask"]
     tmp = tempfile.mkdtemp()
     try:
         run = lambda *a: subprocess.run([KICAD_CLI, "pcb", "export", *a], check=True, capture_output=True)
-        run("gerbers", "--layers", ",".join(layers), "--subtract-soldermask", "--no-protel-ext", "--use-drill-file-origin",
+        run("gerbers", "--layers", ",".join(layers), *subtract, "--no-protel-ext", "--use-drill-file-origin",
             "--check-zones", "-o", tmp + "/", src)
         run("drill", "--format", "excellon", "--excellon-units", "mm", "--excellon-separate-th", "--drill-origin", "plot",
             "-o", tmp + "/", src)
@@ -95,14 +98,14 @@ def selector(placed):
     return lambda fp: field(fp, m.group(1)) == m.group(2)
 
 
-def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, extra_layers=()):
+def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, extra_layers=(), keep_silk_in_mask=False):
     ensure_pcbnew()
     import pcbnew
     mm = pcbnew.ToMM
     name = name or os.path.splitext(os.path.basename(src))[0]
     os.makedirs(out, exist_ok=True)
     b = pcbnew.LoadBoard(src)
-    gz, n_files = gerbers(src, out, name, b.GetCopperLayerCount(), extra_layers)
+    gz, n_files = gerbers(src, out, name, b.GetCopperLayerCount(), extra_layers, keep_silk_in_mask)
     if not assembly:
         print(f"{gz}: {n_files} files (Gerbers only)")
         return
@@ -180,9 +183,11 @@ def main(argv=None):
     ap.add_argument("--placed", help="not-excluded (default) or field:NAME=VALUE")
     ap.add_argument("--no-assembly", action="store_true", help="Gerbers and drills only")
     ap.add_argument("--extra-layers", default="", help="comma-separated layers added to the Gerbers")
+    ap.add_argument("--keep-silk-in-mask", action="store_true",
+                    help="keep silkscreen inside mask openings (default: subtract the openings from the silkscreen)")
     a = ap.parse_args(argv)
     fab(a.board, a.out, a.name, tuple(h for h in a.houses.split(",") if h), a.placed, not a.no_assembly,
-        tuple(l for l in a.extra_layers.split(",") if l))
+        tuple(l for l in a.extra_layers.split(",") if l), a.keep_silk_in_mask)
 
 
 if __name__ == "__main__":

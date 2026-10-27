@@ -45,7 +45,7 @@ DEFAULTS = {
     },
 }
 DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity"], "assembly": True,
-                   "extra_layers": []}
+                   "extra_layers": [], "keep_silk_in_mask": False}
 
 
 def _merge(base, over):
@@ -129,9 +129,12 @@ class Project:
     def fab_settings(self, profile):
         """The settings a PCB's fab files are made with, as text: part of its source fingerprint, so changing them is
         a change to compare. For an assembled board that includes the placement file's rotation table
-        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board."""
+        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board. keep_silk_in_mask is
+        there only when set, so the boards that don't use it keep the fingerprints their releases recorded."""
         settings = dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
                         extra_layers=profile["extra_layers"])
+        if profile["keep_silk_in_mask"]:
+            settings["keep_silk_in_mask"] = True
         if profile["assembly"]:
             import hashlib
             from .kicad import data_path

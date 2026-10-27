@@ -17,7 +17,9 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   whatever their exclusion flags: for a project that marks hand-soldered parts with a field.
 - BOM rows: one per LCSC number (its values joined with " / " when they differ: JLC showed a part split over two rows
   as missing). A row whose designator list would exceed JLC's 2048-character cell limit (a panel's LEDs) is split
-  over several rows of the same part.
+  over several rows of the same part. JLC leaves a row whose designators end in a letter (J1B, J1C) unticked at
+  quantity 0, "There may be multiple types of parts" (2026-10-26: renamed J1..J12 it was ticked, with or without a
+  " / " comment); the summary names those rows, to tick by hand.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
 - CPL rotation is KiCad's, with (180 - angle) on the bottom, plus the correction from data/jlc/corrections.csv.
   That file began as kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule whose pattern is a bare
@@ -175,6 +177,10 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         hand = len(sel) - len(placed)
         print(f"{variant:5s}: {len(placed)} placements, {len(groups)} BOM lines (one per LCSC part)"
               + (f", {hand} left out for hand assembly" if hand else ""))
+        lettered = [lcsc for lcsc, g in groups.items() if any(re.search(r"[A-Za-z]$", r) for r in g["refs"])]
+        if lettered:
+            print(f"       JLC leaves {', '.join(sorted(lettered))} unticked at quantity 0 (designators ending in a"
+                  " letter): tick each on JLC's BOM page")
     if "pcbway" in houses:
         from .pcbway import write
         write(b, [fp for fp in parts if is_placed(fp)], out, name, field)

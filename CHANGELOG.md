@@ -59,6 +59,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   gets no turn. The 1x08 1.27 mm SMD socket (`PinSocket_1x08_P1.27mm_Vertical_SMD_Pin1Right`) gets -90, and the HRO
   TYPE-C-31-M-12 USB-C (C165948) 0: the table's 180 put its contact row on the far side of its pads, on every board
   that has it.
+- **`pcbkit fab` names the BOM rows JLC will leave unticked.** JLC's BOM page leaves a row whose designators end in a
+  letter (J1B, J1C) unticked at quantity 0 ("There may be multiple types of parts"); the summary lists those LCSC
+  numbers so they get ticked by hand. The " / " between differing values on such a row was not the cause.
 - **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
   KiCad's icon in the dock for a moment. pcbkit now runs it from a `KiCadCLI.app` under
   `~/.local/share/pcbkit/kicad-cli/`: a copy of `kicad-cli` signed ad hoc, KiCad's Info.plist marked as a

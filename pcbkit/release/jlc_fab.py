@@ -11,11 +11,11 @@ Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release pass
 - BOM-<name>-back.csv and CPL-<name>-back.csv: JLC assembles the back only and the front is hand-soldered. Economic
   assembly is single-sided, so a board whose JLC parts are all underneath is ordered with these.
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
-Each pair is written even when its side has no parts to place; the summary then says 0 placements.
 - PLACEMENT-<name>.md: the checklist for JLC's placement preview (release/jlc_preview.py). Every placed part whose
   orientation matters, by side then reference, with its CPL angle, the rotation rule behind it and when that rule was
   last seen right in the preview, and where its pad 1 and centre are in the frame JLC places parts in. The summary
   counts them, and the ones under a rule never checked in the preview.
+Each BOM and CPL pair is written even when its side has no parts to place; the summary then says 0 placements.
 
 A part goes into the BOM and CPL if it has an LCSC number and is neither DNP nor excluded from BOM / position files.
 That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for every

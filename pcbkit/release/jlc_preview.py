@@ -189,7 +189,8 @@ def write(board, placed, placement, out, name):
     lines = [f"# Placement check: {name}", "",
              f"Parts to check in JLC's placement preview before paying: {n} of the {n + left_out} parts JLC places on "
              f"both sides ({len(rows['top'])} top, {len(rows['bottom'])} bottom). Two-pad parts drawn symmetrically are "
-             f"left out ({left_out}). For a front-only order, only the top ones.", "",
+             f"left out ({left_out}). For a front-only order, only the top ones; for a back-only order, only the "
+             "bottom ones.", "",
              "For each one, zoom in until single pads show:",
              "- every leg sits on its pad, and the body lies the way KiCad's footprint has it;",
              "- the pink pin-1 dot sits on pad 1, by the silkscreen's pin-1 or cathode mark;",

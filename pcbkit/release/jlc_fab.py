@@ -8,7 +8,10 @@ Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release pass
   PTH/NPTH Excellon drill files. Gerbers and drills use the drill/place (aux) origin. Zones are refilled first. The
   silkscreen has the mask openings subtracted (no ink on pads), unless --keep-silk-in-mask.
 - BOM-<name>-front.csv and CPL-<name>-front.csv: JLC assembles the front only and the back is hand-soldered.
+- BOM-<name>-back.csv and CPL-<name>-back.csv: JLC assembles the back only and the front is hand-soldered. Economic
+  assembly is single-sided, so a board whose JLC parts are all underneath is ordered with these.
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
+Each pair is written even when its side has no parts to place; the summary then says 0 placements.
 
 A part goes into the BOM and CPL if it has an LCSC number and is neither DNP nor excluded from BOM / position files.
 That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for every
@@ -18,14 +21,22 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   whatever their exclusion flags: for a project that marks hand-soldered parts with a field.
 - BOM rows: one per LCSC number (its values joined with " / " when they differ: JLC showed a part split over two rows
   as missing). A row whose designator list would exceed JLC's 2048-character cell limit (a panel's LEDs) is split
-  over several rows of the same part.
+  over several rows of the same part. JLC leaves a row whose designators end in a letter (J1B, J1C) unticked at
+  quantity 0, "There may be multiple types of parts" (2026-10-26: renamed J1..J12 it was ticked, with or without a
+  " / " comment); the summary names those rows, to tick by hand.
 - CPL positions are the centre of the part's pads, relative to the aux origin, with Y up.
 - CPL rotation is KiCad's, with (180 - angle) on the bottom, plus the correction from data/jlc/corrections.csv.
-  That file is kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule matches the reference, value
-  or footprint name; anchored matches are tried first. Checked in JLC's placement preview (2026-10-26, synth-blocks'
-  VCO): KiCad's SOT-23 needs 180 (the table's -90 put it a quarter turn off; the SOT-23-5/6 rule is unchecked),
-  SOT-363_SC-70-6 0 (180 turned it half round) and the Bourns 3224W trimmer 180; SOIC, SOD-123, SOD-323 and the
-  0603/0805 LEDs were right.
+  That file began as kicad-jlcpcb-tools' table (originally matthewlai/JLCKicadTools). A rule matches the reference,
+  value or footprint name, anchored matches first. A rule whose pattern is a bare LCSC number (C7843) is an exception
+  for that part to whichever rule matched: it replaces that rule's correction, and a footprint no rule matches (one
+  imported from EasyEDA, already in JLC's orientation) gets none from it either. The correction turns KiCad's
+  footprint onto the part's EasyEDA footprint, which JLC places from, and is the same on both sides. JLC's SOT-23-5
+  and SOT-23-6 parts come both ways (EasyEDA footprints ending -BL need -90, -BR 180), so those package rules carry
+  per-part exceptions. Checked in JLC's placement preview
+  (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
+  the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
+  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
+  the preview is -90 on either side.
 Check rotations and polarity in JLC's placement preview before ordering. Harvested from the sign's jlc_fab.py.
 --houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
 board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
@@ -53,12 +64,16 @@ def load_corrections():
                 for r in csv.DictReader(fh)]
 
 
-def correction(fp, corrections):
+PART_RULE = re.compile(r"C\d+")        # a pattern that is a bare LCSC number: a rule for that one part
+
+
+def correction(fp, corrections, lcsc=""):
+    part = next(((rot, off) for rx, rot, off in corrections if rx == lcsc and PART_RULE.fullmatch(rx)), None)
     for value in (fp.GetReference(), fp.GetValue(), str(fp.GetFPID().GetLibItemName())):
         for anchored in (True, False):
             for rx, rot, off in corrections:
-                if re.search(f"(?:{rx})$" if anchored else rx, value):
-                    return rot, off
+                if not PART_RULE.fullmatch(rx) and re.search(f"(?:{rx})$" if anchored else rx, value):
+                    return part or (rot, off)       # a part rule only for a footprint some rule turns
     return None
 
 
@@ -123,7 +138,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         rot = fp.GetOrientation().AsDegrees()
         if bottom:
             rot = (180 - rot) % 360
-        corr = correction(fp, corrections)
+        corr = correction(fp, corrections, field(fp, "LCSC"))
         if corr:
             rot = (rot + corr[0]) % 360
             dx, dy = corr[1]
@@ -134,7 +149,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         return x, -y, rot % 360, "bottom" if bottom else "top"
 
     parts = [fp for fp in sorted(b.GetFootprints(), key=lambda f: f.GetReference()) if field(fp, "LCSC") and not fp.IsDNP()]
-    for variant, sides in (("front", {"top"}), ("both", {"top", "bottom"})):
+    for variant, sides in (("front", {"top"}), ("back", {"bottom"}), ("both", {"top", "bottom"})):
         sel = [fp for fp in parts if ("bottom" if fp.IsFlipped() else "top") in sides]
         # one list for both files, so every BOM line has a CPL placement; hand-soldered parts leave both
         placed = [fp for fp in sel if is_placed(fp)]
@@ -168,6 +183,10 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         hand = len(sel) - len(placed)
         print(f"{variant:5s}: {len(placed)} placements, {len(groups)} BOM lines (one per LCSC part)"
               + (f", {hand} left out for hand assembly" if hand else ""))
+        lettered = [lcsc for lcsc, g in groups.items() if any(re.search(r"[A-Za-z]$", r) for r in g["refs"])]
+        if lettered:
+            print(f"       JLC leaves {', '.join(sorted(lettered))} unticked at quantity 0 (designators ending in a"
+                  " letter): tick each on JLC's BOM page")
     if "pcbway" in houses:
         from .pcbway import write
         write(b, [fp for fp in parts if is_placed(fp)], out, name, field)

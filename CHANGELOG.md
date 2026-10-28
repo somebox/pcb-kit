@@ -67,6 +67,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   up unticked at quantity 0. It also covers checking every polarised part in the placement viewer, the LCSC cart
   for hand assembly, and what to record. From Orbitchron's first v2 order, where the viewer caught a USB-C turned
   180° and SOT-23 parts a quarter turn out.
+- **`pcbkit fab` writes a `-back` BOM and CPL** beside `-front` and `-both`, for an order where JLC assembles only
+  the back (Economic PCBA does one side) and the front is soldered by hand. They are the `-both` files' bottom rows,
+  so a project script that cut them from `-both` can go; the summary gives their counts like the others', front and
+  back adding up to both. `pcbkit release` takes the back pair for a board whose placed parts are all on the back
+  (the same rows its `-both` pair had), and the fab fingerprint leaves the `-back` files out, so releases made
+  before keep their fingerprints.
 
 ### Changed
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
@@ -75,6 +81,19 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   trimmer 180 (it had no rule, and its wiper landed on an end pad). The rotation table is part of an
   assembled board's fab settings, so `pcbkit release` compares the placement files again when the table changes and
   gives a board whose CPL changed its next version.
+- **JLC rotations for one LCSC part, and SOT-23-5/6 by part.** A row in `data/jlc/corrections.csv` whose pattern is a
+  bare LCSC number (`C7843`) is a rule for that part and outranks the package rule that matched its footprint; a
+  footprint no package rule matches (imported from EasyEDA, already in JLC's orientation) gets no turn from it. JLC
+  places from each part's EasyEDA footprint, and its SOT-23-5 and SOT-23-6 footprints come both ways (names ending
+  -BL need -90, -BR 180). KiCad's SOT-23-5 now gets 180 (the old `^SOT-23` rule gave every SOT-23-5 -90, a quarter
+  turn off for the TLV62569 and SN74LVC1G04), with C485147 at -90; SOT-23-6 keeps -90, with C7843 and C55266 at 180.
+  The SOT-23 rules match only KiCad's own names, so a footprint imported from EasyEDA, already in JLC's orientation,
+  gets no turn. The 1x08 1.27 mm SMD socket (`PinSocket_1x08_P1.27mm_Vertical_SMD_Pin1Right`) gets -90, and the HRO
+  TYPE-C-31-M-12 USB-C (C165948) 0: the table's 180 put its contact row on the far side of its pads, on every board
+  that has it.
+- **`pcbkit fab` names the BOM rows JLC will leave unticked.** JLC's BOM page leaves a row whose designators end in a
+  letter (J1B, J1C) unticked at quantity 0 ("There may be multiple types of parts"); the summary lists those LCSC
+  numbers so they get ticked by hand. The " / " between differing values on such a row was not the cause.
 - **`kicad-cli` shows no dock icon.** Run from inside KiCad.app, macOS gave every DRC, ERC, render and export
   KiCad's icon in the dock for a moment. pcbkit now runs it from a `KiCadCLI.app` under
   `~/.local/share/pcbkit/kicad-cli/`: a copy of `kicad-cli` signed ad hoc, KiCad's Info.plist marked as a

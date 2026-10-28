@@ -168,10 +168,13 @@ def preview_source(pcb):
 def fab_fingerprint(out):
     """A fab output folder (pcbkit fab, every house's files) hashed without what changes from run to run: Gerber and
     drill header comments and attributes (dates, the project ID with its rev), file names, and the description and
-    package PCBWay's BOM takes from the parts cache."""
+    package PCBWay's BOM takes from the parts cache. The -back BOM and CPL are left out: they are the -both files'
+    bottom rows, and without them a release made before pcbkit fab wrote them keeps its fingerprint."""
     h = hashlib.sha1()
     for f in sorted(os.listdir(out)):
         p = os.path.join(out, f)
+        if f.endswith("-back.csv"):
+            continue
         if f.endswith(".zip"):
             with zipfile.ZipFile(p) as z:
                 for n in sorted(z.namelist()):

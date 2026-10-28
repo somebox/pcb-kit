@@ -2,8 +2,9 @@ Pattern,Rotation,Offset X,Offset Y
 ^R_Array_Convex_,90,0,0
 ^R_Array_Concave_,90,0,0
 ^SOT-223,180,0,0
-^SOT-23$,180,0,0
-^SOT-23,-90,0,0
+^SOT-23(-3|_Handsoldering)?$,180,0,0
+^SOT-23-5(_HandSoldering)?$,180,0,0
+^SOT-23-6(_Handsoldering)?$,-90,0,0
 ^SOT-89,180,0,0
 ^TSOT-23,180,0,0
 ^SOT-353,180,0,0
@@ -37,7 +38,7 @@ Pattern,Rotation,Offset X,Offset Y
 ^PowerPAK_SO-8_Single,270,0,0
 ^HTSSOP-28-1EP_4.4x9.7mm*,270,0,0
 ^PUIAudio_SMT_0825_S_4_R*,270,0,0
-^USB_C_Receptacle_HRO_TYPE-C-31-M-12*,180,0,0
+^USB_C_Receptacle_HRO_TYPE-C-31-M-12,0,0,0
 ^ESP32-W,270,0,0
 ^SOIC127P798X216-8N,-90,0,0
 ^SW_DIP_SPSTx01_Slide_Copal_CHS-01B_W7.62mm_P1.27mm,-180,0,0
@@ -60,3 +61,7 @@ Pattern,Rotation,Offset X,Offset Y
 ^LED_WS2812B-2020_PLCC4_2.0x2.0mm,90,0,0
 ^^WSON-8-1EP_6x5mm_P1.27mm,-90,0,0
 ^Potentiometer_Bourns_3224W,180,0,0
+^PinSocket_1x08_P1\.27mm_Vertical_SMD_Pin1Right$,-90,0,0
+C485147,-90,0,0
+C7843,180,0,0
+C55266,180,0,0

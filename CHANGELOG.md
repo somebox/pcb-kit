@@ -61,6 +61,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   its Gerbers keep that silkscreen instead of having the mask openings subtracted from it. `pcbkit release` passes it
   on and counts it among the board's fab settings, so turning it on is a change it compares; boards without it keep
   their fingerprints and give the same Gerbers as before. `pcbkit new`'s pcbkit.toml lists it.
+- **`pcbkit fab` writes a `-back` BOM and CPL** beside `-front` and `-both`, for an order where JLC assembles only
+  the back (Economic PCBA does one side) and the front is soldered by hand. They are the `-both` files' bottom rows,
+  so a project script that cut them from `-both` can go; the summary gives their counts like the others', front and
+  back adding up to both. `pcbkit release` takes the back pair for a board whose placed parts are all on the back
+  (the same rows its `-both` pair had), and the fab fingerprint leaves the `-back` files out, so releases made
+  before keep their fingerprints.
 
 ### Changed
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put

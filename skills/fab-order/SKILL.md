@@ -60,10 +60,10 @@ has the fee table.
 ## The assembly form
 
 1. The side, Standard or Economic, the quantity, and the BOM and CPL for those sides. A release folder holds one
-   pair, `BOM-<board>-<label>-jlcpcb.csv` and `CPL-<board>-<label>-jlcpcb.csv`, for the side or sides with placed
-   parts. For another split, upload `pcbkit fab`'s `-front`, `-back` or `-both` pair. The sides in the form must be
-   the CPL's: `top` and
-   `bottom` rows need both sides assembled, only `top` rows the top side, only `bottom` rows the bottom side.
+   pair, `BOM-<board>-<label>-jlcpcb.csv` and `CPL-<board>-<label>-jlcpcb.csv`, for the sides the board's placed
+   parts are on: the front or the back when the other side has none, both otherwise. For another split, upload
+   `pcbkit fab`'s `-front`, `-back` or `-both` pair. The sides in the form must be the CPL's: `top` and `bottom`
+   rows need both sides assembled, only `top` rows the top side, only `bottom` rows the bottom side.
 2. **The BOM page:**
    - It must say "Your BOM: JLCPCB Part #", so parts are matched by LCSC number, not by value.
    - Check every line's quantity against the Quantity column of the BOM CSV you uploaded. A part whose designator

@@ -178,12 +178,13 @@ Two of the proven parts show zero stock in the 2026-09-29 cache, which is the re
 ### Order it
 
 `pcbkit previews` makes the schematic PDF, copper PNGs, a hand-assembly map, a 1:1 print and 3-D renders.
-`pcbkit fab` writes the JLC Gerber zip, BOM and CPL with rotation corrections, and with `--houses jlcpcb,pcbway`
-PCBWay's BOM (manufacturer and part number) and centroid too. Beside them, `PLACEMENT-<board>.md` is a checklist
-for JLC's placement preview, to go through before paying: every placed part whose orientation matters (more than
-two pads, or a polarity mark), with the rotation rule behind its CPL angle, when that rule was last seen right in
-the preview, and where its pad 1 should be, in the Gerbers' frame. The Gerbers have the mask openings subtracted
-from the silkscreen; a board that prints inside them on purpose takes `--keep-silk-in-mask`, or
+`pcbkit fab` writes the JLC Gerber zip, and BOM and CPL variants with rotation corrections for each way JLC can
+assemble it (the front, the back, both sides: Economic PCBA does one side). Beside them, `PLACEMENT-<board>.md` is
+a checklist for JLC's placement preview, to go through before paying: every placed part whose orientation matters
+(more than two pads, or a polarity mark), with the rotation rule behind its CPL angle, when that rule was last seen
+right in the preview, and where its pad 1 should be, in the Gerbers' frame. With `--houses jlcpcb,pcbway`, it also
+writes PCBWay's BOM (manufacturer and part number) and centroid. The Gerbers have the mask openings subtracted from
+the silkscreen; a board that prints inside them on purpose takes `--keep-silk-in-mask`, or
 `keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit assembly panels with rails,
 fiducials and tooling holes, and runs DRC on each.
 
@@ -279,7 +280,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit cleanup BOARD [--dry-run] [--dangling]` | duplicate, zero-length and covered segments removed, collinear runs merged; `--dangling` also removes dead-end segments that no net needs; edits the file text by uuid |
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
-| `pcbkit fab BOARD OUT [--houses jlcpcb,pcbway] [--placed field:NAME=VALUE] [--no-assembly] [--extra-layers L,..] [--keep-silk-in-mask] [--name N]` | JLC Gerber zip, BOM (one row per LCSC number) and CPL (front-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table; `PLACEMENT-<name>.md`, the checklist for JLC's placement preview (polarised parts, their rotation rules, pad 1 positions); PCBWay's BOM and centroid with `pcbway`. The silkscreen has the mask openings subtracted unless `--keep-silk-in-mask` (legends printed inside a face panel's mask windows) |
+| `pcbkit fab BOARD OUT [--houses jlcpcb,pcbway] [--placed field:NAME=VALUE] [--no-assembly] [--extra-layers L,..] [--keep-silk-in-mask] [--name N]` | JLC Gerber zip, BOM (one row per LCSC number) and CPL (front-only, back-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table; `PLACEMENT-<name>.md`, the checklist for JLC's placement preview (polarised parts, their rotation rules, pad 1 positions); PCBWay's BOM and centroid with `pcbway`. The silkscreen has the mask openings subtracted unless `--keep-silk-in-mask` (legends printed inside a face panel's mask windows) |
 | `pcbkit release [PCB ..] [--minor\|--major] [--version X.Y.Z] [--dry-run] [--refresh-parts]` | every board per `pcbkit.toml`: checks; a new version for each changed one (patch by default), stamped into its KiCad files; its fab files, PDFs and previews in its release folder; then `pcbkit production`. `--refresh-parts` records a release's hand parts again after the part rules changed |
 | `pcbkit production [--check]` | PRODUCTION.md's overview from the releases, `production/orders/*/order.toml` and `production/stock.toml`; each order's ORDER.md (with the parts to buy for hand assembly) and upload folder; `--check` exits 1 on problems |
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |

@@ -8,7 +8,10 @@ Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release pass
   PTH/NPTH Excellon drill files. Gerbers and drills use the drill/place (aux) origin. Zones are refilled first. The
   silkscreen has the mask openings subtracted (no ink on pads), unless --keep-silk-in-mask.
 - BOM-<name>-front.csv and CPL-<name>-front.csv: JLC assembles the front only and the back is hand-soldered.
+- BOM-<name>-back.csv and CPL-<name>-back.csv: JLC assembles the back only and the front is hand-soldered. Economic
+  assembly is single-sided, so a board whose JLC parts are all underneath is ordered with these.
 - BOM-<name>-both.csv and CPL-<name>-both.csv: JLC assembles both sides.
+Each pair is written even when its side has no parts to place; the summary then says 0 placements.
 - PLACEMENT-<name>.md: the checklist for JLC's placement preview (release/jlc_preview.py). Every placed part whose
   orientation matters, by side then reference, with its CPL angle, the rotation rule behind it and when that rule was
   last seen right in the preview, and where its pad 1 and centre are in the frame JLC places parts in. The summary
@@ -157,7 +160,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         return x, -y, rot % 360, "bottom" if bottom else "top", rule
 
     parts = [fp for fp in sorted(b.GetFootprints(), key=lambda f: f.GetReference()) if field(fp, "LCSC") and not fp.IsDNP()]
-    for variant, sides in (("front", {"top"}), ("both", {"top", "bottom"})):
+    for variant, sides in (("front", {"top"}), ("back", {"bottom"}), ("both", {"top", "bottom"})):
         sel = [fp for fp in parts if ("bottom" if fp.IsFlipped() else "top") in sides]
         # one list for both files, so every BOM line has a CPL placement; hand-soldered parts leave both
         placed = [fp for fp in sel if is_placed(fp)]

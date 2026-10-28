@@ -14,9 +14,10 @@ For every PCB (or those named, by key, path or folder):
    come after the last). A board without releases adopts the version its title block carries ("v1.0" -> 1.0.0).
 4. The new version is stamped into the board and its root schematic (title block, silkscreen texts carrying the old
    label), refused while KiCad has the folder open; then DRC again: no new errors, no more silkscreen warnings.
-5. <release dir>/v<label>/ (committed, never rewritten): GERBER-<key>-v<label>.zip, the JLC BOM and CPL, PCBWay's BOM
-   and centroid, schematic.pdf and board.pdf made from this version, MANIFEST.txt; releases.toml beside it, with
-   what a board of this version needs by hand (pcbkit production reads it for the orders that pin the version).
+5. <release dir>/v<label>/ (committed, never rewritten): GERBER-<key>-v<label>.zip, the JLC BOM and CPL (of the front,
+   the back or both sides, whichever the board's placed parts are on), PCBWay's BOM and centroid, schematic.pdf and
+   board.pdf made from this version, MANIFEST.txt; releases.toml beside it, with what a board of this version needs
+   by hand (pcbkit production reads it for the orders that pin the version).
    Previews are rebuilt when they are of another version.
 Then `pcbkit production` brings the production record up to date. --dry-run says what it would do.
 --refresh-parts records again what a board of its last release needs by hand, for boards unchanged since that
@@ -146,9 +147,11 @@ def write_release(project, pcb, pcb_path, profile, version, label, entry):
             files.append(dst)
         take(f"GERBER-{key}.zip", f"GERBER-{key}-{label}.zip")
         if profile["assembly"]:
-            both = len(open(os.path.join(d, f"CPL-{key}-both.csv")).read().splitlines())
-            front = len(open(os.path.join(d, f"CPL-{key}-front.csv")).read().splitlines())
-            side = "both" if both > front else "front"
+            # the side JLC assembles: the front or the back when the other places nothing (Economic assembly is
+            # single-sided), else both
+            n = {s: len(open(os.path.join(d, f"CPL-{key}-{s}.csv")).read().splitlines())
+                 for s in ("front", "back", "both")}
+            side = "front" if n["both"] == n["front"] else "back" if n["both"] == n["back"] else "both"
             if "jlcpcb" in project.release["fab"]:
                 take(f"BOM-{key}-{side}.csv", f"BOM-{key}-{label}-jlcpcb.csv")
                 take(f"CPL-{key}-{side}.csv", f"CPL-{key}-{label}-jlcpcb.csv")

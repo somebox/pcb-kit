@@ -31,15 +31,36 @@ bomi datasheet C9864 --summary                              # PDF plus a markdow
 
 Write it from bomi's output, dated, in the board's project. The sections that have earned their place:
 
-- **Source and scope:** the sync command, the date the prices were taken, what is excluded (kit parts, PCB, assembly fees).
+- **Source and scope:** the sync command, the date the prices were taken, what is excluded (kit parts, PCB; the assembly fees have their own section).
 - **Cost drivers:** the ten most expensive lines, with LCSC code, part, refs, quantity, cost per board at 1 and 100.
-- **Extended parts:** JLC charges a fee per unique Extended part per order (about $3). Count them, and list the
-  cheap swaps: a Basic value that shifts a threshold by a negligible amount, one LED colour instead of four.
+- **Extended parts:** count them. Under Economic PCBA each unique Extended part costs a loading fee per order (about
+  $3) and Basic parts load free, so list the cheap swaps there: a Basic value that shifts a threshold by a
+  negligible amount, one LED colour instead of four. Under Standard every unique part pays the same fee, Basic or
+  Extended (below), so a swap saves only the difference in part price.
 - **Stock risks:** any line under a few thousand in stock, with the nearest substitute and what changes in the
   circuit if it is used.
+- **Assembly estimate:** the per-order fees for the PCBA type and sides the order will use (below). For a handful of
+  boards they outweigh the parts, so the cost per set isn't the parts alone.
+
+## What JLC's assembly costs
+
+Read off Orbitchron's quotes, 2026-10-26, 5 boards (its PRODUCTION.md, Costs). Re-read them from a fresh quote
+before relying on them.
+
+| Fee | Standard PCBA | Economic PCBA |
+| --- | --- | --- |
+| Setup | $25.75 per side | $8.24 |
+| Stencil | $8.27 per side | $1.55 |
+| Parts loading | $1.55 per unique part, Basic or Extended alike | $3.09 per unique Extended part; Basic free |
+| X-ray | $8.25 on the driver, which has a module and a WSON | - |
+| Limits | adds 5 mm edge rails | one side; green mask only; no Standard-only parts (ESP32-S3-MINI-1); drills two 1.152 mm tooling holes into a board without them |
+
+At 5 boards, Orbitchron's double-sided driver came to $182.25 of assembly. $122.79 of that was fees, and $53.32 parts.
 
 ## Rules
 
 - Stock and price numbers carry a date. Re-run `bomi list --check` before an order and update BOM.md.
 - A substitute that needs a circuit change (a divider, inverted logic) goes into DESIGN.md as a decision, not just BOM.md.
 - Basic parts first for passives (`pcbkit.parts` has the stock R/C table); Extended only where the function needs it.
+- Hand-soldering pays only when it takes a whole side off the assembly order: setup, stencil and that side's loading.
+  Parts left off a side JLC still assembles save only their loading fee (fab-order skill, What JLC assembles).

@@ -208,6 +208,7 @@ where everything goes and can turn either feature off.
 | [bom-cost](skills/bom-cost/SKILL.md) | the proven-parts catalog first, then bomi: stock checks, Extended-part fees, what goes into BOM.md |
 | [placement-study](skills/placement-study/SKILL.md) | scoring placements by their ratsnest, the study file, searching, and routing only the winner |
 | [failure-review](skills/failure-review/SKILL.md) | before an order: datasheets and reference designs, failure modes and how to diagnose them, test points, a briefing before any change |
+| [fab-order](skills/fab-order/SKILL.md) | the order itself, in the user's browser: what JLC assembles, the PCB and assembly forms, the BOM page's traps, checking every part in the placement viewer, the LCSC cart for hand assembly; never paying |
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the project layout and writing style they all assume: dated status
 lines, numbered decisions, generated files that say what made them.

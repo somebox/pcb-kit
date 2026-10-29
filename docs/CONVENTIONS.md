@@ -76,7 +76,8 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 7. `pcbkit release` (which reruns ERC and DRC and refuses a board with errors), and `pcbkit panel` for panels; BOM
    reviewed against bomi for stock and extended-part fees; an order.toml pinning the released versions, then
    `pcbkit production` and the upload from its `upload/` folder. The fab-order skill covers the forms, the BOM page and
-   the placement viewer, where every polarised part is checked before the order goes into the cart.
+   the placement viewer, where every part in the release's placement checklist is checked before the order goes into
+   the cart.
 
 ## Scripting rules
 

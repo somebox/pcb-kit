@@ -522,6 +522,8 @@ def build_upload(project, o, pcbs):
             continue
         dst = os.path.join(up, b["pcb"])
         os.makedirs(dst)
+        if b["house"] == "jlcpcb" and b["assembled"]:     # the placement preview's checklist (older releases lack it)
+            files = files + sorted(glob.glob(os.path.join(vdir, "PLACEMENT-*-jlcpcb.md")))
         for f in files + [os.path.join(vdir, x) for x in ("MANIFEST.txt", "schematic.pdf", "board.pdf")]:
             if os.path.exists(f):
                 shutil.copy2(f, dst)

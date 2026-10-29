@@ -129,17 +129,21 @@ class Project:
     def fab_settings(self, profile):
         """The settings a PCB's fab files are made with, as text: part of its source fingerprint, so changing them is
         a change to compare. For an assembled board that includes the placement file's rotation table
-        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board. keep_silk_in_mask is
-        there only when set, so the boards that don't use it keep the fingerprints their releases recorded."""
+        (data/jlc/corrections.csv): a corrected rotation makes another CPL from the same board. Only its first four
+        columns count (pattern, rotation, offsets), written as the file had them before its Checked column, so a
+        date recording a check in JLC's preview changes no fingerprint. keep_silk_in_mask is there only when set, so
+        the boards that don't use it keep the fingerprints their releases recorded."""
         settings = dict(fab=self.release["fab"], placed=self.release["placed"], assembly=profile["assembly"],
                         extra_layers=profile["extra_layers"])
         if profile["keep_silk_in_mask"]:
             settings["keep_silk_in_mask"] = True
         if profile["assembly"]:
+            import csv
             import hashlib
             from .kicad import data_path
-            with open(data_path("jlc", "corrections.csv"), "rb") as fh:
-                settings["rotations"] = hashlib.sha1(fh.read()).hexdigest()
+            with open(data_path("jlc", "corrections.csv"), newline="", encoding="utf-8") as fh:
+                table = "".join(",".join(r[:4]) + "\n" for r in csv.reader(fh))
+            settings["rotations"] = hashlib.sha1(table.encode()).hexdigest()
         return json.dumps(settings, sort_keys=True)
 
     def fill(self, template, pcb):

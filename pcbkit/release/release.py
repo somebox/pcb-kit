@@ -15,9 +15,9 @@ For every PCB (or those named, by key, path or folder):
 4. The new version is stamped into the board and its root schematic (title block, silkscreen texts carrying the old
    label), refused while KiCad has the folder open; then DRC again: no new errors, no more silkscreen warnings.
 5. <release dir>/v<label>/ (committed, never rewritten): GERBER-<key>-v<label>.zip, the JLC BOM and CPL (of the front,
-   the back or both sides, whichever the board's placed parts are on), PCBWay's BOM and centroid, schematic.pdf and
-   board.pdf made from this version, MANIFEST.txt; releases.toml beside it, with what a board of this version needs
-   by hand (pcbkit production reads it for the orders that pin the version).
+   the back or both sides, whichever the board's placed parts are on), the checklist for JLC's placement preview,
+   PCBWay's BOM and centroid, schematic.pdf and board.pdf made from this version, MANIFEST.txt; releases.toml beside
+   it, with what a board of this version needs by hand (pcbkit production reads it for the orders that pin the version).
    Previews are rebuilt when they are of another version.
 Then `pcbkit production` brings the production record up to date. --dry-run says what it would do.
 --refresh-parts records again what a board of its last release needs by hand, for boards unchanged since that
@@ -155,6 +155,7 @@ def write_release(project, pcb, pcb_path, profile, version, label, entry):
             if "jlcpcb" in project.release["fab"]:
                 take(f"BOM-{key}-{side}.csv", f"BOM-{key}-{label}-jlcpcb.csv")
                 take(f"CPL-{key}-{side}.csv", f"CPL-{key}-{label}-jlcpcb.csv")
+                take(f"PLACEMENT-{key}.md", f"PLACEMENT-{key}-{label}-jlcpcb.md")
             if "pcbway" in project.release["fab"]:
                 take(f"BOM-{key}-pcbway.csv", f"BOM-{key}-{label}-pcbway.csv")
                 take(f"centroid-{key}-pcbway.csv", f"centroid-{key}-{label}-pcbway.csv")

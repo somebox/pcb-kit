@@ -29,6 +29,15 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
    Beside the BOM and CPL is the checklist for the placement viewer: `PLACEMENT-<board>-<label>-jlcpcb.md` in the
    release folder and the order's `upload/`, or `PLACEMENT-<board>.md` from `pcbkit fab`. It lists every placed part
    whose orientation matters, with the rotation rule behind its CPL angle and when that rule was last seen right.
+   A release made before pcbkit wrote the checklist has none, and `pcbkit release` never rewrites a release. Make
+   one beside it, leaving the release alone:
+   - Find the commit that added the release: `git log --diff-filter=A --format=%h -- <release dir>/MANIFEST.txt`.
+   - Extract the board's folder as it was then: `git archive <commit> <board folder> | tar -x -C <scratch>`.
+   - Run `pcbkit fab` on that copy into a scratch folder, passing the project's `placed` setting as `--placed`.
+   - If its CPL for the release's sides is the same file as the release's CPL, its checklist holds for the release.
+   - If they differ, the rotation table has changed since the release, and the release's CPL has the old angles.
+     Tell the user: `pcbkit release` would make a new version with the new angles and its own checklist. Until
+     then, compare the viewer's hover readings with the pad positions in KiCad at that version.
 3. Know each board's PCB options from the order guide (layers, thickness, mask, finish, order number) and what JLC
    assembles. Write any options that aren't there into the guide first.
 

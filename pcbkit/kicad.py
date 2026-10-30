@@ -2,7 +2,8 @@
 
 Two interpreters are involved: the one pcbkit is installed in (uv's), and KiCad's bundled Python, the only one
 with `pcbnew`. A command that needs pcbnew calls `ensure_pcbnew()` first; outside KiCad's Python it re-executes
-the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP.
+the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP. On
+Linux (KiCad's packages, its Docker images) kicad-cli comes from PATH and pcbnew from /usr/bin/python3.
 
 kicad-cli runs from a background copy of it, KiCadCLI.app under tools_dir()/kicad-cli/, so it shows no dock icon:
 from inside KiCad.app, macOS gives every run of it (DRC, ERC, renders, exports) the app's icon. The copy is
@@ -114,8 +115,14 @@ if "PCBKIT_KICAD_APP" in os.environ:
     # KiCad itself, not a copy named there: background_app() may remove that copy, and ensure_pcbnew()'s re-run and
     # every other child would inherit the gone path
     os.environ["PCBKIT_KICAD_APP"] = KICAD_APP
-KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
-KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin", "python3")
+if sys.platform == "darwin":
+    KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
+    KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin",
+                                "python3")
+else:
+    # KiCad's Linux packages and its Docker images (kicad/kicad): kicad-cli on PATH, pcbnew in the system Python
+    KICAD_CLI = shutil.which("kicad-cli") or "kicad-cli"
+    KICAD_PYTHON = "/usr/bin/python3"
 
 
 def have_pcbnew():

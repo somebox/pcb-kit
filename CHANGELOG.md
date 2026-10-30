@@ -8,6 +8,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **pcbkit runs on Linux**, as in KiCad's Docker images (`kicad/kicad:10.0.6-full`): `kicad-cli` comes from PATH
+  and pcbnew from `/usr/bin/python3`. On rgb-spotlight's boards `drc`, `erc` and `check` give the same results
+  there as on macOS; DRC lists the same violations in a different order.
 - **A checklist for JLC's placement preview, `PLACEMENT-<name>.md`, beside the BOM and CPL from `pcbkit fab`**, and
   in each release folder as `PLACEMENT-<board>-v<version>-jlcpcb.md` (copied to an order's `upload/`). It lists
   every placed part whose orientation matters (more than two pads, two pads that differ, or a silkscreen or fab mark

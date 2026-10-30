@@ -191,6 +191,11 @@ On 2026-10-30, `kicad/kicad:10.0.6-full` (digest `sha256:e36e29b5f4a6…`) under
   - **Still possible:** two runs at once with the default report path can still read each other's report.
 - **`pcbkit check` always exits 0,** even when it reports the planted stub. For CI it needs an exit status, or the
   test has to read its output.
+- **`import-easyeda`** took the power symbols from inside `KiCad.app` and failed on Linux until `kicad.py` gained
+  `KICAD_SYMBOLS`. On rgb-spotlight's archived EasyEDA exports, the schematic it writes is now identical on both
+  platforms, and so are the ERC, DRC and parity results. Footprints with text in a font that neither system has
+  differ in their silkscreen outlines: `kicad-cli` substitutes Times New Roman on macOS and DejaVu Sans in the image.
+  The board's footprint order also changes from run to run on one platform.
 - **Not tried yet:** the plain (non-`-full`) image, `fab`/`release`/renders in the container, and whether Linux
   `fab_fingerprint`s match macOS ones.
 

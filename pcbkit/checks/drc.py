@@ -4,17 +4,17 @@
 
 --refill fills the zones first (what the fab sees); --save writes the filled board back, which is how the
 projects keep their boards filled; --parity checks the PCB against the schematic. Exit status 1 on errors or
-unconnected items. Merged from the projects' drcsum.py and dodeca's unrouted.py.
+unconnected items, and when kicad-cli fails or writes no report. Merged from the projects' drcsum.py and dodeca's
+unrouted.py.
 """
 import argparse
 import collections
-import json
 import os
 import re
 import sys
 import tempfile
 
-from ..kicad import cli
+from ..kicad import cli_report
 
 
 def run(board, refill=False, save=False, parity=True, out=None):
@@ -26,9 +26,7 @@ def run(board, refill=False, save=False, parity=True, out=None):
         args.append("--save-board")
     if parity:
         args.append("--schematic-parity")
-    cli(*args, board, check=False)
-    with open(out) as fh:
-        return json.load(fh)
+    return cli_report(out, *args, board)
 
 
 def summarise(d, full=False):

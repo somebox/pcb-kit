@@ -13,6 +13,7 @@ process holds stays valid while others make copies of another KiCad or a newer v
 changed since is removed. PCBKIT_KICAD_DOCK=1 runs KiCad's own kicad-cli.
 """
 import hashlib
+import json
 import os
 import plistlib
 import shutil
@@ -143,6 +144,24 @@ def ensure_pcbnew():
 def cli(*args, check=True, capture=True):
     """Run kicad-cli. Returns the CompletedProcess; raises on failure when check is set."""
     return subprocess.run([KICAD_CLI, *args], check=check, capture_output=capture, text=True)
+
+
+def cli_report(out, *args):
+    """Run a kicad-cli command that writes a JSON report to out, and return the report. Any file at out is removed
+    first, so a run that fails can't leave an older report to be read in its place; a non-zero exit, or no readable
+    report, stops with kicad-cli's message."""
+    if os.path.exists(out):
+        os.remove(out)
+    r = cli(*args, check=False)
+    what = "kicad-cli %s %s on %s" % (args[0], args[1], args[-1])
+    if r.returncode:
+        how = "exit %d" % r.returncode if r.returncode > 0 else "killed by signal %d" % -r.returncode
+        sys.exit(f"{what} failed ({how}): {quiet(r.stderr + r.stdout).strip()[-1500:]}")
+    try:
+        with open(out) as fh:
+            return json.load(fh)
+    except (OSError, ValueError) as e:
+        sys.exit(f"{what} wrote no readable report to {out} ({e})")
 
 
 def quiet(text):

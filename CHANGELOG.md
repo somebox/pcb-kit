@@ -8,6 +8,10 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **pcbkit runs on Linux**, as in KiCad's Docker images (`kicad/kicad:10.0.6-full`): `kicad-cli` comes from PATH,
+  pcbnew from `/usr/bin/python3`, and the power symbols `import-easyeda` copies from `/usr/share/kicad/symbols`. On
+  rgb-spotlight's boards `drc`, `erc` and `check` give the same results there as on macOS; DRC lists the same
+  violations in a different order.
 - **A checklist for JLC's placement preview, `PLACEMENT-<name>.md`, beside the BOM and CPL from `pcbkit fab`**, and
   in each release folder as `PLACEMENT-<board>-v<version>-jlcpcb.md` (copied to an order's `upload/`). It lists
   every placed part whose orientation matters (more than two pads, two pads that differ, or a silkscreen or fab mark
@@ -125,6 +129,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   Standard, every unique part pays the same loading fee, Basic or Extended, so swapping an Extended part for a Basic
   one saves only the price difference. BOM.md gains an assembly estimate. A new rule says hand-soldering pays only
   when it takes a whole side off the order.
+
+### Fixed
+- **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a
+  fixed path in the temp folder, so a run on a board that doesn't exist, a file that won't load, or a `kicad-cli`
+  killed mid-run printed the previous board's summary and could exit 0. The report is now removed before each run.
+  A non-zero exit from `kicad-cli`, or no readable report, stops the command with exit status 1 and `kicad-cli`'s
+  message. That also covers `pcbkit release`'s checks and `import-easyeda`'s.
 
 ## [0.3.0] - 2026-10-18
 

@@ -34,9 +34,9 @@ import uuid
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .kicad import KICAD_APP, KICAD_CLI, KICAD_PYTHON, ensure_pcbnew, quiet
+from .kicad import KICAD_CLI, KICAD_PYTHON, KICAD_SYMBOLS, ensure_pcbnew, quiet
 
-POWER_LIB = Path(KICAD_APP) / "Contents/SharedSupport/symbols/power.kicad_sym"
+POWER_LIB = Path(KICAD_SYMBOLS) / "power.kicad_sym"
 U = 0.254  # EasyEDA schematic unit (10 mil) in mm
 NS = uuid.UUID("6f1c2a52-5d1e-4c8e-9a51-1b7d0c0d2a46")
 PCB_RULES = {  # JLC 2-layer minimums with a little margin; edit in Board Setup afterwards

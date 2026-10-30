@@ -1,23 +1,21 @@
 """ERC through kicad-cli, summarised.  pcbkit erc SCHEMATIC.kicad_sch [--errors-only]
 
-Exit status 1 on errors. Harvested from the spotlight's erc.py (the kicad-cli variant; the konnect one is
-`Konnect().call("run_erc", ...)`).
+Exit status 1 on errors, and when kicad-cli fails or writes no report. Harvested from the spotlight's erc.py (the
+kicad-cli variant; the konnect one is `Konnect().call("run_erc", ...)`).
 """
 import argparse
 import collections
-import json
 import os
 import sys
 import tempfile
 
-from ..kicad import cli
+from ..kicad import cli_report
 
 
 def run(sch, out=None):
     out = out or os.path.join(tempfile.gettempdir(), "pcbkit_erc.json")
-    cli("sch", "erc", "--format", "json", "--severity-all", "-o", out, sch, check=False)
-    with open(out) as fh:
-        return [x for s in json.load(fh)["sheets"] for x in s["violations"]]
+    d = cli_report(out, "sch", "erc", "--format", "json", "--severity-all", "-o", out, sch)
+    return [x for s in d["sheets"] for x in s["violations"]]
 
 
 def main(argv=None):

@@ -2,7 +2,9 @@
 
 Two interpreters are involved: the one pcbkit is installed in (uv's), and KiCad's bundled Python, the only one
 with `pcbnew`. A command that needs pcbnew calls `ensure_pcbnew()` first; outside KiCad's Python it re-executes
-the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP.
+the whole CLI under it, with this package on PYTHONPATH. Override the KiCad location with PCBKIT_KICAD_APP. On
+Linux (KiCad's packages, its Docker images) kicad-cli comes from PATH, pcbnew from /usr/bin/python3 and KiCad's
+symbol libraries from /usr/share/kicad/symbols.
 
 kicad-cli runs from a background copy of it, KiCadCLI.app under tools_dir()/kicad-cli/, so it shows no dock icon:
 from inside KiCad.app, macOS gives every run of it (DRC, ERC, renders, exports) the app's icon. The copy is
@@ -13,6 +15,7 @@ process holds stays valid while others make copies of another KiCad or a newer v
 changed since is removed. PCBKIT_KICAD_DOCK=1 runs KiCad's own kicad-cli.
 """
 import hashlib
+import json
 import os
 import plistlib
 import shutil
@@ -113,8 +116,16 @@ if "PCBKIT_KICAD_APP" in os.environ:
     # KiCad itself, not a copy named there: background_app() may remove that copy, and ensure_pcbnew()'s re-run and
     # every other child would inherit the gone path
     os.environ["PCBKIT_KICAD_APP"] = KICAD_APP
-KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
-KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin", "python3")
+if sys.platform == "darwin":
+    KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
+    KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin",
+                                "python3")
+    KICAD_SYMBOLS = os.path.join(KICAD_APP, "Contents", "SharedSupport", "symbols")
+else:
+    # KiCad's Linux packages and its Docker images (kicad/kicad): kicad-cli on PATH, pcbnew in the system Python
+    KICAD_CLI = shutil.which("kicad-cli") or "kicad-cli"
+    KICAD_PYTHON = "/usr/bin/python3"
+    KICAD_SYMBOLS = "/usr/share/kicad/symbols"
 
 
 def have_pcbnew():
@@ -143,6 +154,24 @@ def ensure_pcbnew():
 def cli(*args, check=True, capture=True):
     """Run kicad-cli. Returns the CompletedProcess; raises on failure when check is set."""
     return subprocess.run([KICAD_CLI, *args], check=check, capture_output=capture, text=True)
+
+
+def cli_report(out, *args):
+    """Run a kicad-cli command that writes a JSON report to out, and return the report. Any file at out is removed
+    first, so a run that fails can't leave an older report to be read in its place; a non-zero exit, or no readable
+    report, stops with kicad-cli's message."""
+    if os.path.exists(out):
+        os.remove(out)
+    r = cli(*args, check=False)
+    what = "kicad-cli %s %s on %s" % (args[0], args[1], args[-1])
+    if r.returncode:
+        how = "exit %d" % r.returncode if r.returncode > 0 else "killed by signal %d" % -r.returncode
+        sys.exit(f"{what} failed ({how}): {quiet(r.stderr + r.stdout).strip()[-1500:]}")
+    try:
+        with open(out) as fh:
+            return json.load(fh)
+    except (OSError, ValueError) as e:
+        sys.exit(f"{what} wrote no readable report to {out} ({e})")
 
 
 def quiet(text):

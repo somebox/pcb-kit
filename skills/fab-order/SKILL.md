@@ -26,6 +26,18 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 2. The files from `pcbkit release`, or from `pcbkit fab` for a quote. Regenerate them after any change to the kit's
    rotation table. Write down the placement count of the files you will upload: `pcbkit fab` prints it for each
    variant; for a release it is the CPL's rows less the header. JLC's BOM page must come to the same total.
+   Beside the BOM and CPL is the checklist for the placement viewer: `PLACEMENT-<board>-<label>-jlcpcb.md` in the
+   release folder and the order's `upload/`, or `PLACEMENT-<board>.md` from `pcbkit fab`. It lists every placed part
+   whose orientation matters, with the rotation rule behind its CPL angle and when that rule was last seen right.
+   A release made before pcbkit wrote the checklist has none, and `pcbkit release` never rewrites a release. Make
+   one beside it, leaving the release alone:
+   - Find the commit that added the release: `git log --diff-filter=A --format=%h -- <release dir>/MANIFEST.txt`.
+   - Extract the board's folder as it was then: `git archive <commit> <board folder> | tar -x -C <scratch>`.
+   - Run `pcbkit fab` on that copy into a scratch folder, passing the project's `placed` setting as `--placed`.
+   - If its CPL for the release's sides is the same file as the release's CPL, its checklist holds for the release.
+   - If they differ, the rotation table has changed since the release, and the release's CPL has the old angles.
+     Tell the user: `pcbkit release` would make a new version with the new angles and its own checklist. Until
+     then, compare the viewer's hover readings with the pad positions in KiCad at that version.
 3. Know each board's PCB options from the order guide (layers, thickness, mask, finish, order number) and what JLC
    assembles. Write any options that aren't there into the guide first.
 
@@ -74,19 +86,32 @@ has the fee table.
      check the quantity.
    - Any other unticked line: under Economic, probably a Standard-only part. Otherwise look up the part's stock.
    - DNP parts must be absent. Every other placed part must be there.
-3. **The placement viewer.** This is where errors show. Look at top and bottom, in 2D and in 3D:
-   - Zoom in on every polarised or asymmetric part: each leg on its pad, and the pin-1 dot (pink) at the silkscreen
-     mark. Zoom in properly: at board scale, a USB-C turned 180° looked right.
-   - Hovering in the 2D view shows board coordinates. Compare them with the pad positions in KiCad to tell a wrong
-     rotation from an offset.
+3. **The placement viewer.** This is where errors show. Work through the checklist, on top and bottom, in 2D and
+   in 3D; a front-only order needs only its Top table, a back-only order only its Bottom table.
+   - Its "By part" table comes first. Check the lines marked **never** first: their rotation rule has no check on
+     record. Then at least one part of every other line.
+   - Zoom in on each until single pads show: each leg on its pad, the body the way KiCad's footprint has it, and
+     the pin-1 dot (pink) on pad 1 by the silkscreen mark. Zoom in properly: at board scale, a USB-C turned 180°
+     looked right.
+   - Hovering in the 2D view shows board coordinates. Compare the reading over pad 1 with *Pad 1 at* and the
+     reading over the body with *Centre*. Centre right and pad 1 elsewhere is a wrong rotation; both shifted is an
+     offset. The checklist counts in mm from the drill/place origin with Y up. If the viewer counts from the board
+     outline's lower-left corner instead, subtract the corner the checklist gives.
+   - Which of those two frames the viewer uses has not been confirmed on a live order yet. Note the first reading
+     and which frame it matched in PRODUCTION.md, and tell the user, so the kit's checklist can say it.
    - Parts JLC has no model or footprint for show only their pads. JLC's engineers place them by hand.
-   - Fix a wrong part in the viewer for this order ("Rotate Right" is a quarter turn). Then fix
-     `pcbkit/data/jlc/corrections.csv` in the kit, so the next fab comes out right. Write the hand fix and its cart
-     number into PRODUCTION.md.
+   - Fix a wrong part in the viewer for this order ("Rotate Right" is a quarter turn, -90 on either side). Then fix
+     its rule in the kit's `pcbkit/data/jlc/corrections.csv`, so the next fab comes out right. When others in the
+     same package were right, a row keyed by the part's LCSC number stands in for its package rule for that part
+     alone; it does nothing for a footprint no rule matches (the checklist's *Rule* column shows which matched).
+     Write the hand fix and its cart number into PRODUCTION.md.
+   - Put the order's date in the Checked column of each rule the viewer showed right, the **never** ones above all.
+     The column changes no board's fab fingerprint, so no release is needed for it.
 4. Save to the cart. Write down the cart number and the PCB and assembly prices.
 
 What the viewer caught on 2026-10-26: SOT-23 and SOT-23-5 a quarter turn out (one rule matched both packages), the
 HRO TYPE-C-31-M-12 USB-C 180°, and 1.27 mm sockets a quarter turn (EasyEDA draws the footprint along X, KiCad along Y).
+Those rules, and the ones the viewer showed right that day, are dated 2026-10-26 in the Checked column.
 
 ## Parts for hand assembly (LCSC)
 
@@ -101,6 +126,7 @@ HRO TYPE-C-31-M-12 USB-C 180°, and 1.27 mm sockets a quarter turn (EasyEDA draw
 
 - PRODUCTION.md: the options chosen and why, every quote, the fee table if it changed, the viewer's fixes, and an
   Orders row (date, version, what, state).
+- The kit: corrected rules and the dates of the rules seen right, in `corrections.csv`, on a branch with a PR.
 - With `production/orders/`: a `draft` event in the order's order.toml with the cart prices, then `pcbkit production`.
   `submitted`, with the order number, follows once the user has paid.
 - Tell the user what each cart holds, the totals with and without shipping, anything turned by hand in the viewer,

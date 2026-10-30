@@ -188,8 +188,8 @@ def write(board, placed, placement, out, name):
     f2 = lambda v: ", ".join("0.000" if f"{c:.3f}" == "-0.000" else f"{c:.3f}" for c in v)  # noqa: E731
     lines = [f"# Placement check: {name}", "",
              f"Parts to check in JLC's placement preview before paying: {n} of the {n + left_out} parts JLC places on "
-             f"both sides ({len(rows['top'])} top, {len(rows['bottom'])} bottom). Two-pad parts drawn symmetrically are "
-             f"left out ({left_out}). For a front-only order, only the top ones; for a back-only order, only the "
+             f"both sides ({len(rows['top'])} top, {len(rows['bottom'])} bottom). Two-pad parts drawn symmetrically "
+             f"are left out ({left_out}). For a front-only order, only the top ones; for a back-only order, only the "
              "bottom ones.", "",
              "For each one, zoom in until single pads show:",
              "- every leg sits on its pad, and the body lies the way KiCad's footprint has it;",
@@ -204,9 +204,10 @@ def write(board, placed, placement, out, name):
              "drill/place file origin and the Y axis increasing up.", "",
              "*CPL* is KiCad's angle (on the bottom, 180 minus KiCad's) plus *Corr.*, the correction from pcbkit's "
              "rotation table (data/jlc/corrections.csv). *Rule* is the table's row: a pattern and the field it "
-             "matched, or an LCSC number and the package rule it stands in for. *Checked* is the last time that row was seen right in JLC's preview; it was "
-             "right for the parts checked then, and JLC's footprint for another part in the same package can still "
-             "differ (SOT-23-5 comes both ways). **never**: no check on record, look at these first.", ""]
+             "matched, or an LCSC number and the package rule it stands in for. *Checked* is the last time that row "
+             "was seen right in JLC's preview; it was right for the parts checked then, and JLC's footprint for "
+             "another part in the same package can still differ (SOT-23-5 comes both ways). **never**: no check on "
+             "record, look at these first.", ""]
     if never:
         rules = {}
         for r in never:

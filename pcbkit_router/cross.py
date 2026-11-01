@@ -176,7 +176,7 @@ def find(geom, routes=(), nets=None, min_excess=0.0):
     """(chains, groups) for a board (and routes on it); nets: only the groups whose detour is one of these"""
     chs = [ch for n, c in copper(geom, routes).items() for ch in chains(n, c)]
     gs = [g for g in crossbacks(chs, crossings(chs))
-          if g["excess"] >= min_excess and (nets is None or short(chs[g["detour"]]["net"]) in nets)]
+          if g["excess"] >= min_excess and (nets is None or chs[g["detour"]]["net"] in nets)]
     gs.sort(key=lambda g: -(g["excess"] + 4 * g["vias"]))
     return chs, gs
 
@@ -218,7 +218,7 @@ def main():
     opt = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
     geom = json.load(open(args[0]))
     routes = json.load(open(opt["routes"])) if "routes" in opt else ()
-    nets = {short(s["net"]) for s in json.load(open(opt["nets"]))["nets"]} if "nets" in opt else None
+    nets = {s["net"] for s in json.load(open(opt["nets"]))["nets"]} if "nets" in opt else None
     chs, gs = find(geom, routes, nets, float(opt.get("min", 0.5)))
     print(f"{len(chs)} chains, {len(gs)} cross-backs (excess >= {opt.get('min', 0.5)} mm)")
     print(f"{'#':>3} {'detour':<14} {'crossed':<34} {'mm':>6} {'vias':>4} {'crossed mm':>10} {'vias':>4} {'excess':>6}  where")

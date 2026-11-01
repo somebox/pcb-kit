@@ -2,8 +2,9 @@
 
 Between two terminals (pads or vias the pour joins) a pour carries current through its narrowest point on the
 widest path: the largest width b such that the copper at least b wide, with the terminals, still joins them. The
-spine is that path at 80 % of b: while it stays copper the pour keeps most of its width between the two, so a
-signal may notch the pour but never sever it or narrow it by more than a fifth. Rasters are bool arrays at `res` mm per cell."""
+spine is that path at 80 % of b, up to 2 mm: while it stays copper a signal may notch the pour but never sever it, and a
+path up to 2.5 mm wide can't lose more than a fifth. A wider one can, and pourcheck.py flags that. Rasters are bool
+arrays at `res` mm per cell."""
 import itertools
 import numpy as np
 from numba import njit
@@ -52,7 +53,8 @@ def spines(cu, terms, res, keep_w=0.8, max_w=2.0):
     for bn, i, j in pairs:
         if bn <= 0 or find(i) == find(j): continue
         parent[find(i)] = find(j)
-        if bn >= 10: continue                    # the terminals touch: nothing to keep
+        if (ndimage.binary_dilation(terms[i][1], structure=np.ones((3, 3))) & terms[j][1]).any():
+            continue                             # the terminals touch: nothing to keep
         path = _bfs(w >= bn - 1e-6, terms[i][1], terms[j][1])
         if not path.any(): continue
         r = min(bn * keep_w, max_w) / 2 / res

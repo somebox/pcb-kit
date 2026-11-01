@@ -241,7 +241,7 @@ class Polish:
         if rings is None:
             rings = self.cache["rings"] = {"F": [], "B": []}
             for it in self.geom["items"]:
-                if it["kind"] in ("pad", "track", "zone") and it["layer"] in "FB":
+                if it["kind"] in ("pad", "track", "zone", "graphic") and it["layer"] in "FB":
                     for poly in it["polys"]:
                         for ring in poly:
                             r = np.array(ring + ring[:1]); rings[it["layer"]].append((it["net"], r, r.min(0), r.max(0)))

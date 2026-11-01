@@ -23,7 +23,6 @@ import sys, json, math, heapq, collections
 import numpy as np
 from . import cross
 
-short = lambda n: n.split("/")[-1]
 EPS = 0.003
 COLS = ["vias", "mm", "back_mm", "necks", "necks_mid", "necks_long", "neck_mm", "tees", "corners90", "acute", "jogs", "via_in_ic",
         "via_crowd", "via_dogbone", "via_1_3", "via_mid", "hug_mm", "under_mm", "under_power_mm", "belly_mm", "detour_mm",
@@ -63,7 +62,7 @@ def clip_len(x0, y0, x1, y1, r):
 
 class Pad:
     def __init__(self, it):
-        self.net, self.L = short(it["net"]), it["layer"]
+        self.net, self.L = it["net"], it["layer"]
         self.edges = []
         xs, ys = [], []
         for poly in it["polys"]:
@@ -110,7 +109,7 @@ def copper(base, routing, via_r=0.225):
     """{net: segments [layer, x0, y0, x1, y1, w, fixed]}, {net: vias [x, y, r, fixed]}: the base's and what's added"""
     segs, vias = collections.defaultdict(list), collections.defaultdict(list)
     def seg(n, L, s, w, fx):
-        if L in "FB" and math.hypot(s[2] - s[0], s[3] - s[1]) > 1e-4: segs[short(n)].append([L, *s, w, fx])
+        if L in "FB" and math.hypot(s[2] - s[0], s[3] - s[1]) > 1e-4: segs[n].append([L, *s, w, fx])
     if isinstance(routing, dict):                   # another board's geom.py dump: its own copper, marked against the base
         keys = base_keys(base)
         for it in routing["items"]:
@@ -119,13 +118,13 @@ def copper(base, routing, via_r=0.225):
                 seg(it["net"], it["layer"], it["seg"], it["w"], ("t", it["net"], it["layer"], min(a, c), max(a, c)) in keys)
             elif it["kind"] == "via":
                 x, y, r = it["circle"]
-                vias[short(it["net"])].append((x, y, r, ("v", it["net"], round(x, 3), round(y, 3)) in keys))
+                vias[it["net"]].append((x, y, r, ("v", it["net"], round(x, 3), round(y, 3)) in keys))
         return segs, vias
     for it in base["items"]:
         if it["kind"] == "track": seg(it["net"], it["layer"], it["seg"], it["w"], True)
-        elif it["kind"] == "via": vias[short(it["net"])].append((*it["circle"], True))
+        elif it["kind"] == "via": vias[it["net"]].append((*it["circle"], True))
     for r in routing:
-        n = short(r["net"])
+        n = r["net"]
         for t in r["tracks"]:
             for a, b in zip(t["pts"], t["pts"][1:]): seg(n, t["layer"], [*a, *b], t["w"], False)
         for x, y in r["vias"]: vias[n].append((x, y, via_r, False))
@@ -134,7 +133,7 @@ def copper(base, routing, via_r=0.225):
 
 def lint(job, base, routing):
     dflt = job["defaults"]["w"]
-    width = {short(n["net"]): n.get("w", dflt) for n in job["nets"]}
+    width = {n["net"]: n.get("w", dflt) for n in job["nets"]}
     power = {n for n, w in width.items() if w > dflt + 1e-6}
     pads = [Pad(it) for it in base["items"] if it["kind"] == "pad" and it["polys"]]
     grid = collections.defaultdict(list)
@@ -263,7 +262,7 @@ def lint(job, base, routing):
                     out["belly_mm"] += clip_len(s[1], s[2], s[3], s[4], (bb[0] + 0.9, bb[1] + 0.9, bb[2] - 0.9, bb[3] - 0.9))
             out["mm"] += L
             if s[0] == "B": out["back_mm"] += L
-        pts = [tuple(p["at"]) for p in base["pads"] if short(p["net"]) == n]
+        pts = [tuple(p["at"]) for p in base["pads"] if p["net"] == n]
         out["detour_mm"] += max(0.0, sum(math.hypot(s[3] - s[1], s[4] - s[2]) for s in S) - 1.3 * octile_mst(pts))
     out["via_dogbone"] = sum(1 for d in stub if d <= 1.0)
     out["via_1_3"] = sum(1 for d in stub if 1.0 < d <= 3.0)

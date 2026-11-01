@@ -24,6 +24,7 @@ def main():
     free = free["free"] if isinstance(free, dict) else free
     job = json.load(open(opt["job"])) if "job" in opt else {}
     bd = Board(geom, via=tuple(map(float, opt["via"].split(","))) if "via" in opt else None, refs=job.get("refs")); VIA_R = bd.via_r
+    bd.set_clearances(job.get("clr_nets", {}))
     for r in routes:
         c = bd.code(r["net"])
         for t in r["tracks"]:
@@ -33,10 +34,10 @@ def main():
     pads = {p["ref"]: p for p in full["pads"] if p["ref"] in free}
     for ref in set(free) - set(pads): print(f"{ref}: not on the board, left where it is")
     free = [r for r in free if r in pads]
-    HOLE = bd.drill_r + DEF["hole_clr"]
+    HOLE = bd.drill_r + job.get("defaults", {}).get("hole_clr", DEF["hole_clr"])
     side = {r: "B" if "B" in p["polys"] else "F" for r, p in pads.items()}
     far = lambda r: "FB"[side[r] == "F"]
-    rad = {r: (pad_box(p["polys"][side[r]])[2] - pad_box(p["polys"][side[r]])[0]) / 2 for r, p in pads.items()}
+    rad = {r: max(math.dist(p["at"], q) for poly in p["polys"][side[r]] for q in poly[0]) for r, p in pads.items()}   # round the whole pad, any shape
     courts = np.zeros((bd.H, bd.W), bool)                    # no pad here: courtyards of either side, all parts
     for p in geom["parts"]:
         if bd.is_ref(p["ref"], "holes"): continue
@@ -67,27 +68,27 @@ def main():
 
     def place(ref, placed):
         p = pads[ref]; c = bd.code(p["net"]); r = rad[ref]; best = None; S, O = side[ref], far(ref)
-        lab = bd.lab[S]; foreign = (lab != 0) & (lab != c)
-        d = ndimage.distance_transform_edt(~foreign) * RES
+        own = job.get("clr_nets", {}).get(p["net"], CLR)
+        d, dO, dI = bd.gap(bd.lab[S], c, CLR, own), bd.gap(bd.lab[O], c, CLR, own), bd.gap(bd.lab_in, c, CLR, own)
         def stub_free(a, b):
             k = max(2, int(math.dist(a, b) / 0.05))
             return all(d[int((a[1] + (b[1] - a[1]) * i / k - bd.Y0) / RES + 0.5), int((a[0] + (b[0] - a[0]) * i / k - bd.X0) / RES + 0.5)] >= 0.125 + CLR + RES for i in range(k + 1))
-        dO = ndimage.distance_transform_edt(~((bd.lab[O] != 0) & (bd.lab[O] != c))) * RES
         smd = bd.static_edt("smd"); dkv = bd.static_edt("kv"); hole = ndimage.distance_transform_edt(~bd.holes) * RES
+        def via_ok(x, y, i, j):
+            """a new via here clears the far side, the inner tracks, pads, rule areas, drills and the net's own vias"""
+            return (min(dO[j, i], dI[j, i]) >= VIA_R + CLR + RES and smd[j, i] >= VIA_R + 0.1 + RES and dkv[j, i] >= VIA_R + RES
+                    and hole[j, i] >= HOLE and not no_via[j, i] and not any(math.dist((x, y), v[:2]) < 0.6 for v in bd.vias if v[2] == c))
         for x, y, extra, kind in own_points(p["net"], S):
             i, j = int((x - bd.X0) / RES + 0.5), int((y - bd.Y0) / RES + 0.5)
             if d[j, i] < r + CLR + RES or inside[S][j, i] or bd.kt[S][j, i]: continue
             if any(math.dist((x, y), q) < PITCH for q in placed): continue
-            if kind == O:                                    # the new via
-                if dO[j, i] < VIA_R + CLR + RES or smd[j, i] < VIA_R + 0.1 + RES or dkv[j, i] < VIA_R + RES or hole[j, i] < HOLE or no_via[j, i]: continue
-                if any(math.dist((x, y), v[:2]) < 0.6 for v in bd.vias if v[2] == c): continue
+            if kind == O and not via_ok(x, y, i, j): continue
             s = math.dist((x, y), p["at"]) * 0.2 + extra
             if best is None or s < best[0]: best = (s, x, y, kind, None)
         if best: return best
         for x, y, extra, kind in own_points(p["net"], S):    # beside the copper, on a stub
             i, j = int((x - bd.X0) / RES + 0.5), int((y - bd.Y0) / RES + 0.5)
-            if kind == O and (dO[j, i] < VIA_R + CLR + RES or smd[j, i] < VIA_R + 0.1 + RES or dkv[j, i] < VIA_R + RES or hole[j, i] < HOLE or no_via[j, i] or
-                                any(math.dist((x, y), v[:2]) < 0.6 for v in bd.vias if v[2] == c)): continue
+            if kind == O and not via_ok(x, y, i, j): continue
             for a in range(8):
                 for L in (1.0, 1.5, 2.0, 2.5, 3.0):
                     u, v = round(x + L * math.cos(a * math.pi / 4), 2), round(y + L * math.sin(a * math.pi / 4), 2)
@@ -113,6 +114,8 @@ def main():
             stubs.setdefault(q["net"], []).append(dict(layer=S, w=0.25, pts=[list(at), [x, y]])); bd.paint_seg(S, *at, x, y, 0.25, c)
         bd.put(bd.lab[S], bd.cdisc(x, y, rad[ref]), c)
         print(f"{ref} {q['net']}: ({q['at'][0]:.2f},{q['at'][1]:.2f}) -> ({x:.2f},{y:.2f}), on {dict(V='a via', F='F.Cu', B='B.Cu').get(kind, 'a stub')}, {math.dist((x, y), q['at']):.1f} mm")
+    for n in sorted((set(added) | set(stubs)) - {r["net"] for r in routes}):     # a kept net: no route of its own yet
+        routes.append(dict(net=n, tracks=[], vias=[], failed=0))
     for r in routes:
         r["vias"] = list(r["vias"]) + added.get(r["net"], []); r["tracks"] = list(r["tracks"]) + stubs.get(r["net"], [])
     json.dump(dict(moves=moves, routes=routes), open(args[4], "w"), indent=0)

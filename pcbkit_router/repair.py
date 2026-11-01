@@ -22,7 +22,8 @@ def main():
     CLR = float(opt.get("clr", 0.15)); W = 0.3; REACH = 0.5
     geom, tp = json.load(open(args[0])), json.load(open(args[2]))
     job = json.load(open(opt["job"])) if "job" in opt else {}
-    keep = job.get("keep", []); GND = job.get("ground", GROUND)
+    keep = job.get("keep", []); GND = job.get("ground", GROUND); CLRS = job.get("clr_nets", {})
+    HOLE_CLR = job.get("defaults", {}).get("hole_clr", DEF["hole_clr"])
     text = open(args[1]).read()
     orphans, others, gaps = [], [], []
     for blk in re.split(r"\n(?=\[)", text):
@@ -40,18 +41,16 @@ def main():
 
 
     def clear_of(net):
-        """{layer: distance to other nets' copper, rule areas and the job's keep-outs}, for this net's track"""
-        me = bd.code(net); out = {}
+        """{layer, or "i" for the inner tracks: distance to other nets' copper, rule areas and the job's keep-outs}, for this
+        net's track; each net's clearance counts, this one's and the others'"""
+        me = bd.code(net); own = CLRS.get(net, CLR); out = dict(i=bd.gap(bd.lab_in, me, CLR, own))
         for L in "FB":
-            d = ndimage.distance_transform_edt(~(((bd.lab[L] != 0) & (bd.lab[L] != me)) | bd.kt[L] | bd.keep_mask(keep, net, L))) * RES
-            for cl, codes in bd.wide_clr:                       # a stricter class's copper: its clearance, not the job's
-                m = np.isin(bd.lab[L], codes) & (bd.lab[L] != me)
-                if cl > CLR and m.any(): d = np.minimum(d, ndimage.distance_transform_edt(~m) * RES - (cl - CLR))
-            out[L] = d
+            walls = bd.kt[L] | bd.keep_mask(keep, net, L); d = bd.gap(bd.lab[L], me, CLR, own)
+            out[L] = np.minimum(d, ndimage.distance_transform_edt(~walls) * RES) if walls.any() else d
         return out
 
 
-    dist = clear_of(GND)
+    dist = None                                                 # tie_pad's: ground's clear_of, as of the last repair
     smd = bd.static_edt("smd"); hole = ndimage.distance_transform_edt(~bd.holes) * RES
     no_via = (bd.static_edt("kv") < VIA_R + RES) | bd.keep_mask(keep, GND, "v")
 
@@ -60,6 +59,18 @@ def main():
         r = next((r for r in tp["routes"] if r["net"] == net), None)
         if r is None: r = dict(net=net, tracks=[], vias=[], failed=0); tp["routes"].append(r)
         return r
+
+
+    def add_track(net, L, pts, w):
+        """a stub, painted too: the repairs after it have to clear it"""
+        r = route_of(net); r["tracks"] = list(r["tracks"]) + [dict(layer=L, w=w, pts=[list(q) for q in pts])]
+        for a, b in zip(pts, pts[1:]): bd.paint_seg(L, *a, *b, w, bd.code(net))
+
+
+    def add_via(net, v):
+        nonlocal hole
+        r = route_of(net); r["vias"] = list(r["vias"]) + [list(v)]; bd.add_via(*v, bd.code(net))
+        hole = ndimage.distance_transform_edt(~bd.holes) * RES
 
 
     def the_pad(ref, num, x, y):
@@ -103,11 +114,13 @@ def main():
     plane = (bd.lab["1"] == c) | (bd.lab["2"] == c)            # an inner ground plane: a via lands on it anywhere
     def tie_pad(p):
         """a ground pad cut off: a stub to ground copper close by on its own side, else a stub to a new via into the other side's pour"""
+        nonlocal dist
+        dist = clear_of(GND)
         ref, num = p["ref"], p["num"]
-        L = p["layers"][0]; O = "FB"[L == "F"]; ax, ay = p["at"]; best = None; out = route_of(GND)
+        L = p["layers"][0]; O = "FB"[L == "F"]; ax, ay = p["at"]; best = None
         st = near_copper(p, L)
         if st:
-            out["tracks"].append(dict(layer=L, w=st[1], pts=[list(q) for q in st[0]]))
+            add_track(GND, L, st[0], st[1])
             print(f"{ref}.{num}: stub to ground copper, {math.dist(*st[0]):.2f} mm at {st[1]} mm"); return
         for r in np.arange(0.5, 3.01, 0.1):
             for k in range(32):
@@ -115,8 +128,8 @@ def main():
                 i, j = int((x - bd.X0) / RES + 0.5), int((y - bd.Y0) / RES + 0.5)
                 if not (0 <= i < bd.W and 0 <= j < bd.H) or no_via[j, i]: continue
                 if not plane[j, i] and pour[O][j, i] < VIA_R + 0.05: continue
-                if dist[L][j, i] < VIA_R + CLR + RES or dist[O][j, i] < VIA_R + CLR + RES: continue
-                if smd[j, i] < VIA_R + 0.1 + RES or hole[j, i] < bd.drill_r + DEF["hole_clr"]: continue
+                if min(dist[L][j, i], dist[O][j, i], dist["i"][j, i]) < VIA_R + CLR + RES: continue
+                if smd[j, i] < VIA_R + 0.1 + RES or hole[j, i] < bd.drill_r + HOLE_CLR: continue
                 for w in (W, 0.2):
                     if free(L, (ax, ay), (x, y), w): best = ([(ax, ay), (x, y)], (x, y), w); break
                     for e in ((x, ay), (ax, y)):
@@ -125,7 +138,7 @@ def main():
                 if best: break
             if best: break
         if best is None: print(f"{ref}.{num}: no spot"); return
-        pts, v, w = best; out["tracks"].append(dict(layer=L, w=w, pts=[list(q) for q in pts])); out["vias"].append(list(v))
+        pts, v, w = best; add_track(GND, L, pts, w); add_via(GND, v)
         print(f"{ref}.{num}: via at ({v[0]:.2f},{v[1]:.2f}), {sum(math.dist(a, b) for a, b in zip(pts, pts[1:])):.1f} mm of stub")
 
 
@@ -141,7 +154,7 @@ def main():
         L = p["layers"][0]; q = best and [round(c, 3) for c in best[1]]
         if best is None or best[0] - best[2] / 2 > REACH or not free(L, (ax, ay), q, 0.2, clear_of(net)):
             print(f"{ref}.{num}: still open, {f'{best[0]:.2f} mm from its' if best else 'no'} {net} track"); continue
-        r = route_of(net); r["tracks"] = list(r["tracks"]) + [dict(layer=L, w=0.2, pts=[[ax, ay], q])]
+        add_track(net, L, [[ax, ay], q], 0.2)
         print(f"{ref}.{num}: stub to its {net} track, {best[0]:.2f} mm")
 
 
@@ -164,8 +177,8 @@ def main():
         root = np.array([find(a) for a in range(base + 1)]); near = {L: root[lab[L]] for L in LAYERS}
         size = sum(np.bincount(near[L].ravel(), minlength=base + 1) for L in LAYERS); size[0] = 0; main = int(size.argmax())
         spot = ~((bd.static_edt("kv") < VIA_R + RES) | bd.keep_mask(keep, net, "v"))
-        spot &= (d["F"] >= VIA_R + CLR + RES) & (d["B"] >= VIA_R + CLR + RES)
-        spot &= (smd >= VIA_R + 0.1 + RES) & (hole >= bd.drill_r + DEF["hole_clr"])
+        spot &= (d["F"] >= VIA_R + CLR + RES) & (d["B"] >= VIA_R + CLR + RES) & (d["i"] >= VIA_R + CLR + RES)
+        spot &= (smd >= VIA_R + 0.1 + RES) & (hole >= bd.drill_r + HOLE_CLR)
         deep = lambda m: ndimage.distance_transform_edt(m) * RES
         big = {L: deep(near[L] == main) for L in LAYERS if (near[L] == main).any()}
         for k in map(int, np.nonzero(size)[0]):
@@ -186,7 +199,7 @@ def main():
                 for q in (held if net == GND else []): tie_pad(q)
                 continue
             v = [round(bd.X0 + best[1] * RES, 3), round(bd.Y0 + best[2] * RES, 3)]
-            r = route_of(net); r["vias"] = list(r["vias"]) + [v]; bd.add_via(*v, code)
+            add_via(net, v); spot &= hole >= bd.drill_r + HOLE_CLR
             print(f"{net}: a piece of {area:.1f} mm2 joined by a via at ({v[0]:.2f},{v[1]:.2f}), {best[3]} to {best[4]}")
 
 
@@ -228,7 +241,7 @@ def main():
                             q = nearest(e, t); d = math.dist(e, q)
                             if d <= REACH and (best is None or d < best[0]) and free(L, e, q, 0.2, clear_of(net)): best = (d, list(e), [round(c, 3) for c in q])
             if best:
-                r = route_of(net); r["tracks"] = list(r["tracks"]) + [dict(layer=L, w=0.2, pts=[best[1], best[2]])]
+                add_track(net, L, [best[1], best[2]], 0.2)
                 print(f"{net}: stub between its tracks, {best[0]:.2f} mm"); return
         print(f"{net}: still open, no gap of {REACH} mm or less")
 

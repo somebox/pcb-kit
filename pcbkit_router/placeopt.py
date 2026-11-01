@@ -23,7 +23,7 @@ stub on such a pad goes with the move (moves.py)."""
 import sys, json, math, time, io, contextlib, fnmatch, itertools, multiprocessing
 import numpy as np
 from scipy import ndimage
-from .board import Board, pad_box
+from .board import Board, pad_box, seg_box
 from .costs import RES, STEP, DEF, TRUE, GROUND, REFS
 from .netroute import NetRouter
 
@@ -95,11 +95,25 @@ def apply_move(geom, ref, dx, dy, t):
     return dict(geom, items=items, pads=pads, parts=parts)
 
 
+def inside(poly, x, y):
+    """is the point on [outline, holes...]? Even-odd, so a cut-out is off it"""
+    n = 0
+    for ring in poly:
+        for (ax, ay), (bx, by) in zip(ring, ring[1:] + ring[:1]):
+            if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay): n += 1
+    return n % 2 == 1
+
+
+def on_board(geom, box, margin=0.3):
+    """is the box, with margin round it, on the board? Clear of every edge, so one corner says for all of it"""
+    box = (box[0] - margin, box[1] - margin, box[2] + margin, box[3] + margin)
+    if any(seg_box(a, b, box) for poly in geom["outline"] for ring in poly for a, b in zip(ring, ring[1:] + ring[:1])): return False
+    return any(inside(poly, box[0], box[1]) for poly in geom["outline"])
+
+
 def court_ok(geom, ref, gap):
     me = part_of(geom, ref); a = me["court"]
-    x0, y0, x1, y1 = [p for poly in geom["outline"] for p in [(min(q[0] for q in poly[0]), min(q[1] for q in poly[0]),
-                                                              max(q[0] for q in poly[0]), max(q[1] for q in poly[0]))]][0]
-    if a[0] < x0 + 0.3 or a[1] < y0 + 0.3 or a[2] > x1 - 0.3 or a[3] > y1 - 0.3: return False
+    if not on_board(geom, a): return False
     for p in geom["parts"]:                             # a back-side test pad doesn't go under a front part either
         if p["ref"] == ref or p["ref"].startswith(tuple(RF["holes"])) or (p["side"] != me["side"] and not ref.startswith(tuple(RF["test"]))): continue
         b = p["court"]
@@ -218,6 +232,7 @@ class Search:
         for p in g["parts"]:
             ref = p["ref"]
             if not any(fnmatch.fnmatch(ref, m) for m in cfg["movable"]) or ref in cfg.get("fixed", []): continue
+            if any(g["items"][i].get("locked") for i in kept_stubs(g, ref)): continue    # a locked track holds the part
             pn = {q["net"] for q in g["pads"] if q["ref"] == ref}
             if not pn or pn - nets - {GND, ""}: continue
             lim = cfg.get("limits", {}).get(ref, cfg["limit"])

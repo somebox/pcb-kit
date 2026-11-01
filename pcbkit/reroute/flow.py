@@ -26,15 +26,16 @@ differential pair stays as it was drawn: name it in "keep". "refs" are reference
 them. "route" goes to nroute.py as options, and --key=value goes there over it.
 
 A run writes OUT/boards/NAME/ (OUT: --out, by default build/reroute in the project): base/ (job.py's), job/ (moves.py's: in,
-full, hand, job.json), routes.json, final.kicad_pcb and .rpt, summary.json. A step whose output is there is skipped, unless
-a step before it ran; --from=STEP does that step and those after it again, --until=STEP stops after it. --bench copies the
-job to the bench.
+full, hand, job.json), routes.json, final.kicad_pcb and .rpt, summary.json. A step that finished on these settings, this board
+and this code is skipped, unless a step before it ran. --from=STEP does that step and those after it again, and takes those
+before it as they stand; --until=STEP stops after it. --bench copies the job to the bench.
 
 `corpus` runs bench/corpus.json's boards, each at its pinned commit, one after the other, and prints them against
 bench/baseline.json; --table only prints, --save makes these results the baseline. `bench` runs nroute alone on those boards
 side by side, for a change to the router (pcbkit_router's bench.py). `page` draws a comparison page (page.py). Both of these
 files are in a checkout of pcb-kit, and the corpus needs its projects' clones.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -52,7 +53,6 @@ CORPUS, BASELINE = ROOT / "bench" / "corpus.json", ROOT / "bench" / "baseline.js
 STEPS = ["job", "place", "route", "finish", "review"]
 QUIET = ("wxapp", "swig", "debug:", "traits", "no destructor found")
 MEASURES = ("vias", "mm", "corners90", "jogs", "tees", "necks", "via_in_ic", "hug_mm", "under_mm", "detour_mm", "crossbacks")
-DONE = dict(job="base/job.json", place="job/job.json", route="routes.json", finish="final.kicad_pcb", review="summary.json")
 
 
 def router_dir():
@@ -189,7 +189,7 @@ def review_step(cfg, out, secs):
     run(KICAD_PYTHON, "pcbkit.reroute.geom", D / "hand.kicad_pcb", D / "hand.json")
     # each on the board it was laid on: the old routing on the parts where they were, the new one on the parts as moved
     print(run(router(), "pcbkit_router.lint", B / "job.json", B / "in.json", f"old={D / 'hand.json'}", f"--json={out / 'lint-old.json'}"), flush=True)
-    print(run(router(), "pcbkit_router.lint", D / "job.json", D / "in.json", f"new={out / 'routes.json'}", f"--json={out / 'lint-new.json'}"), flush=True)
+    print(run(router(), "pcbkit_router.lint", D / "job.json", D / "in.json", f"new={out / 'final.json'}", f"--json={out / 'lint-new.json'}"), flush=True)
     job = read(D / "job.json")
     if job.get("soft_pours"):
         print(run(router(), "pcbkit_router.pourcheck", D / "in.json", out / "final.json", ",".join(job["soft_pours"])), flush=True)
@@ -201,19 +201,33 @@ def review_step(cfg, out, secs):
     print(f"{s['failed']} failed; DRC old {s['drc']['old']}; new {s['drc']['new']}", flush=True)
 
 
+def stamp(cfg, opt):
+    """what a step's result rests on: the settings, the board's files and the router's code"""
+    h = hashlib.sha256(json.dumps([cfg, opt], sort_keys=True).encode())
+    base = os.path.splitext(cfg["board"])[0]
+    files = [Path(f"{base}.{e}") for e in ("kicad_pcb", "kicad_pro", "kicad_dru")]
+    for p in files + sorted((ROOT / "pcbkit_router").glob("*.py")) + sorted((ROOT / "pcbkit" / "reroute").glob("*.py")):
+        if p.exists():
+            h.update(p.read_bytes())
+    return h.hexdigest()
+
+
 def route_board(cfg, work, opt):
     """one board through the steps; opt: from, until, bench, and the rest goes to nroute"""
     opt = dict(opt)
     out = work / "boards" / cfg["name"]
     out.mkdir(parents=True, exist_ok=True)
-    start = STEPS.index(opt.pop("from")) if "from" in opt else len(STEPS)
+    start = STEPS.index(opt.pop("from")) if "from" in opt else None
     bench = opt.pop("bench", None)
     stop = STEPS.index(opt.pop("until")) if "until" in opt else len(STEPS) - 1
-    secs, ran = {}, False                       # after a step that ran, whatever followed it is stale
+    key, secs, ran = stamp(cfg, opt), {}, False     # after a step that ran, whatever followed it is stale
     for i, step in enumerate(STEPS[:stop + 1]):
-        if i < start and (out / DONE[step]).exists() and not ran:
+        mark = out / f".done-{step}"                # written last: a step that failed left no mark
+        if not ran and mark.exists() and (mark.read_text() == key if start is None else i < start):
             continue
         ran = True
+        for s in STEPS[i:]:
+            (out / f".done-{s}").unlink(missing_ok=True)
         t0 = time.time()
         print(f"--- {step}", flush=True)
         if step == "job":
@@ -227,6 +241,7 @@ def route_board(cfg, work, opt):
         else:
             review_step(cfg, out, secs)
         secs[step] = round(time.time() - t0)
+        mark.write_text(key)
     if opt and "route" not in secs:
         sys.exit(f"the route step didn't run, so these did nothing: {sorted(opt)} (--from=route runs it)")
     if bench:

@@ -38,6 +38,9 @@ def move(b, moves, free, ground, keep_free):
             box = pad.GetBoundingBox()
             box.Inflate(mm(0.05))
             for t in [t for t in gnd if box.Contains(t.GetStart()) or box.Contains(t.GetEnd())]:
+                if t.IsLocked():                # placeopt.py doesn't move such a part, but MOVES can be anyone's
+                    print(f"!! {r} moved off a locked track of {ground}, which stays", flush=True)
+                    continue
                 b.Remove(t)
                 gnd.remove(t)
         p = fp.GetPosition()

@@ -234,6 +234,17 @@ class Board:
         for n, c in nets.items(): by.setdefault(c, []).append(self.code(n))
         self.wide_clr = sorted((c, np.array(v)) for c, v in by.items())
 
+    def gap(self, lab, c, clr, own=0.0):
+        """distance (mm) to the copper in lab of every net but c, as something keeping clr sees it: less what's asked beyond
+        clr, by this net's own clearance or by a stricter class's for its copper (DRC takes the larger of the two)"""
+        m = (lab != 0) & (lab != c)
+        if not m.any(): return np.full(lab.shape, 1e3, np.float32)
+        d = ndimage.distance_transform_edt(~m) * RES - max(own - clr, 0.0)
+        for cl, codes in self.wide_clr:
+            w = np.isin(lab, codes) & (lab != c)
+            if cl > max(clr, own) and w.any(): d = np.minimum(d, ndimage.distance_transform_edt(~w) * RES - (cl - clr))
+        return d
+
     def keep_mask(self, keep, net, layer):
         """a job's keep-out rectangles that hold for net on a layer ("v": for vias), as a raster"""
         out = np.zeros((self.H, self.W), bool)

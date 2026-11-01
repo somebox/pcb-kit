@@ -139,7 +139,9 @@ net's width come from the board.
   number, not the machine's core count, so a run repeats on another machine. A board with a failed net is worth trying at
   another count.
 
-`--from=route` re-runs from a step, `--until=job` stops after one, and any `--key=value` goes to `nroute.py`, over `route`.
+A run skips a step that finished on the same settings, board files and router code, so change the settings and run it
+again. `--from=route` re-runs from a step and takes the steps before it as they stand, `--until=job` stops after one, and
+any `--key=value` goes to `nroute.py`, over `route`.
 
 ## Limits
 
@@ -156,6 +158,9 @@ net's width come from the board.
   makes DRC happy but may not carry the current: read its output on a power plane.
 - Differential pairs aren't routed as pairs, and nothing is length-matched.
 - The placement search knows nets, not current loops, thermal paths or assembly.
+- A moved part takes the kept ground tracks on its pads with it. If one of those joined another part's pad, the pour or
+  `repair.py` has to reach that pad, and DRC says if neither did. A part with a locked ground track doesn't move.
+- A soft pour's protected path stops at 2 mm wide, so a wider path can lose more than a fifth; `pourcheck.py` flags it.
 
 ## Results
 
@@ -192,6 +197,7 @@ pcbkit reroute corpus                                                     # the 
 pcbkit reroute corpus --table --save                                      # these results become the baseline
 ```
 
+`pcbkit reroute corpus` runs again after any change to the router's code, and an interrupted run picks up where it stopped.
 `bench/corpus.json` pins each board to a commit of its project, so the boards stay the same while the projects move on; it
 reads them from your local clones. It pins each board's `workers` too, because a run repeats exactly only for a given count
 (see Settings). `pcbkit reroute bench` doesn't read that setting, so give every run the same `--workers`. Most of the corpus

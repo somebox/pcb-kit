@@ -5,10 +5,10 @@ again at the width it had.
                                  [--keepout=x0,y0,x1,y1] [--ground=GND]        (KiCad's Python)
 
 - Nets in --keep (full names, or the last part of a hierarchical one) keep all their copper (tracks, vias); so does every
-  track of --keep-w mm or wider (power trunks), with the vias on it, every locked track and via, and every net with a
-  track on an inner layer: the router lays F.Cu and B.Cu only. Everything else is taken out, and every net with two pads
-  or more that isn't kept is routed, at the width most of its taken-out track had (its class's width when it had none),
-  narrowing at a pad as far as the track it had did, down to the board's minimum.
+  track of --keep-w mm or wider (power trunks), with the vias on it, every locked track and via, every net with a track on
+  an inner layer (the router lays F.Cu and B.Cu only), and every net with fewer than two pads (nothing would route it
+  again). Everything else is taken out and routed, at the width most of its taken-out track had (its class's width when
+  it had none), narrowing at a pad as far as the track it had did, down to the board's minimum.
 - A board with inner layers pays less for track under an IC (pcbkit_router's costs.py has the cost for two layers, where
   the far side is the ground return).
 - The rules come from the board: hole-to-hole, the via most of the taken-out vias had (the Default class's when there are
@@ -68,17 +68,19 @@ def main(argv=None):
     vias = [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_VIA_T]
     inner = {t.GetNetname() for t in tracks if t.GetLayer() not in (F, B_Cu)}
     net_class = {n.GetNetname(): n.GetNetClassName() for n in b.GetNetsByName().values()}
-    held = {n for n in net_class if n in keep_nets or short(n) in keep_nets or n.startswith("unconnected-")} | inner
+    named = [n for n in net_class if n == ground or short(n) == ground]
+    if ground not in named and len(named) == 1:    # a hierarchical ground: DRC and the pads give its full name
+        ground = named[0]
+    pads = collections.Counter(p.GetNetname() for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetname())
+    held = {n for n in net_class if n in keep_nets or short(n) in keep_nets or n.startswith("unconnected-") or pads[n] < 2} | inner
     kept = {id(t) for t in tracks if t.GetNetname() in held or t.IsLocked() or mm(t.GetWidth()) >= keep_w - 1e-6}
 
     def on_kept(v):
-        """a via on a kept track of its net (a power trunk changing layer)"""
+        """a via anywhere along a kept track of its net (a power trunk changing layer)"""
         if v.GetNetname() in held or v.IsLocked():
             return True
-        p, r = v.GetPosition(), v.GetWidth(F) / 2
-        return any(id(t) in kept and t.GetNetname() == v.GetNetname()
-                   and any((e - p).EuclideanNorm() <= r + t.GetWidth() / 2 for e in (t.GetStart(), t.GetEnd()))
-                   for t in tracks)
+        p, r = v.GetPosition(), int(v.GetWidth(F) / 2)
+        return any(id(t) in kept and t.GetNetname() == v.GetNetname() and t.HitTest(p, r) for t in tracks)
 
     widths = collections.defaultdict(collections.Counter)
     for t in tracks:
@@ -101,14 +103,13 @@ def main(argv=None):
             for n in ("in", "full", "hand"):
                 shutil.copy(f"{base}.{e}", f"{out}/{n}.{e}")
 
-    pads = collections.Counter(p.GetNetname() for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetname())
     nets = []
     for n in sorted(pads):
-        if n in held or pads[n] < 2 or n.startswith("unconnected-"):
+        if n in held:
             continue
         cls = classes.get(net_class.get(n), {})
         w = widths[n].most_common(1)[0][0] if widths[n] else cls.get("track_width", 0.25)
-        spec = {"net": n, "w": w, "neck": min(w, 0.2, max(min(widths[n], default=w), min_w))}   # as narrow as the board went
+        spec = {"net": n, "w": w, "neck": min(w, max(min_w, min(0.2, min(widths[n], default=w))))}   # as narrow as the board went
         if cls.get("clearance", 0) > max(clr, dflt.get("clearance", 0)):
             spec["clr"] = cls["clearance"]
         nets.append(spec)

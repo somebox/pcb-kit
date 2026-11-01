@@ -1,6 +1,7 @@
 """The finished board: test pads on the spots tpplace.py chose, the routes written in, DRC, and what leads nowhere taken
 out: vias joined on one side only (ground stitching vias the routing walled in, a kept via whose other side was
-re-routed), tracks with a dead end, and any track of no length. What takes out a connection DRC counted goes back.
+re-routed), tracks with a dead end, and any track of no length. What takes out a connection DRC counted goes back, and
+locked copper stays, dead end or not.
 
     python -m pcbkit.reroute.finish FULL.kicad_pcb TP.json OUT.kicad_pcb [--via=0.45,0.25]        (KiCad's Python)
 
@@ -73,6 +74,8 @@ def drop(board, pts, stubs):
         return abs(mm(p.x) - x) < 0.01 and abs(mm(p.y) - y) < 0.01
 
     for t in list(b.GetTracks()):
+        if t.IsLocked():
+            continue
         if t.Type() == pcbnew.PCB_VIA_T:
             if any(near(t.GetPosition(), x, y) for x, y in pts):
                 b.Remove(t)
@@ -113,6 +116,10 @@ def main(argv=None):
         shutil.copy(out, keep)
         child("drop", out, json.dumps(pts), json.dumps(stubs))
         c2, text2 = drc(out)
+        if dangling(text2) == (pts, stubs):     # all that's left is locked
+            print(f"left in, locked: {pts}, {stubs}")
+            os.remove(keep)
+            break
         if c2.get("unconnected_items", 0) > c.get("unconnected_items", 0):
             shutil.copy(keep, out)
             c, text = drc(out)

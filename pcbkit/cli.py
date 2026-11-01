@@ -4,6 +4,7 @@ Checks:    drc, erc, nets, check, cleanup
 Release:   release, production, previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
+Routing:   reroute, setup-router
 Projects:  new, import-easyeda, outline
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
 """
@@ -30,6 +31,8 @@ COMMANDS = {
     "netview": ("pcbkit.netview", "SVG of a board region coloured by net (needs pcbnew)"),
     "spice": ("pcbkit.spice", "run an ngspice deck (PSpice-compatible), print its measurements, flag aborted runs"),
     "place-score": ("pcbkit.placement", "score and search placements by their ratsnest, draw it (needs pcbnew)"),
+    "reroute": ("pcbkit.reroute.flow", "lay a board's signals again: placement, negotiated routing, polish, repairs, review"),
+    "setup-router": ("pcbkit.reroute.flow", "install the router's own Python (numba, numpy, scipy) with uv"),
     "outline": ("pcbkit.mech", "board outline, mounting holes and keep-outs from an enclosure JSON (needs pcbnew)"),
     "new": ("pcbkit.new_project", "scaffold a hardware project: docs, boards/<b> KiCad project, lib/, scripts/, bomi, git"),
     "import-easyeda": ("pcbkit.import_easyeda", "EasyEDA Std schematic + PCB exports -> linked KiCad project and library"),
@@ -68,6 +71,9 @@ def main(argv=None):
     if cmd == "setup-kikit":
         from .release.panel import setup_kikit
         return setup_kikit()
+    if cmd == "setup-router":
+        from .reroute.flow import setup_router
+        return setup_router()
     if cmd in ("link", "link-kicad"):
         from .kicad import link
         return link(remove="--remove" in rest)

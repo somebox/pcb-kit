@@ -8,6 +8,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit reroute`, a negotiated router, experimental.** It takes a placed board whose power copper and ground are
+  drawn and lays its signals again: small parts moved where that helps, every signal net routed together, test pads
+  placed after the routing, repairs, and the old routing and the new one compared. It never writes your board. On six
+  boards it left no failed connection, with vias from 636 to 480 and track from 9228 to 8287 mm; none of these routes
+  has been built yet. It runs under its own Python, `pcbkit setup-router`, as the new `pcbkit_router` package, and
+  `pcbkit.route`'s maze router stays for routing a net at a time from a script. New skill `routing`, method and
+  limits in docs/ROUTER.md, the boards a change is judged on in bench/.
 - **pcbkit runs on Linux**, as in KiCad's Docker images (`kicad/kicad:10.0.6-full`): `kicad-cli` comes from PATH,
   pcbnew from `/usr/bin/python3`, and the power symbols `import-easyeda` copies from `/usr/share/kicad/symbols`. On
   rgb-spotlight's boards `drc`, `erc` and `check` give the same results there as on macOS; DRC lists the same

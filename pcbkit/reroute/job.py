@@ -5,9 +5,9 @@ again at the width it had.
                                  [--keepout=x0,y0,x1,y1] [--ground=GND]        (KiCad's Python)
 
 - Nets in --keep (full names, or the last part of a hierarchical one) keep all their copper (tracks, vias); so does every
-  track of --keep-w mm or wider (power trunks), with the vias on it, every locked track and via, every net with a track on
-  an inner layer (the router lays F.Cu and B.Cu only), and every net with fewer than two pads (nothing would route it
-  again). Everything else is taken out and routed, at the width most of its taken-out track had (its class's width when
+  track of --keep-w mm or wider (power trunks), with the vias on it, every locked track and via, every track under a
+  solder-mask opening, every net with a track on an inner layer (the router lays F.Cu and B.Cu only), and every net with
+  fewer than two pads (nothing would route it again). Everything else is taken out and routed, at the width most of its taken-out track had (its class's width when
   it had none), narrowing at a pad as far as the track it had did, down to the board's minimum.
 - A board with inner layers pays less for track under an IC (pcbkit_router's costs.py has the cost for two layers, where
   the far side is the ground return).
@@ -18,8 +18,8 @@ again at the width it had.
 - --lift: the pours of these nets (a 2-layer board's ground pours) are left out of the router's board, so they are no
   wall; the other pours stay, filled, as walls. The rule areas stay, and --keepout adds rectangles (KiCad mm, no tracks or
   vias on either layer), e.g. a module's antenna where the board's own rule area only keeps pours out.
-- A line drawn on a solder-mask layer (bare copper on purpose, a pad for a wire) becomes a keep-out for every net but the
-  one drawn under it: another net's track there would lie exposed.
+- Anything drawn on a solder-mask layer (bare copper on purpose, a pad for a wire) keeps the tracks under it, and its box
+  becomes a keep-out, vias too, for every net but theirs: another net's copper there would lie exposed.
 
 Writes OUTDIR/in.kicad_pcb (the router's board), full.kicad_pcb (the same with every pour, for apply.py, DRC and
 pictures), hand.kicad_pcb (the board as it was) and job.json (nroute's job, in the router's frame, KiCad - 100 mm).
@@ -66,6 +66,13 @@ def main(argv=None):
     F, B_Cu = b.GetLayerID("F.Cu"), b.GetLayerID("B.Cu")
     tracks = [t for t in b.GetTracks() if t.Type() != pcbnew.PCB_VIA_T]
     vias = [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_VIA_T]
+    bare = [(L, b.GetLayerID(f"{L}.Cu"), d.GetBoundingBox()) for L in "FB" for d in b.GetDrawings()
+            if d.GetLayer() == b.GetLayerID(f"{L}.Mask")]
+
+    def under(t, lid, box):
+        """does the track's copper reach this box of its layer?"""
+        return t.GetLayer() == lid and t.HitTest(box, False, int(t.GetWidth() / 2))
+
     inner = {t.GetNetname() for t in tracks if t.GetLayer() not in (F, B_Cu)}
     net_class = {n.GetNetname(): n.GetNetClassName() for n in b.GetNetsByName().values()}
     named = [n for n in net_class if n == ground or short(n) == ground]
@@ -73,7 +80,8 @@ def main(argv=None):
         ground = named[0]
     pads = collections.Counter(p.GetNetname() for fp in b.GetFootprints() for p in fp.Pads() if p.GetNetname())
     held = {n for n in net_class if n in keep_nets or short(n) in keep_nets or n.startswith("unconnected-") or pads[n] < 2} | inner
-    kept = {id(t) for t in tracks if t.GetNetname() in held or t.IsLocked() or mm(t.GetWidth()) >= keep_w - 1e-6}
+    kept = {id(t) for t in tracks if t.GetNetname() in held or t.IsLocked() or mm(t.GetWidth()) >= keep_w - 1e-6
+            or any(under(t, lid, box) for _, lid, box in bare)}
 
     def on_kept(v):
         """a via anywhere along a kept track of its net (a power trunk changing layer)"""
@@ -117,20 +125,10 @@ def main(argv=None):
     for r in filter(None, opt.get("keepout", "").split(";")):
         x0, y0, x1, y1 = map(float, r.split(","))
         keep.append({"rect": [x0 - OFF, y0 - OFF, x1 - OFF, y1 - OFF], "layers": "FB", "vias": True, "why": "--keepout"})
-    for L, name in (("F", "F.Mask"), ("B", "B.Mask")):
-        for d in b.GetDrawings():
-            if d.GetLayer() != b.GetLayerID(name):
-                continue
-            x0, x1 = sorted((mm(d.GetStart().x), mm(d.GetEnd().x)))
-            y0, y1 = sorted((mm(d.GetStart().y), mm(d.GetEnd().y)))
-            g = mm(d.GetWidth()) / 2
-            rect = [x0 - g - OFF, y0 - g - OFF, x1 + g - OFF, y1 + g - OFF]
-            lid = b.GetLayerID(f"{L}.Cu")
-            area = pcbnew.BOX2I(pcbnew.VECTOR2I(pcbnew.FromMM(x0 - g), pcbnew.FromMM(y0 - g)),
-                                pcbnew.VECTOR2L(pcbnew.FromMM(x1 - x0 + 2 * g), pcbnew.FromMM(y1 - y0 + 2 * g)))
-            own = sorted({t.GetNetname() for t in tracks if t.GetLayer() == lid and id(t) not in kept
-                          and t.HitTest(area, False, int(t.GetWidth() / 2))})
-            keep.append({"rect": rect, "layers": L, "vias": False, "except": own, "why": "mask opening"})
+    for L, lid, box in bare:
+        rect = [mm(box.GetLeft()) - OFF, mm(box.GetTop()) - OFF, mm(box.GetRight()) - OFF, mm(box.GetBottom()) - OFF]
+        own = sorted({t.GetNetname() for t in tracks if under(t, lid, box)})
+        keep.append({"rect": rect, "layers": L, "vias": True, "except": own, "why": "mask opening"})
     defaults = {"w": 0.25, "neck": 0.2, "clr": clr, "hole_clr": hole}
     if b.GetCopperLayerCount() > 2:
         defaults["under"] = 3.0                 # an inner plane is the return path, not the far side of an IC

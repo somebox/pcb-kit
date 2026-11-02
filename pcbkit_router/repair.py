@@ -26,12 +26,14 @@ def main():
     HOLE_CLR = job.get("defaults", {}).get("hole_clr", DEF["hole_clr"])
     text = open(args[1]).read()
     orphans, others, gaps = [], [], []
+    shown = {p["net"].replace("{slash}", "/"): p["net"] for p in geom["pads"]}
+    raw = lambda n: shown.get(n, n)                          # DRC prints a name as the screen shows it
     for blk in re.split(r"\n(?=\[)", text):
         if blk.startswith("[unconnected_items]"):
-            pads = re.findall(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): Pad (\S+) \[([^\]]+)\] of (\S+) on", blk)
+            pads = re.findall(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): (?:PTH p|P)ad (\S+) \[(.+?)\] of (\S+)", blk)
             for x, y, num, net, ref in pads:
-                (orphans if net == GND else others).append((num, ref, net, float(x) - 100.0, float(y) - 100.0))
-            ends = re.findall(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): Track \[([^\]]+)\] on (\S+), length ([\d.]+) mm", blk)
+                (orphans if raw(net) == GND else others).append((num, ref, raw(net), float(x) - 100.0, float(y) - 100.0))
+            ends = re.findall(r"@\(([-\d.]+) mm, ([-\d.]+) mm\): Track \[(.+?)\] on ([^,\n]+), length ([\d.]+) mm", blk)
             if not pads and len(ends) == 2 and ends[0][2:4] == ends[1][2:4]: gaps.append(ends)
     orphans, others = sorted(set(orphans)), sorted(set(others))
     print("cut off:", [f"{r}.{n}" for n, r, *_ in orphans], "off their copper:", [f"{r}.{n}" for n, r, *_ in others],
@@ -203,8 +205,8 @@ def main():
             print(f"{net}: a piece of {area:.1f} mm2 joined by a via at ({v[0]:.2f},{v[1]:.2f}), {best[3]} to {best[4]}")
 
 
-    for net in sorted(set(re.findall(r"Zone '[^']*' \[([^\]]+)\]", "\n".join(b for b in re.split(r"\n(?=\[)", text) if b.startswith("[unconnected_items]"))))):
-        tie_islands(net)
+    for net in sorted(set(re.findall(r"Zone (?:'[^']*' )?\[(.+?)\] on ", "\n".join(b for b in re.split(r"\n(?=\[)", text) if b.startswith("[unconnected_items]"))))):
+        tie_islands(raw(net))
 
 
     def nearest(p, s):
@@ -246,7 +248,7 @@ def main():
         print(f"{net}: still open, no gap of {REACH} mm or less")
 
 
-    for net in sorted({e[0][2] for e in gaps}): bridge(net)
+    for net in sorted({raw(e[0][2]) for e in gaps}): bridge(net)
     json.dump(tp, open(args[2], "w"), indent=0)
 
 

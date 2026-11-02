@@ -128,7 +128,7 @@ net's width come from the board.
 - `nets`: per-net overrides. `clr` lower at a fine-pitch part whose pins can't be reached at the board's clearance.
 - `place`: omit it and no part moves. A decoupling capacitor belongs in `fixed` or `limits`: the search knows nets, not
   loop areas.
-- `free`: test pads that may go wherever their net ends up, on the side they are on.
+- `free`: test pads that may go wherever their net ends up, on the side they are on. A locked or through-hole one stays.
 - `ground`: the ground net, `GND` by default.
 - `refs`: reference prefixes, for a board that doesn't use the usual ones: `ic` (`U`), `mount` (`H`), `holes` (`Hole`),
   `test` (`TP`).
@@ -147,6 +147,7 @@ any `--key=value` goes to `nroute.py`, over `route`.
 
 - The board must already have its power copper and ground. `job.py` keeps what is there; nothing lays it for a board that
   has never been routed.
+- Anything drawn on a solder-mask layer keeps the tracks under it and is taken as its bounding box, whatever its shape.
 - Two routing layers, F.Cu and B.Cu. Inner planes are joined through vias; inner signal layers aren't used, and In3 and
   beyond aren't read at all.
 - Both outer layers cost the same. A two-layer board that wants its back as a solid ground pour gets more track there than

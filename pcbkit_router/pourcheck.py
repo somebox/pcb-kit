@@ -33,8 +33,8 @@ def terminals(g, net, layer, fill, box):
     x0, y0 = box[0], box[1]; near = ndimage.binary_dilation(fill, iterations=2); out = []
     for p in g["pads"]:
         if p["net"] != net or layer not in p["polys"]: continue
-        m = raster(p["polys"][layer], box)
-        if (m & near).any(): out.append((f'{p["ref"]}.{p["num"]}', m))
+        m = raster(p["polys"][layer], box)                   # a part can have several pads of one number
+        if (m & near).any(): out.append((f'{p["ref"]}.{p["num"]}({p["at"][0]:.2f},{p["at"][1]:.2f})', m))
     for it in g["items"]:
         if it["kind"] == "via" and it["net"] == net:
             x, y, r = it["circle"]
@@ -51,10 +51,11 @@ def widths(fill, terms):
 
 
 def zones(g, name):
-    """{outer layer: the pour's item there}"""
+    """{outer layer: the pour's item there, with the polygons of all the zones of that name on it}"""
     out = {}
     for it in g["items"]:
-        if it["kind"] == "zone" and it.get("name") == name and it["layer"] in "FB": out.setdefault(it["layer"], it)
+        if it["kind"] == "zone" and it.get("name") == name and it["layer"] in "FB":
+            z = out.setdefault(it["layer"], dict(it, polys=[])); z["polys"] = z["polys"] + it["polys"]
     return out
 
 

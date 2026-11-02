@@ -92,7 +92,7 @@ def main():
         if best: return best
         for x, y, extra, kind in own_points(p["net"], S):    # beside the copper, on a stub
             i, j = int((x - bd.X0) / RES + 0.5), int((y - bd.Y0) / RES + 0.5)
-            if kind == O and not via_ok(x, y, i, j): continue
+            if kind == O and not (via_ok(x, y, i, j) and d[j, i] >= VIA_R + CLR + RES and walls[S][j, i] >= VIA_R + RES): continue
             for a in range(8):
                 for L in (1.0, 1.5, 2.0, 2.5, 3.0):
                     u, v = round(x + L * math.cos(a * math.pi / 4), 2), round(y + L * math.sin(a * math.pi / 4), 2)

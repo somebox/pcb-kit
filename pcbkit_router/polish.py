@@ -204,7 +204,7 @@ class Polish:
     def in_keep(self, n, L, a, b, w):
         """does this segment touch one of the job's keep-out rectangles?"""
         for k in self.st[n]["spec"].get("keep", []):
-            if short(n) in k.get("except", []) or L not in k.get("layers", "FB"): continue
+            if n in k.get("except", []) or L not in k.get("layers", "FB"): continue
             x0, y0, x1, y1 = k["rect"]; g = w / 2 + RES
             if seg_box(a, b, (x0 - g, y0 - g, x1 + g, y1 + g)): return True
         return False
@@ -252,7 +252,8 @@ class Polish:
             extra = max(0.0, wide.get(net, 0.0) - own)      # measured against the net's own clearance by the caller
             for a, b in zip(pts, pts[1:]):
                 best = min(best, min((seg_dist(tuple(a), tuple(b), tuple(p), tuple(q)) for p, q in zip(r, r[1:])), default=9.0) - w / 2 - extra)
-        circles = [(*it["circle"][:2], it["circle"][2]) for it in self.geom["items"] if it["kind"] in ("via", "hole", "npth") and it["net"] != n]
+        circles = [(*it["circle"][:2], it["circle"][2] + max(0.0, wide.get(it["net"], 0.0) - own)) for it in self.geom["items"]
+                   if it["kind"] in ("via", "hole", "npth") and it["net"] != n]   # too_close() has the routed copper's class
         for m, t in self.st.items():
             if m == n: continue
             circles += [(x, y, self.bd.via_r) for x, y in t["vias"]]

@@ -122,13 +122,13 @@ def main(argv=None):
         child("drop", out, json.dumps(pts), json.dumps(stubs))
         c2, text2 = drc(out, save=True)
         if dangling(text2) == (pts, stubs):     # all that's left is locked
-            print(f"left in, locked: {pts}, {stubs}")
+            print(f"!! left in, locked: {pts}, {stubs}")
             os.remove(keep)
             break
         if c2.get("unconnected_items", 0) > c.get("unconnected_items", 0):
             shutil.copy(keep, out)
             c, text = drc(out, save=True)
-            print(f"left in, a connection hung on them: {pts}, {stubs}")
+            print(f"!! left in, a connection hung on them: {pts}, {stubs}")
             os.remove(keep)
             break
         print(f"out: {len(pts)} vias joined on one side, {len(stubs)} tracks with a dead end")

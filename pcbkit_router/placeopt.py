@@ -19,7 +19,8 @@ CONFIG: {"clr": 0.2, "movable": ["R*", "C*", "Q1"], "fixed": ["C7", "CN1"], "shi
          "limits": {"C4": 1.0, ...}: largest shift in mm for a part (decoupling caps stay by their pin), default 3}
 OUT: {"moves": {ref: {"dx", "dy", "turn"}}, "free": CONFIG's "free", "log": [...]}, for moves.py. Parts with pads on nets
 outside the job (the kept power copper) and GND don't move, except that GND pads may: the pour reaches them, and a kept
-stub on such a pad goes with the move (moves.py). A locked part doesn't move, nor one held by a locked stub."""
+stub on such a pad goes with the move (moves.py). A locked part doesn't move, nor one with a locked track or a kept track
+of a routed net on a pad."""
 import sys, json, math, time, io, contextlib, fnmatch, itertools, multiprocessing
 import numpy as np
 from scipy import ndimage
@@ -55,15 +56,15 @@ def part_of(geom, ref):
     return next(p for p in geom["parts"] if p["ref"] == ref)
 
 
-def kept_stubs(geom, ref):
-    """the kept ground tracks that end on a pad of this part, on a layer the pad is on (a through-hole pad: all of them):
-    they go when it moves"""
+def kept_on(geom, ref, net=None):
+    """the kept tracks (of net, if given) that end on a pad of this part, on a layer the pad is on (a through-hole pad: all
+    of them)"""
     out = []
     for p in geom["pads"]:
-        if p["ref"] != ref or p["net"] != GND: continue
+        if p["ref"] != ref or (net and p["net"] != net): continue
         box = pad_box([q for ps in p["polys"].values() for q in ps])
         for i, it in enumerate(geom["items"]):
-            if it["kind"] == "track" and it["net"] == GND and (it["layer"] in p["polys"] or len(p["polys"]) == 2):
+            if it["kind"] == "track" and it["net"] == p["net"] and (it["layer"] in p["polys"] or len(p["polys"]) == 2):
                 s = it["seg"]
                 if any(box[0] - 0.05 <= x <= box[2] + 0.05 and box[1] - 0.05 <= y <= box[3] + 0.05 for x, y in ((s[0], s[1]), (s[2], s[3]))):
                     out.append(i)
@@ -71,9 +72,9 @@ def kept_stubs(geom, ref):
 
 
 def apply_move(geom, ref, dx, dy, t):
-    """a new geom with the part moved (the parts' other data shared)"""
+    """a new geom with the part moved (the parts' other data shared): its kept ground tracks go"""
     part = part_of(geom, ref); ax, ay = part["at"]
-    drop = set(kept_stubs(geom, ref))
+    drop = set(kept_on(geom, ref, GND))
     items = []
     for i, it in enumerate(geom["items"]):
         if i in drop: continue
@@ -130,27 +131,27 @@ def court_ok(geom, ref, gap):
 
 
 def pads_ok(bd, geom, ref, clr):
-    """the part's pads clear of other nets' fixed copper, and of every via. bd has the part off it: a cell holds one net, so
-    a pad painted in would hide what it covers"""
-    for p in geom["pads"]:
-        if p["ref"] != ref: continue
-        need = max(clr, CLRS.get(p["net"], 0.0))
-        for L, ps in p["polys"].items():
-            c = bd.code(p["net"]) if p["net"] else -3
-            for poly in ps:
-                m = bd.cmask(poly)
-                if not m: return False
-                (sy, sx), u = m; g = int(max(need, *CLRS.values(), 0.0) / RES) + 3
-                y0, y1, x0, x1 = max(sy.start - g, 0), min(sy.stop + g, bd.H), max(sx.start - g, 0), min(sx.stop + g, bd.W)
-                lab = bd.lab[L][y0:y1, x0:x1]; mm = np.zeros(lab.shape, bool)
-                mm[sy.start - y0:sy.stop - y0, sx.start - x0:sx.stop - x0] = u
-                d = ndimage.distance_transform_edt(~mm) * RES
-                other = (lab != 0) & (lab != c)
+    """the part's copper, pads with a net or none and any graphics, clear of other nets' fixed copper (a through-hole pad of
+    the inner tracks too), and of every via. bd has the part off it: a cell holds one net, so a pad painted in would hide
+    what it covers"""
+    g = int(max(clr, *CLRS.values(), 0.0) / RES) + 3
+    for it in geom["items"]:
+        if it.get("ref") != ref or it["kind"] not in ("pad", "graphic"): continue
+        L = it["layer"]; c = bd.code(it["net"]) if it["net"] else -3; need = max(clr, CLRS.get(it["net"], 0.0))
+        for poly in it["polys"]:
+            m = bd.cmask(poly)
+            if not m: return False
+            (sy, sx), u = m
+            y0, y1, x0, x1 = max(sy.start - g, 0), min(sy.stop + g, bd.H), max(sx.start - g, 0), min(sx.stop + g, bd.W)
+            mm = np.zeros((y1 - y0, x1 - x0), bool); mm[sy.start - y0:sy.stop - y0, sx.start - x0:sx.stop - x0] = u
+            d = ndimage.distance_transform_edt(~mm) * RES
+            for lab in (bd.lab[L], *(() if it.get("smd", True) else (bd.lab_in,))):
+                other = (lab[y0:y1, x0:x1] != 0) & (lab[y0:y1, x0:x1] != c)
                 if (other & (d < need + RES)).any(): return False
                 for cl, codes in bd.wide_clr:
-                    if cl > need and (other & np.isin(lab, codes) & (d < cl + RES)).any(): return False
-                if bd.kt[L][y0:y1, x0:x1][mm].any(): return False
-        bx = pad_box([q for ps in p["polys"].values() for q in ps])
+                    if cl > need and (other & np.isin(lab[y0:y1, x0:x1], codes) & (d < cl + RES)).any(): return False
+            if L in bd.kt and bd.kt[L][y0:y1, x0:x1][mm].any(): return False
+        bx = pad_box(it["polys"])
         for x, y, vc in bd.vias:
             if bx[0] - bd.via_r - 0.05 < x < bx[2] + bd.via_r + 0.05 and bx[1] - bd.via_r - 0.05 < y < bx[3] + bd.via_r + 0.05: return False
     return True
@@ -245,7 +246,8 @@ class Search:
         for p in g["parts"]:
             ref = p["ref"]
             if not any(fnmatch.fnmatch(ref, m) for m in cfg["movable"]) or ref in cfg.get("fixed", []): continue
-            if p.get("locked") or any(g["items"][i].get("locked") for i in kept_stubs(g, ref)): continue    # a locked track holds the part too
+            kept = [g["items"][i] for i in kept_on(g, ref)]       # all but an unlocked ground stub holds the part
+            if p.get("locked") or any(t.get("locked") or t["net"] != GND for t in kept): continue
             pn = {q["net"] for q in g["pads"] if q["ref"] == ref}
             if not pn or pn - nets - {GND, ""}: continue
             lim = cfg.get("limits", {}).get(ref, cfg["limit"])

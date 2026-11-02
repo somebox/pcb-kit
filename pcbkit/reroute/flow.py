@@ -96,6 +96,12 @@ def run(py, module, *a, log=None):
     return text
 
 
+def tail(text):
+    """a tool's last line, after the warnings it gave on the way"""
+    lines = text.splitlines()
+    return "\n".join([l for l in lines[:-1] if l.startswith("!!")] + lines[-1:])
+
+
 def read(path):
     with open(path) as fh:
         return json.load(fh)
@@ -121,7 +127,7 @@ def job_step(cfg, out):
         args.append(f"--clr={cfg['clr']}")
     if cfg.get("keepout"):
         args.append("--keepout=" + ";".join(cfg["keepout"]))
-    print(run(KICAD_PYTHON, "pcbkit.reroute.job", *args).splitlines()[-1], flush=True)
+    print(tail(run(KICAD_PYTHON, "pcbkit.reroute.job", *args)), flush=True)
     jp = out / "base/job.json"
     job = read(jp)
     job["defaults"].update(cfg.get("defaults", {}))
@@ -152,10 +158,10 @@ def place_step(cfg, out):
         pc = out / "place.json"
         write(pc, dict(cfg["place"], clr=read(out / "base/job.json")["defaults"]["clr"], free=cfg.get("free", [])))
         text = run(router(), "pcbkit_router.placeopt", out / "base/in.json", out / "base/job.json", moves, pc, log=out / "place.log")
-        print(text.splitlines()[-1], flush=True)
+        print(tail(text), flush=True)
     else:
         write(moves, {"moves": {}, "free": cfg.get("free", [])})
-    print(run(KICAD_PYTHON, "pcbkit.reroute.moves", out / "base", out / "job", moves).splitlines()[-1], flush=True)
+    print(tail(run(KICAD_PYTHON, "pcbkit.reroute.moves", out / "base", out / "job", moves)), flush=True)
 
 
 def route_step(out, opts):
@@ -174,7 +180,7 @@ def finish_step(out):
     last = None
     for fix in range(4):                       # up to three rounds of repairs, each written and checked, while they help
         text = run(KICAD_PYTHON, "pcbkit.reroute.finish", D / "full.kicad_pcb", tp, out / "final.kicad_pcb", via)
-        print(text.splitlines()[-1], flush=True)
+        print(tail(text), flush=True)
         left = (out / "final.rpt").read_text().count("[unconnected_items]")
         if fix == 3 or not left or left == last:
             break
@@ -190,13 +196,15 @@ def review_step(cfg, out, secs):
     # each on the board it was laid on: the old routing on the parts where they were, the new one on the parts as moved
     print(run(router(), "pcbkit_router.lint", B / "job.json", B / "in.json", f"old={D / 'hand.json'}", f"--json={out / 'lint-old.json'}"), flush=True)
     print(run(router(), "pcbkit_router.lint", D / "job.json", D / "in.json", f"new={out / 'final.json'}", f"--json={out / 'lint-new.json'}"), flush=True)
-    job = read(D / "job.json")
+    job, pours = read(D / "job.json"), ""
     if job.get("soft_pours"):
-        print(run(router(), "pcbkit_router.pourcheck", D / "in.json", out / "final.json", ",".join(job["soft_pours"])), flush=True)
+        text = run(router(), "pcbkit_router.pourcheck", D / "in.json", out / "final.json", ",".join(job["soft_pours"]))
+        print(text, flush=True)
+        pours = text.splitlines()[-1]
     routes, passes = read(out / "routes.json"), read(out / "routes-passes.json")
     s = dict(name=cfg["name"], nets=len(routes), failed=sum(r["failed"] for r in routes),
              drc=dict(old=drc(D / "hand.kicad_pcb")[0], new=drc(out / "final.kicad_pcb")[0]),
-             lint={**read(out / "lint-old.json"), **read(out / "lint-new.json")}, router_s=passes["s"], step_s=secs)
+             lint={**read(out / "lint-old.json"), **read(out / "lint-new.json")}, pours=pours, router_s=passes["s"], step_s=secs)
     write(out / "summary.json", s)
     print(f"{s['failed']} failed; DRC old {s['drc']['old']}; new {s['drc']['new']}", flush=True)
 
@@ -226,6 +234,7 @@ def route_board(cfg, work, opt):
         if not ran and mark.exists() and (mark.read_text() == key if start is None else i < start):
             continue
         ran = True
+        (out / "summary.json").unlink(missing_ok=True)
         for s in STEPS[i:]:
             (out / f".done-{s}").unlink(missing_ok=True)
         t0 = time.time()
@@ -292,6 +301,8 @@ def table(names, work, save=False):
         s = read(p)
         rows[n] = dict(nets=s["nets"], failed=s["failed"], drc=s["drc"]["new"], **{m: s["lint"]["new"].get(m, 0) for m in MEASURES})
         print(f"{n:<20} {s['nets']:>4} {s['failed']:>6}  " + " ".join(f"{rows[n][m]:>8}" for m in MEASURES) + f"  {s['drc']['new']}")
+        if s.get("pours", "").endswith("cut off"):
+            print(f"{'':<20} pours: {s['pours']}")
         changed = {k: (base[n][k], v) for k, v in rows[n].items() if n in base and base[n][k] != v}
         if changed:
             print(f"{'':<20} against the baseline: " + ", ".join(f"{k} {a} -> {b}" for k, (a, b) in changed.items()))
@@ -314,9 +325,8 @@ def corpus(opt, work):
 def bench(argv, work):
     if not argv or argv[0] not in ("--table", "--lint"):
         names = next((a.split("=", 1)[1].split(",") for a in argv if a.startswith("--boards=")), None)
-        for entry in corpus_boards(names):
-            if not (work / "bench/inputs" / f"{entry['name']}.job.json").exists():
-                route_board(fetch(entry, work), work, {"until": "place", "bench": "1"})
+        for entry in corpus_boards(names):                  # the marks skip what's still good
+            route_board(fetch(entry, work), work, {"until": "place", "bench": "1"})
     print(run(router(), "pcbkit_router.bench", *argv), flush=True)
 
 

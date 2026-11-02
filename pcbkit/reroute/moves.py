@@ -5,7 +5,8 @@ listed as free come off the router's board, to go back on after the routing (tpp
 
 MOVES: {"moves": {"R2": {"dx": 0.5, "dy": -1.0, "turn": 90}, ...}, "free": ["TP1", ...]}. dx, dy in mm, turn in degrees
 counter-clockwise on screen as KiCad counts it, about the part's anchor. A locked part stays where it is, whatever MOVES
-says, and so does a free test pad whose net has fewer than two other pads: nothing would be routed for it to sit on. Writes OUT_DIR/in.kicad_pcb (the router's board,
+says, and so does a free test pad with a hole (tpplace.py places a pad on one side) or whose net has fewer than two other
+pads: nothing would be routed for it to sit on. Writes OUT_DIR/in.kicad_pcb (the router's board,
 free parts out), full.kicad_pcb (the same with every pour, free parts kept for tpplace.py), hand.kicad_pcb (the original),
 job.json (SRC_DIR's, with nets left without two pads taken out), in.json (geom.py of in) and moves.json (MOVES with the
 test pads actually freed).
@@ -67,9 +68,13 @@ def main(argv=None):
         return
     b = pcbnew.LoadBoard(f"{src}/in.kicad_pcb")     # the parts that may really go
     locked = {fp.GetReference() for fp in b.GetFootprints() if fp.IsLocked()}
+    holed = {fp.GetReference() for fp in b.GetFootprints() if fp.GetReference() in free
+             and any(p.GetAttribute() != pcbnew.PAD_ATTRIB_SMD for p in fp.Pads())}
     if locked & (set(moves) | free):
         print(f"!! locked, staying: {sorted(locked & (set(moves) | free))}", flush=True)
-    moves, free = {r: m for r, m in moves.items() if r not in locked}, free - locked
+    if holed:
+        print(f"!! through-hole, staying: {sorted(holed)}", flush=True)
+    moves, free = {r: m for r, m in moves.items() if r not in locked}, free - locked - holed
     others = collections.Counter(p.GetNetname() for fp in b.GetFootprints() if fp.GetReference() not in free
                                  for p in fp.Pads())
     stay = {fp.GetReference() for fp in b.GetFootprints() if fp.GetReference() in free

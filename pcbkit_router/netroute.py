@@ -152,7 +152,7 @@ class NetRouter:
         j0, j1, i0, i1 = self.win; bd = self.bd
         m = None
         for k in self.o.get("keep", []):
-            if self.net.split("/")[-1] in k.get("except", []): continue
+            if self.net in k.get("except", []): continue
             if L == "v" and not k.get("vias", True): continue
             if L != "v" and L not in k.get("layers", "FB"): continue
             x0, y0, x1, y1 = k["rect"]

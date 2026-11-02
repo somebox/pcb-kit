@@ -1,0 +1,114 @@
+<title>__NAME__</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a bench sheet, as the earlier router pages. All boards in one table first, then each board with a switch
+   between its old routing and the router's, and its measures beside it. */
+:root {
+  --bg: #eef0ec; --surface: #ffffff; --ink: #1c211e; --muted: #5d6661; --line: #d5dad4;
+  --accent: #b8741c; --accent-ink: #7b4a0c; --accent-soft: #f6e7cf; --pcb: #001023;
+  --good: #1f7a4d; --mixed: #a8620f; --bad: #b3372d;
+  --display: "Barlow Semi Condensed", "Arial Narrow", Arial, sans-serif;
+  --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --surface: #1a1f1c; --ink: #e5e9e6; --muted: #9aa49e; --line: #2d3531;
+  --accent: #e0a24a; --accent-ink: #f0c27f; --accent-soft: #3a2c17; --good: #5cc497; --mixed: #e0a24a; --bad: #e8857b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121614; --surface: #1a1f1c; --ink: #e5e9e6; --muted: #9aa49e; --line: #2d3531;
+  --accent: #e0a24a; --accent-ink: #f0c27f; --accent-soft: #3a2c17; --good: #5cc497; --mixed: #e0a24a; --bad: #e8857b; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 400 16px/1.5 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px }
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: clamp(30px, 4vw, 44px); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 26px; font-weight: 600 }
+.eyebrow { font-family: var(--display); text-transform: uppercase; letter-spacing: 0.08em; font-size: 13px; color: var(--accent-ink); font-weight: 600 }
+header.top { padding-block: 28px 0; display: grid; gap: 10px; max-width: 74ch }
+header.top p { margin: 0 }
+.tablewrap { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; background: var(--surface); border: 1px solid var(--line) }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 150px }
+thead th { font: 600 14px var(--display); letter-spacing: 0.02em; color: var(--muted) }
+td a { color: inherit; text-underline-offset: 2px }
+td.better { color: var(--good); font-weight: 600 }
+td.worse { color: var(--bad); font-weight: 600 }
+.note { color: var(--muted); font-size: 14.5px; max-width: 76ch; margin: 10px 0 0 }
+.bd { display: grid; gap: 12px; scroll-margin-top: 16px }
+.sub { color: var(--muted); margin: 2px 0 0 }
+.board { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start }
+.viewer { position: relative; background: var(--pcb); border-radius: 8px; overflow: auto; line-height: 0; cursor: zoom-in; max-height: 78vh }
+.viewer img { width: 100%; height: auto; display: block }
+.viewer.big { cursor: zoom-out }
+.viewer.big img { width: 320%; max-width: none }
+.tag { position: sticky; float: left; top: 10px; left: 10px; margin: 10px 0 -40px 10px; font: 600 15px/1 var(--display); color: #fff; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(255, 255, 255, 0.3); padding: 6px 8px; border-radius: 4px; z-index: 1 }
+.side { display: grid; gap: 12px; min-width: 0 }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px }
+.seg button { font: 500 15px var(--body); padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+button:focus-visible, .viewer:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.side table td, .side table th { padding: 4px 8px; font-size: 14.5px }
+.side p { margin: 0; font-size: 15px }
+.drc { font-size: 14px; color: var(--muted) }
+.changes { display: grid; border-top: 1px solid var(--line) }
+.change { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line) }
+.pill { font: 600 13px/1 var(--display); letter-spacing: 0.03em; padding: 5px 8px; border-radius: 999px; justify-self: start; align-self: start; border: 1px solid currentColor }
+.pill.good { color: var(--good) } .pill.mixed { color: var(--mixed) } .pill.open { color: var(--bad) }
+.change b { font-weight: 600 }
+.change p { margin: 2px 0 0; max-width: 78ch }
+@media (max-width: 900px) { .board { grid-template-columns: minmax(0, 1fr) } }
+@media (max-width: 560px) { .change { grid-template-columns: minmax(0, 1fr); gap: 6px } }
+</style>
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">__EYEBROW__</div>
+    <h1>__NAME__</h1>
+    <p id="lead"></p>
+  </header>
+  <section><h2 style="margin-bottom:12px">All boards</h2><div class="tablewrap"><table id="sum"></table></div><p class="note" id="sumnote"></p></section>
+  <section id="notes-wrap"><h2 style="margin-bottom:8px">What the boards showed</h2><div class="changes" id="notes"></div></section>
+  <div class="wrap" id="boards"></div>
+</div>
+<script>
+const D = __DATA__;
+const $ = s => document.querySelector(s), el = (t, a = {}, ...k) => { const e = document.createElement(t); for (const [n, v] of Object.entries(a)) { if (n === "text") e.textContent = v; else if (n === "class") e.className = v; else e.setAttribute(n, v) } e.append(...k); return e };
+$("#lead").textContent = D.lead; $("#sumnote").textContent = D.sumnote;
+const num = (k, b) => b.rows.find(r => r[0] === k), arrow = r => `${fmt(r[1])} → ${fmt(r[2])}`, fmt = v => Number.isInteger(v) ? String(v) : v.toFixed(0);
+const mark = (r, lowGood = true) => r[2] === r[1] ? "" : ((r[2] < r[1]) === lowGood ? "better" : "worse");
+const T = $("#sum"), cols = ["Board", "First routed by", "Nets", "Failed", "Vias", "Track, mm", "On B.Cu, mm", "Detours, mm", "Opens", "Clearance", "Router"];
+T.append(el("thead", {}, el("tr", {}, ...cols.map(c => el("th", { text: c })))));
+const tb = el("tbody");
+for (const b of D.boards) {
+  const cell = (k) => { const r = num(k, b); return el("td", { text: arrow(r), class: mark(r) }) };
+  const drc = k => { const r = ["", b.drc.old[k] || 0, b.drc.new[k] || 0]; return el("td", { text: arrow(r), class: mark(r) }) };
+  const a = el("a", { href: `#board-${b.id}`, text: b.title }); a.onclick = e => { e.preventDefault(); $(`#board-${b.id}`).scrollIntoView() };
+  tb.append(el("tr", {}, el("td", {}, a), el("td", { text: b.old, style: "text-align:left" }), el("td", { text: b.nets }), el("td", { text: b.failed, class: b.failed ? "worse" : "" }),
+    cell("Vias"), cell("Track, mm"), cell("On B.Cu, mm"), cell("Detours, mm"), drc("unconnected_items"), drc("clearance"),
+    el("td", { text: `${Math.round(b.secs / 60)} min` })));
+}
+T.append(tb);
+if (D.notes.length) for (const c of D.notes) $("#notes").append(el("div", { class: "change" }, el("span", { class: "pill " + c.state, text: c.label }), el("div", {}, el("b", { text: c.title }), el("p", { text: c.text }))));
+else $("#notes-wrap").hidden = true;
+for (const b of D.boards) {
+  const img = el("img", { alt: `${b.title}, ${b.old}` }), tag = el("span", { class: "tag" });
+  const viewer = el("div", { class: "viewer", tabindex: "0", role: "button", "aria-label": `Zoom ${b.title}` }, tag, img);
+  const views = [["old", "Old routing"], ["new", "The router"]], btn = {};
+  const show = v => { img.src = `svg/${b.id}-${v}.svg`; tag.textContent = v === "old" ? `Old: ${b.old}` : "The router"; for (const [k, x] of Object.entries(btn)) x.setAttribute("aria-pressed", k === v) };
+  const seg = el("div", { class: "seg" });
+  for (const [v, n] of views) { btn[v] = el("button", { type: "button", text: n }); btn[v].onclick = () => show(v); seg.append(btn[v]) }
+  const zoom = () => viewer.classList.toggle("big");
+  viewer.onclick = zoom; viewer.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); zoom() } };
+  const t = el("table"); t.append(el("thead", {}, el("tr", {}, el("th", { text: "" }), el("th", { text: "Old" }), el("th", { text: "Router" }))));
+  const body = el("tbody"); for (const r of b.rows) body.append(el("tr", {}, el("td", { text: r[0] }), el("td", { text: fmt(r[1]) }), el("td", { text: fmt(r[2]), class: mark(r) }))); t.append(body);
+  const list = c => Object.entries(c).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") || "none";
+  const side = el("div", { class: "side" }, seg, t, el("p", { text: b.note }), el("p", { class: "drc", text: `DRC old: ${list(b.drc.old)}. DRC new: ${list(b.drc.new)}.` }));
+  $("#boards").append(el("section", { class: "bd", id: `board-${b.id}` }, el("div", {}, el("h2", { text: b.title }), el("p", { class: "sub", text: b.sub })), el("div", { class: "board" }, viewer, side)));
+  show("new");
+}
+</script>

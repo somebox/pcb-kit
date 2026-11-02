@@ -11,7 +11,7 @@ design notes stay in the board's repo and call `pcbkit`.
 Three parts:
 
 - **`pcbkit`**, a Python package and CLI: checks, release files, enclosure outlines, EasyEDA import, net views,
-  placement scoring, a maze router, simulation runs, a schematic builder for konnect.
+  placement scoring, a maze router, a negotiated router, simulation runs, a schematic builder for konnect.
 - **`skills/`**, agent skills in SKILL.md form, used by Claude Code and pi.
 - **`templates/`** and **`library/`**: the project skeleton, conventions and trusted parts.
 
@@ -117,6 +117,21 @@ rows, with a 45-degree jog where a via has to sit to the side. On the message si
 two TSSOP-20s, 24 signal nets) fan-out plus both options routed 34 of 36 connections in 51 s, against 26 in 192 s
 without them, with the routed F.Cu 90 % horizontal and B.Cu 94 % vertical; the price is more vias and longer tracks.
 
+### Lay a board's signals again
+
+`pcbkit reroute` takes a placed board whose power copper and ground are drawn and lays its signals again: it moves small
+parts where that helps, routes every signal net together with other nets' copper a rising cost instead of a wall, polishes
+each net alone, places test pads where their nets ended up, repairs what is left, and reports the old routing and the new
+one on the same measures. It leaves the result beside your board and never writes it. On six boards, four of them
+four-layer, it left no failed connection, and took vias from 633 to 480, track from 9220 to 8287 mm and 90-degree corners
+from 248 to 49. It is experimental: none of these routes has been built yet. It runs under its own Python, which
+`pcbkit setup-router` installs; [docs/ROUTER.md](docs/ROUTER.md) has the method, the settings and the limits.
+
+```bash
+pcbkit setup-router
+pcbkit reroute scripts/reroute-driver.json     # {"board": "../boards/driver/driver.kicad_pcb", "keep": ["GND", "USB_DP", "USB_DN"]}
+```
+
 ### Look at the copper
 
 `pcbkit netview` draws one layer of a board region with every net in its own colour, pads labelled and courtyards
@@ -207,6 +222,7 @@ where everything goes and can turn either feature off.
 | [power-sim](skills/power-sim/SKILL.md) | one ngspice script per design question; averaged models when vendor models stall |
 | [bom-cost](skills/bom-cost/SKILL.md) | the proven-parts catalog first, then bomi: stock checks, Extended-part fees, what goes into BOM.md |
 | [placement-study](skills/placement-study/SKILL.md) | scoring placements by their ratsnest, the study file, searching, and routing only the winner |
+| [routing](skills/routing/SKILL.md) | laying a board's signals again with `pcbkit reroute`: settings, reading the result, what to check before adopting it |
 | [failure-review](skills/failure-review/SKILL.md) | before an order: datasheets and reference designs, failure modes and how to diagnose them, test points, a briefing before any change |
 | [fab-order](skills/fab-order/SKILL.md) | the order itself, in the user's browser: what JLC assembles, the PCB and assembly forms, the BOM page's traps, checking every part in the placement viewer against the release's placement checklist, the LCSC cart for hand assembly; never paying |
 
@@ -311,11 +327,14 @@ from pcbkit.spice import run                 # ngspice deck -> measurements, wrd
 
 ```
 pcbkit/            the package (checks/, release/, config.py, production.py, tomlw.py, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
+pcbkit/reroute/    `pcbkit reroute`: the flow and the KiCad side of the negotiated router
+pcbkit_router/     the router itself, under its own Python (numba, numpy, scipy, pillow)
+bench/             corpus.json (the boards a router change is judged on, each at a pinned commit), baseline.json (their results)
 pcbkit/data/       jlc/corrections.csv (rotations, dated where JLC's preview showed them right), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons, pcbkit.toml and .gitignore for a new hardware repo
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
-docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), images/
+docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), ROUTER.md (the router's method), images/
 scripts/release.py version bump, check and tag; CHANGELOG.md lists each release, AGENTS.md says how to cut one
 ```
 
@@ -327,4 +346,5 @@ siebenuhr, the message sign and the spotlight use the kit; dodeca still runs its
 Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/11), `pcbkit spice` (2026-10-11,
 from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), placement
 scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron), the router's time limits
-(2026-10-17, for esp32-s3-ha-node), and the failure-review skill (2026-10-18, from the dodeca and siebenuhr reviews).
+(2026-10-17, for esp32-s3-ha-node), the failure-review skill (2026-10-18, from the dodeca and siebenuhr reviews), and the
+negotiated router (2026-11-01, from siebenuhr's routing research).

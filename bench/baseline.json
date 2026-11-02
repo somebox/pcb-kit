@@ -1,0 +1,112 @@
+{
+ "spotlight-driver": {
+  "nets": 23,
+  "failed": 0,
+  "drc": {},
+  "vias": 23,
+  "mm": 416.8,
+  "corners90": 3,
+  "jogs": 9,
+  "tees": 2,
+  "necks": 0,
+  "via_in_ic": 1,
+  "hug_mm": 2.4,
+  "under_mm": 0.0,
+  "detour_mm": 11.6,
+  "crossbacks": 0
+ },
+ "ha-node": {
+  "nets": 59,
+  "failed": 0,
+  "drc": {
+   "items_not_allowed": 1,
+   "starved_thermal": 2
+  },
+  "vias": 36,
+  "mm": 1040.3,
+  "corners90": 9,
+  "jogs": 21,
+  "tees": 6,
+  "necks": 1,
+  "via_in_ic": 0,
+  "hug_mm": 18.6,
+  "under_mm": 0.0,
+  "detour_mm": 50.4,
+  "crossbacks": 2
+ },
+ "v2-controller": {
+  "nets": 37,
+  "failed": 0,
+  "drc": {
+   "clearance": 4,
+   "courtyards_overlap": 2,
+   "copper_edge_clearance": 20,
+   "starved_thermal": 3,
+   "padstack": 107
+  },
+  "vias": 63,
+  "mm": 844.0,
+  "corners90": 1,
+  "jogs": 25,
+  "tees": 4,
+  "necks": 3,
+  "via_in_ic": 0,
+  "hug_mm": 2.6,
+  "under_mm": 0,
+  "detour_mm": 8.1,
+  "crossbacks": 1
+ },
+ "orbitchron-driver": {
+  "nets": 100,
+  "failed": 0,
+  "drc": {},
+  "vias": 70,
+  "mm": 1194.9,
+  "corners90": 5,
+  "jogs": 35,
+  "tees": 2,
+  "necks": 1,
+  "via_in_ic": 12,
+  "hug_mm": 51.0,
+  "under_mm": 134.3,
+  "detour_mm": 41.5,
+  "crossbacks": 1
+ },
+ "sign-controller": {
+  "nets": 97,
+  "failed": 0,
+  "drc": {},
+  "vias": 154,
+  "mm": 2526.5,
+  "corners90": 17,
+  "jogs": 60,
+  "tees": 9,
+  "necks": 12,
+  "via_in_ic": 10,
+  "hug_mm": 97.7,
+  "under_mm": 26.1,
+  "detour_mm": 62.2,
+  "crossbacks": 2
+ },
+ "dodeca-control": {
+  "nets": 105,
+  "failed": 0,
+  "drc": {
+   "via_dangling": 1,
+   "drill_out_of_range": 18,
+   "via_diameter": 18,
+   "unconnected_items": 1
+  },
+  "vias": 134,
+  "mm": 2264.9,
+  "corners90": 14,
+  "jogs": 45,
+  "tees": 8,
+  "necks": 1,
+  "via_in_ic": 1,
+  "hug_mm": 67.3,
+  "under_mm": 29.7,
+  "detour_mm": 18.7,
+  "crossbacks": 1
+ }
+}

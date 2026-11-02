@@ -1,0 +1,153 @@
+[
+ {
+  "name": "spotlight-driver",
+  "repo": "~/Documents/Projects/rgb-spotlight",
+  "commit": "1610d73fb1f1b874c8c4ff7678bae0a04959ac85",
+  "board": "boards/driver/driver.kicad_pcb",
+  "route": {
+   "workers": 3
+  }
+ },
+ {
+  "name": "ha-node",
+  "repo": "~/Documents/Projects/esp32-s3-ha-node",
+  "commit": "4de402c39fabb1850ca0173a95550b91260745b7",
+  "board": "boards/node/node.kicad_pcb",
+  "keep": [
+   "GND",
+   "USB_DN",
+   "USB_DP"
+  ],
+  "route": {
+   "workers": 3
+  }
+ },
+ {
+  "name": "v2-controller",
+  "repo": "~/Documents/Projects/siebenuhr/controller-v2",
+  "commit": "e1bcae6297c6f55b3dee7b0340c029769a2eb4c5",
+  "board": "archive/v2-kicad/controller/controller.kicad_pcb",
+  "keep": [
+   "GND",
+   "5V",
+   "5V_RAIL",
+   "EXT_5V",
+   "VBUS",
+   "D+",
+   "D-"
+  ],
+  "clr": 0.2,
+  "keepout": [
+   "118,114.3,123.9,129.6"
+  ],
+  "neg": {
+   "expand": 1
+  },
+  "nets": {
+   "ADDR": {
+    "clr": 0.15
+   },
+   "DVI": {
+    "clr": 0.15
+   }
+  },
+  "place": {
+   "movable": [
+    "R*",
+    "C*",
+    "Q1",
+    "Q2",
+    "TP4",
+    "TP5"
+   ],
+   "fixed": [
+    "C7",
+    "C5",
+    "CN1",
+    "CN2"
+   ],
+   "shifts": [
+    0,
+    0.5,
+    1.5
+   ],
+   "reach": 2.0,
+   "limit": 2.2,
+   "gain": 1.0,
+   "workers": 9,
+   "limits": {
+    "C4": 0.8,
+    "C6": 0.8,
+    "C13": 0.8,
+    "C2": 0.8,
+    "C3": 0.8,
+    "TP4": 4.0,
+    "TP5": 4.0
+   }
+  },
+  "free": [
+   "TP1",
+   "TP2",
+   "TP3",
+   "TP6",
+   "TP8",
+   "TP9",
+   "TP10",
+   "TP13",
+   "TP16",
+   "TP17",
+   "TP18",
+   "TP19",
+   "TP20"
+  ],
+  "route": {
+   "workers": 4
+  }
+ },
+ {
+  "name": "orbitchron-driver",
+  "repo": "~/Documents/Projects/Orbitchron",
+  "commit": "0dcb3402248245cc1fa2a17f4b49d576161058eb",
+  "board": "boards/driver/driver.kicad_pcb",
+  "keep": [
+   "GND",
+   "VLED"
+  ],
+  "lift": [
+   "GND",
+   "VLED"
+  ],
+  "route": {
+   "workers": 3
+  }
+ },
+ {
+  "name": "sign-controller",
+  "repo": "~/Documents/Projects/rp2354-messages-sign",
+  "commit": "bfb19ac1b05dd425f1af369eaca93d927c44ad02",
+  "board": "boards/controller/controller.kicad_pcb",
+  "keep": [
+   "GND",
+   "USB_DM",
+   "USB_DP",
+   "Net-(U4-USB_DM)",
+   "Net-(U4-USB_DP)"
+  ],
+  "route": {
+   "workers": 4
+  }
+ },
+ {
+  "name": "dodeca-control",
+  "repo": "~/src/dodeca-v2-hardware",
+  "commit": "53b8ae3cd721d74d291541820b4ec40037d6c66a",
+  "board": "hardware/control-board/v1.3/kicad/dodeca-control-board-v1.3.kicad_pcb",
+  "keep": [
+   "GND",
+   "MUX_OV2"
+  ],
+  "route": {
+   "workers": 3
+  }
+ }
+]

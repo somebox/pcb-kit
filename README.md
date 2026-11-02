@@ -123,8 +123,8 @@ without them, with the routed F.Cu 90 % horizontal and B.Cu 94 % vertical; the p
 parts where that helps, routes every signal net together with other nets' copper a rising cost instead of a wall, polishes
 each net alone, places test pads where their nets ended up, repairs what is left, and reports the old routing and the new
 one on the same measures. It leaves the result beside your board and never writes it. On six boards, four of them
-four-layer, it left no failed connection, and took vias from 636 to 480, track from 9228 to 8287 mm and 90-degree corners
-from 248 to 48. It is experimental: none of these routes has been built yet. It runs under its own Python, which
+four-layer, it left no failed connection, and took vias from 633 to 480, track from 9220 to 8287 mm and 90-degree corners
+from 248 to 49. It is experimental: none of these routes has been built yet. It runs under its own Python, which
 `pcbkit setup-router` installs; [docs/ROUTER.md](docs/ROUTER.md) has the method, the settings and the limits.
 
 ```bash

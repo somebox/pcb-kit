@@ -168,25 +168,25 @@ any `--key=value` goes to `nroute.py`, over `route`.
 ## Results
 
 The six boards of the corpus, each board's old routing against the router's, with no part moved except on siebenuhr v2,
-at the worker counts in `bench/corpus.json` (3 or 4). The two-layer boards route in minutes, the four-layer ones in about
-an hour on 10 cores.
+at the worker counts in `bench/corpus.json` (3 or 4), counted on the finished board with test pads and repairs in. The
+two-layer boards route in about ten minutes, the four-layer ones in 40 minutes to 3 hours.
 
 | Board | Layers, nets | First routed by | Vias | Track, mm | 90° corners | Detours, mm | Cross-backs |
 |---|---|---|---|---|---|---|---|
 | Spotlight driver | 2, 23 | maze router | 33 → 23 | 436 → 417 | 10 → 3 | 22 → 12 | 2 → 0 |
-| ESP32-S3 HA node | 2, 59 | maze router | 59 → 36 | 1054 → 1040 | 11 → 9 | 44 → 50 | 0 → 2 |
-| Siebenuhr v2 | 2, 37 | hand | 74 → 63 | 993 → 844 | 0 → 0 | 48 → 5 | 1 → 0 |
-| Orbitchron driver | 4, 100 | maze router | 77 → 70 | 1327 → 1194 | 146 → 5 | 79 → 41 | 6 → 1 |
-| Sign controller | 4, 97 | maze router | 269 → 154 | 2761 → 2526 | 28 → 17 | 96 → 62 | 22 → 2 |
-| Dodeca v1.3 | 4, 105 | Freerouting | 124 → 134 | 2657 → 2267 | 53 → 14 | 131 → 19 | 8 → 1 |
+| ESP32-S3 HA node | 2, 59 | maze router | 56 → 36 | 1054 → 1040 | 11 → 9 | 44 → 50 | 0 → 2 |
+| Siebenuhr v2 | 2, 37 | hand | 74 → 63 | 986 → 844 | 0 → 1 | 48 → 8 | 1 → 1 |
+| Orbitchron driver | 4, 100 | maze router | 77 → 70 | 1327 → 1195 | 146 → 5 | 79 → 42 | 6 → 1 |
+| Sign controller | 4, 97 | maze router | 269 → 154 | 2761 → 2527 | 28 → 17 | 96 → 62 | 22 → 2 |
+| Dodeca v1.3 | 4, 105 | Freerouting | 124 → 134 | 2657 → 2265 | 53 → 14 | 131 → 19 | 8 → 1 |
 
-In all: vias 636 to 480, track 9228 to 8287 mm, 90-degree corners 248 to 48, narrow runs 167 to 16, vias in pin areas 65 to
-24, detours 419 to 188 mm, cross-backs 39 to 6. DRC is clean on the spotlight, Orbitchron and the sign, the HA node keeps its
+In all: vias 633 to 480, track 9220 to 8287 mm, 90-degree corners 248 to 49, narrow runs 166 to 18, vias in pin areas 65 to
+24, detours 419 to 193 mm, cross-backs 39 to 7. DRC is clean on the spotlight, Orbitchron and the sign, the HA node keeps its
 old findings, and v2 is better than it was.
 
-What got worse: track hugging pads (184 to 242 mm), T joins on the HA node (1 to 7), back-layer track on the HA node and the
-sign, and 10 more vias on dodeca, where one ground pad closed off by a 3V3 track needs a hand fix and 36 via-size warnings
-remain.
+What got worse: track hugging pads (184 to 240 mm), T joins on the HA node (1 to 6) and v2 (1 to 4), jogs on v2 (14 to 25),
+back-layer track on the HA node and the sign, and 10 more vias on dodeca, where one ground pad closed off by a 3V3 track needs
+a hand fix, a locked 3V3 via is left dangling and 36 via-size warnings remain.
 
 ## Changing the router
 

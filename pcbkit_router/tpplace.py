@@ -1,8 +1,10 @@
 """tpplace: test pads placed where their nets ended up: a test pad needs nothing but a
 spot on its net, so the routing goes first and the pad follows. Each free pad goes on its net's copper: on a track of its
 own side or a via for nothing, on a track of the other side with a new via under it; where no such spot is free, beside
-its net on a short stub. The spot keeps the pad's clearance on its side, stays out of every courtyard and rule area, keeps
-`pitch` mm from the other test pads, and is the one nearest where the pad was.
+its net on a short stub. The spot keeps the pad's clearance on its side, stays out of every courtyard and rule area, with
+all of the pad and the stub's width, keeps `pitch` mm from the other test pads, and is the one nearest where the pad was.
+A pad with no such spot stays where it was, unconnected for DRC to report, or stops the run if the routing went over it:
+the router never saw it there, so it needs routing again with the pad left out of "free".
 
     tpplace.py GEOM.json ROUTES.json FULL_GEOM.json FREE.json OUT.json [--clr=0.15] [--pitch=1.5] [--via=0.45,0.25]
                                                                                  [--job=JOB.json]    (the router's Python)
@@ -49,6 +51,7 @@ def main():
         for poly in k["polys"]: courts |= bd.mask(poly)
     inside = {S: courts | bd.keep_mask(keep, "", S) for S in "FB"}
     no_via = bd.keep_mask(keep, "", "v")
+    walls = {S: ndimage.distance_transform_edt(~(bd.kt[S] | bd.keep_mask(keep, "", S))) * RES for S in "FB"}   # mm to a rule area
 
 
     def own_points(net, S):
@@ -72,7 +75,8 @@ def main():
         d, dO, dI = bd.gap(bd.lab[S], c, CLR, own), bd.gap(bd.lab[O], c, CLR, own), bd.gap(bd.lab_in, c, CLR, own)
         def stub_free(a, b):
             k = max(2, int(math.dist(a, b) / 0.05))
-            return all(d[int((a[1] + (b[1] - a[1]) * i / k - bd.Y0) / RES + 0.5), int((a[0] + (b[0] - a[0]) * i / k - bd.X0) / RES + 0.5)] >= 0.125 + CLR + RES for i in range(k + 1))
+            cells = [(int((a[1] + (b[1] - a[1]) * i / k - bd.Y0) / RES + 0.5), int((a[0] + (b[0] - a[0]) * i / k - bd.X0) / RES + 0.5)) for i in range(k + 1)]
+            return all(d[c] >= 0.125 + CLR + RES and walls[S][c] >= 0.125 + RES for c in cells)
         smd = bd.static_edt("smd"); dkv = bd.static_edt("kv"); hole = ndimage.distance_transform_edt(~bd.holes) * RES
         def via_ok(x, y, i, j):
             """a new via here clears the far side, the inner tracks, pads, rule areas, drills and the net's own vias"""
@@ -80,7 +84,7 @@ def main():
                     and hole[j, i] >= HOLE and not no_via[j, i] and not any(math.dist((x, y), v[:2]) < 0.6 for v in bd.vias if v[2] == c))
         for x, y, extra, kind in own_points(p["net"], S):
             i, j = int((x - bd.X0) / RES + 0.5), int((y - bd.Y0) / RES + 0.5)
-            if d[j, i] < r + CLR + RES or inside[S][j, i] or bd.kt[S][j, i]: continue
+            if d[j, i] < r + CLR + RES or inside[S][j, i] or walls[S][j, i] < r + RES: continue
             if any(math.dist((x, y), q) < PITCH for q in placed): continue
             if kind == O and not via_ok(x, y, i, j): continue
             s = math.dist((x, y), p["at"]) * 0.2 + extra
@@ -93,7 +97,7 @@ def main():
                 for L in (1.0, 1.5, 2.0, 2.5, 3.0):
                     u, v = round(x + L * math.cos(a * math.pi / 4), 2), round(y + L * math.sin(a * math.pi / 4), 2)
                     ii, jj = int((u - bd.X0) / RES + 0.5), int((v - bd.Y0) / RES + 0.5)
-                    if not (0 <= ii < bd.W and 0 <= jj < bd.H) or d[jj, ii] < r + CLR + RES or inside[S][jj, ii] or bd.kt[S][jj, ii]: continue
+                    if not (0 <= ii < bd.W and 0 <= jj < bd.H) or d[jj, ii] < r + CLR + RES or inside[S][jj, ii] or walls[S][jj, ii] < r + RES: continue
                     if any(math.dist((u, v), q) < PITCH for q in placed) or not stub_free((x, y), (u, v)): continue
                     s = math.dist((u, v), p["at"]) * 0.2 + extra + L
                     if best is None or s < best[0]: best = (s, u, v, "S" if kind != O else "SO", (x, y))
@@ -104,10 +108,15 @@ def main():
     order = sorted(free, key=lambda r: sum(1 for t in own_points(pads[r]["net"], side[r]) if t[3] != far(r)))
     for ref in order:
         b = place(ref, placed)
-        if b is None: print(f"{ref} ({pads[ref]['net']}): no spot"); continue
+        q = pads[ref]; c = bd.code(q["net"]); S = side[ref]
+        if b is None:
+            i, j = int((q["at"][0] - bd.X0) / RES + 0.5), int((q["at"][1] - bd.Y0) / RES + 0.5)
+            if bd.gap(bd.lab[S], c, CLR, job.get("clr_nets", {}).get(q["net"], CLR))[j, i] < rad[ref] + CLR:
+                sys.exit(f"{ref} ({q['net']}): no spot, and other copper now lies where it was: take it out of \"free\" and route again")
+            print(f"{ref} ({q['net']}): no spot, stays where it was, unconnected")
+            bd.put(bd.lab[S], bd.cdisc(*q["at"], rad[ref]), c); placed.append(tuple(q["at"])); continue
         _, x, y, kind, at = b; x, y = round(x, 3), round(y, 3)
-        q = pads[ref]; moves[ref] = dict(dx=round(x - q["at"][0], 3), dy=round(y - q["at"][1], 3)); placed.append((x, y))
-        c = bd.code(q["net"]); S = side[ref]
+        moves[ref] = dict(dx=round(x - q["at"][0], 3), dy=round(y - q["at"][1], 3)); placed.append((x, y))
         if kind == far(ref): added.setdefault(q["net"], []).append([x, y]); bd.add_via(x, y, c)
         if kind == "SO": added.setdefault(q["net"], []).append(list(at)); bd.add_via(*at, c)
         if at:

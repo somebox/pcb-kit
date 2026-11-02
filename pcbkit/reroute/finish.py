@@ -22,12 +22,14 @@ COSMETIC = ("silk_", "lib_", "text_")
 SELF = "pcbkit.reroute.finish"
 
 
-def drc(pcb):
-    """DRC of a board, zones refilled: (counts by kind, cosmetic kinds left out; the report's text)"""
+def drc(pcb, save=False):
+    """DRC of a board, zones refilled, and written back with save so the board holds the fills DRC saw: (counts by kind,
+    cosmetic kinds left out; the report's text)"""
     rpt = Path(pcb).with_suffix(".rpt")
     if rpt.exists():
         rpt.unlink()
-    r = subprocess.run([KICAD_CLI, "pcb", "drc", "--refill-zones", "-o", str(rpt), str(pcb)], capture_output=True, text=True)
+    cmd = [KICAD_CLI, "pcb", "drc", "--refill-zones", *(["--save-board"] if save else []), "-o", str(rpt), str(pcb)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if not rpt.exists():
         sys.exit(f"kicad-cli wrote no report for {pcb}:\n{r.stdout[-1000:]}{r.stderr[-1000:]}")
     text = rpt.read_text()
@@ -43,11 +45,11 @@ def child(mode, *a):
 
 
 def dangling(text):
-    """the vias and the tracks DRC finds a dead end on: [(x, y)], [(x, y, length)]"""
-    vias = re.findall(r"\[via_dangling\][^\n]*\n[^\n]*\n\s*@\(([-\d.]+) mm, ([-\d.]+) mm\): Via \[", text)
-    tracks = re.findall(r"\[track_dangling\][^\n]*\n[^\n]*\n\s*@\(([-\d.]+) mm, ([-\d.]+) mm\): Track \[[^\n]*, length ([\d.]+) mm",
-                        text)
-    return [(float(x), float(y)) for x, y in vias], [(float(x), float(y), float(n)) for x, y, n in tracks]
+    """the vias and the tracks DRC finds a dead end on: [(x, y, net)], [(x, y, length, net, layer)]"""
+    vias = re.findall(r"\[via_dangling\][^\n]*\n[^\n]*\n\s*@\(([-\d.]+) mm, ([-\d.]+) mm\): Via \[(.*?)\] on ", text)
+    tracks = re.findall(r"\[track_dangling\][^\n]*\n[^\n]*\n\s*@\(([-\d.]+) mm, ([-\d.]+) mm\): Track \[(.*?)\] on ([^,\n]+), "
+                        r"length ([\d.]+) mm", text)
+    return [(float(x), float(y), net) for x, y, net in vias], [(float(x), float(y), float(n), net, L) for x, y, net, L, n in tracks]
 
 
 def place_pads(board, tpf, out):
@@ -73,16 +75,19 @@ def drop(board, pts, stubs):
     def near(p, x, y):
         return abs(mm(p.x) - x) < 0.01 and abs(mm(p.y) - y) < 0.01
 
+    def on(t, net):                             # the name as DRC prints it
+        return t.GetNetnameMsg() == f"[{net}]"
+
     for t in list(b.GetTracks()):
         if t.IsLocked():
             continue
         if t.Type() == pcbnew.PCB_VIA_T:
-            if any(near(t.GetPosition(), x, y) for x, y in pts):
+            if any(near(t.GetPosition(), x, y) and on(t, net) for x, y, net in pts):
                 b.Remove(t)
         elif t.GetLength() == 0:
             b.Remove(t)
         elif any((near(t.GetStart(), x, y) or near(t.GetEnd(), x, y)) and abs(mm(t.GetLength()) - n) < 0.01
-                 for x, y, n in stubs):
+                 and on(t, net) and t.GetLayerName() == L for x, y, n, net, L in stubs):
             b.Remove(t)
     save_board(b, board)
 
@@ -107,7 +112,7 @@ def main(argv=None):
         if os.path.exists(p):
             for t in (base, out):
                 shutil.copy(p, os.path.splitext(t)[0] + "." + e)
-    c, text = drc(out)
+    c, text = drc(out, save=True)
     for _ in range(3):                          # a dead branch goes a segment at a time
         pts, stubs = dangling(text)
         if not pts and not stubs:
@@ -115,14 +120,14 @@ def main(argv=None):
         keep = out + ".keep"
         shutil.copy(out, keep)
         child("drop", out, json.dumps(pts), json.dumps(stubs))
-        c2, text2 = drc(out)
+        c2, text2 = drc(out, save=True)
         if dangling(text2) == (pts, stubs):     # all that's left is locked
             print(f"left in, locked: {pts}, {stubs}")
             os.remove(keep)
             break
         if c2.get("unconnected_items", 0) > c.get("unconnected_items", 0):
             shutil.copy(keep, out)
-            c, text = drc(out)
+            c, text = drc(out, save=True)
             print(f"left in, a connection hung on them: {pts}, {stubs}")
             os.remove(keep)
             break

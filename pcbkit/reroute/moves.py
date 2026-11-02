@@ -4,8 +4,8 @@ listed as free come off the router's board, to go back on after the routing (tpp
     python -m pcbkit.reroute.moves SRC_DIR OUT_DIR MOVES.json        (KiCad's Python)
 
 MOVES: {"moves": {"R2": {"dx": 0.5, "dy": -1.0, "turn": 90}, ...}, "free": ["TP1", ...]}. dx, dy in mm, turn in degrees
-counter-clockwise on screen as KiCad counts it, about the part's anchor. A free test pad stays where it is when its net
-has fewer than two other pads: nothing would be routed for it to sit on. Writes OUT_DIR/in.kicad_pcb (the router's board,
+counter-clockwise on screen as KiCad counts it, about the part's anchor. A locked part stays where it is, whatever MOVES
+says, and so does a free test pad whose net has fewer than two other pads: nothing would be routed for it to sit on. Writes OUT_DIR/in.kicad_pcb (the router's board,
 free parts out), full.kicad_pcb (the same with every pour, free parts kept for tpplace.py), hand.kicad_pcb (the original),
 job.json (SRC_DIR's, with nets left without two pads taken out), in.json (geom.py of in) and moves.json (MOVES with the
 test pads actually freed).
@@ -37,7 +37,7 @@ def move(b, moves, free, ground, keep_free):
                 continue
             box = pad.GetBoundingBox()
             box.Inflate(mm(0.05))
-            for t in [t for t in gnd if box.Contains(t.GetStart()) or box.Contains(t.GetEnd())]:
+            for t in [t for t in gnd if pad.IsOnLayer(t.GetLayer()) and (box.Contains(t.GetStart()) or box.Contains(t.GetEnd()))]:
                 if t.IsLocked():                # placeopt.py doesn't move such a part, but MOVES can be anyone's
                     print(f"!! {r} moved off a locked track of {ground}, which stays", flush=True)
                     continue
@@ -65,7 +65,11 @@ def main(argv=None):
         move(b, moves, free, ground, one == "full")
         save_board(b, f"{out}/{one}.kicad_pcb")
         return
-    b = pcbnew.LoadBoard(f"{src}/in.kicad_pcb")     # the test pads that may really go
+    b = pcbnew.LoadBoard(f"{src}/in.kicad_pcb")     # the parts that may really go
+    locked = {fp.GetReference() for fp in b.GetFootprints() if fp.IsLocked()}
+    if locked & (set(moves) | free):
+        print(f"!! locked, staying: {sorted(locked & (set(moves) | free))}", flush=True)
+    moves, free = {r: m for r, m in moves.items() if r not in locked}, free - locked
     others = collections.Counter(p.GetNetname() for fp in b.GetFootprints() if fp.GetReference() not in free
                                  for p in fp.Pads())
     stay = {fp.GetReference() for fp in b.GetFootprints() if fp.GetReference() in free
@@ -75,7 +79,7 @@ def main(argv=None):
     free -= stay
     mv = f"{out}/moves.json"
     with open(mv, "w") as fh:
-        json.dump(dict(cfg, free=sorted(free)), fh, indent=1)
+        json.dump(dict(cfg, moves=moves, free=sorted(free)), fh, indent=1)
     for name in ("in", "full"):
         subprocess.run([sys.executable, "-m", "pcbkit.reroute.moves", src, out, mv, name], check=True)
     if os.path.abspath(src) != os.path.abspath(out):

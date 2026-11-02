@@ -249,7 +249,7 @@ class Board:
         """a job's keep-out rectangles that hold for net on a layer ("v": for vias), as a raster"""
         out = np.zeros((self.H, self.W), bool)
         for k in keep:
-            if short(net) in k.get("except", []): continue
+            if net in k.get("except", []): continue
             if not (k.get("vias", True) if layer == "v" else layer in k.get("layers", "FB")): continue
             x0, y0, x1, y1 = k["rect"]
             out[max(int((y0 - self.Y0) / RES), 0):max(int((y1 - self.Y0) / RES) + 1, 0),

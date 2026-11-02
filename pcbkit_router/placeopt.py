@@ -10,8 +10,8 @@ area didn't work: two nets alone often take the same path, and a move that split
 Each round tries every small part in every turn and shift, routes alone the part's nets and the nets passing within
 `reach` mm of where it was or will be, and takes the best moves that don't touch each other. Rounds go on until none
 gains `gain` mm; from the second on only the `keep` best of the first are tried, and a part moves once. A move keeps
-the courtyard clear of other parts on its side (`court_gap`), its pads `clr` from fixed copper of other nets and clear
-of every via (no via in a pad), and on the board, outside rule areas. A test pad stays out from under front parts too.
+the courtyard clear of other parts on its side (`court_gap`), its pads `clr` (or the job's stricter clearance of either
+net) from fixed copper of other nets and clear of every via (no via in a pad), and on the board, outside rule areas. A test pad stays out from under front parts too.
 
     placeopt.py GEOM.json JOB.json OUT.json CONFIG.json    (the router's Python)
 
@@ -19,7 +19,7 @@ CONFIG: {"clr": 0.2, "movable": ["R*", "C*", "Q1"], "fixed": ["C7", "CN1"], "shi
          "limits": {"C4": 1.0, ...}: largest shift in mm for a part (decoupling caps stay by their pin), default 3}
 OUT: {"moves": {ref: {"dx", "dy", "turn"}}, "free": CONFIG's "free", "log": [...]}, for moves.py. Parts with pads on nets
 outside the job (the kept power copper) and GND don't move, except that GND pads may: the pour reaches them, and a kept
-stub on such a pad goes with the move (moves.py)."""
+stub on such a pad goes with the move (moves.py). A locked part doesn't move, nor one held by a locked stub."""
 import sys, json, math, time, io, contextlib, fnmatch, itertools, multiprocessing
 import numpy as np
 from scipy import ndimage
@@ -27,7 +27,7 @@ from .board import Board, pad_box, seg_box
 from .costs import RES, STEP, DEF, TRUE, GROUND, REFS
 from .netroute import NetRouter
 
-VIA, KEEP = None, []        # the job's via_size and keep-out rectangles
+VIA, KEEP, CLRS = None, [], {}      # the job's via_size, keep-out rectangles and clr_nets
 GND, RF = GROUND, REFS      # and its ground net and reference prefixes
 DFLT = dict(clr=0.15, shifts=[0, 1, 2], reach=2.0, limit=3.0, gain=0.5, cross=4.0, court_gap=0.05, workers=9, rounds=12, top=6, keep=150)
 
@@ -56,13 +56,14 @@ def part_of(geom, ref):
 
 
 def kept_stubs(geom, ref):
-    """the kept ground tracks that end on a pad of this part: they go when it moves"""
+    """the kept ground tracks that end on a pad of this part, on a layer the pad is on (a through-hole pad: all of them):
+    they go when it moves"""
     out = []
     for p in geom["pads"]:
         if p["ref"] != ref or p["net"] != GND: continue
         box = pad_box([q for ps in p["polys"].values() for q in ps])
         for i, it in enumerate(geom["items"]):
-            if it["kind"] == "track" and it["net"] == GND:
+            if it["kind"] == "track" and it["net"] == GND and (it["layer"] in p["polys"] or len(p["polys"]) == 2):
                 s = it["seg"]
                 if any(box[0] - 0.05 <= x <= box[2] + 0.05 and box[1] - 0.05 <= y <= box[3] + 0.05 for x, y in ((s[0], s[1]), (s[2], s[3]))):
                     out.append(i)
@@ -129,20 +130,25 @@ def court_ok(geom, ref, gap):
 
 
 def pads_ok(bd, geom, ref, clr):
-    """the part's pads clear of other nets' fixed copper by clr, and of every via"""
+    """the part's pads clear of other nets' fixed copper, and of every via. bd has the part off it: a cell holds one net, so
+    a pad painted in would hide what it covers"""
     for p in geom["pads"]:
         if p["ref"] != ref: continue
+        need = max(clr, CLRS.get(p["net"], 0.0))
         for L, ps in p["polys"].items():
             c = bd.code(p["net"]) if p["net"] else -3
             for poly in ps:
                 m = bd.cmask(poly)
                 if not m: return False
-                (sy, sx), u = m; g = int(clr / RES) + 3
+                (sy, sx), u = m; g = int(max(need, *CLRS.values(), 0.0) / RES) + 3
                 y0, y1, x0, x1 = max(sy.start - g, 0), min(sy.stop + g, bd.H), max(sx.start - g, 0), min(sx.stop + g, bd.W)
                 lab = bd.lab[L][y0:y1, x0:x1]; mm = np.zeros(lab.shape, bool)
                 mm[sy.start - y0:sy.stop - y0, sx.start - x0:sx.stop - x0] = u
                 d = ndimage.distance_transform_edt(~mm) * RES
-                if (((lab != 0) & (lab != c)) & (d < clr + RES)).any(): return False
+                other = (lab != 0) & (lab != c)
+                if (other & (d < need + RES)).any(): return False
+                for cl, codes in bd.wide_clr:
+                    if cl > need and (other & np.isin(lab, codes) & (d < cl + RES)).any(): return False
                 if bd.kt[L][y0:y1, x0:x1][mm].any(): return False
         bx = pad_box([q for ps in p["polys"].values() for q in ps])
         for x, y, vc in bd.vias:
@@ -195,6 +201,7 @@ def crossings(a, b):
 
 def board(geom, cached=None):
     bd = Board(geom, via=VIA, refs=RF)
+    bd.set_clearances(CLRS)
     if cached:
         bd._edt = dict(cached)
     for k in ("ktF", "ktB", "kv"): bd.static_edt(k)
@@ -218,7 +225,7 @@ class Search:
         self.rebase(geom)
 
     def rebase(self, geom):
-        self.geom = geom; self.bd = bd = board(geom)
+        self.geom = geom; self.bd = bd = board(geom); self.bare = {}
         self.edt = {k: v for k, v in bd._edt.items() if k != "smd"}
         res = route_all(geom, list(self.specs.values()), self.edt, self.cfg["workers"])
         self.res = res; self.segs = {n: segments(r[1]) for n, r in res.items()}
@@ -226,13 +233,19 @@ class Search:
         self.over = sum(crossings(self.segs[m], self.segs[n]) for i, m in enumerate(names) for n in names[i + 1:])
         self.total = sum(r[0] for r in res.values()) + self.cfg["cross"] * self.over
 
+    def without(self, g2, ref):
+        """the fixed copper with the part off it, kept per part: where it goes makes no difference"""
+        if ref not in self.bare:
+            self.bare[ref] = board(dict(g2, items=[it for it in g2["items"] if it.get("ref") != ref]), self.edt)
+        return self.bare[ref]
+
     def candidates(self):
         cfg, g, out = self.cfg, self.geom, []
         nets = set(self.specs)
         for p in g["parts"]:
             ref = p["ref"]
             if not any(fnmatch.fnmatch(ref, m) for m in cfg["movable"]) or ref in cfg.get("fixed", []): continue
-            if any(g["items"][i].get("locked") for i in kept_stubs(g, ref)): continue    # a locked track holds the part
+            if p.get("locked") or any(g["items"][i].get("locked") for i in kept_stubs(g, ref)): continue    # a locked track holds the part too
             pn = {q["net"] for q in g["pads"] if q["ref"] == ref}
             if not pn or pn - nets - {GND, ""}: continue
             lim = cfg.get("limits", {}).get(ref, cfg["limit"])
@@ -265,8 +278,8 @@ def _try(cand):
     S = _S; ref, dx, dy, t = cand; g = S.geom; cfg = S.cfg
     g2 = apply_move(g, ref, dx, dy, t)
     if not court_ok(g2, ref, cfg["court_gap"]): return None
+    if not pads_ok(S.without(g2, ref), g2, ref, cfg["clr"]): return None
     bd = board(g2, S.edt)
-    if not pads_ok(bd, g2, ref, cfg["clr"]): return None
     old = [pad_box([q for ps in p["polys"].values() for q in ps]) for p in g["pads"] if p["ref"] == ref]
     new = [pad_box([q for ps in p["polys"].values() for q in ps]) for p in g2["pads"] if p["ref"] == ref]
     r = cfg["reach"]; boxes = [(b[0] - r, b[1] - r, b[2] + r, b[3] + r) for b in old + new]
@@ -284,10 +297,10 @@ def _try(cand):
 
 
 def main():
-    global _S, VIA, KEEP, GND, RF
+    global _S, VIA, KEEP, CLRS, GND, RF
     gp, jp, outp, cp = sys.argv[1:5]
     geom, job, cfg = json.load(open(gp)), json.load(open(jp)), dict(DFLT, **json.load(open(cp)))
-    VIA, KEEP = job.get("via_size"), job.get("keep", [])
+    VIA, KEEP, CLRS = job.get("via_size"), job.get("keep", []), job.get("clr_nets", {})
     GND, RF = job.get("ground", GROUND), dict(REFS, **job.get("refs", {}))
     t0 = time.time(); S = _S = Search(geom, job, cfg); log = []; moves = {}
     print(f"start: {S.total:.1f} ({sum(r[0] for r in S.res.values()):.1f} alone + {S.over} crossings), {time.time() - t0:.0f}s", flush=True)

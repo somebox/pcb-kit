@@ -126,9 +126,10 @@ def main(argv=None):
             g = mm(d.GetWidth()) / 2
             rect = [x0 - g - OFF, y0 - g - OFF, x1 + g - OFF, y1 + g - OFF]
             lid = b.GetLayerID(f"{L}.Cu")
-            own = sorted({short(t.GetNetname()) for t in tracks if t.GetLayer() == lid and id(t) not in kept
-                          and rect[0] - 0.2 <= mm(t.GetStart().x) - OFF <= rect[2] + 0.2
-                          and rect[1] - 0.2 <= mm(t.GetStart().y) - OFF <= rect[3] + 0.2})
+            area = pcbnew.BOX2I(pcbnew.VECTOR2I(pcbnew.FromMM(x0 - g), pcbnew.FromMM(y0 - g)),
+                                pcbnew.VECTOR2L(pcbnew.FromMM(x1 - x0 + 2 * g), pcbnew.FromMM(y1 - y0 + 2 * g)))
+            own = sorted({t.GetNetname() for t in tracks if t.GetLayer() == lid and id(t) not in kept
+                          and t.HitTest(area, False, int(t.GetWidth() / 2))})
             keep.append({"rect": rect, "layers": L, "vias": False, "except": own, "why": "mask opening"})
     defaults = {"w": 0.25, "neck": 0.2, "clr": clr, "hole_clr": hole}
     if b.GetCopperLayerCount() > 2:

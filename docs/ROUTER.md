@@ -161,6 +161,8 @@ any `--key=value` goes to `nroute.py`, over `route`.
 - A moved part takes the kept ground tracks on its pads with it. If one of those joined another part's pad, the pour or
   `repair.py` has to reach that pad, and DRC says if neither did. A part with a locked ground track doesn't move.
 - A soft pour's protected path stops at 2 mm wide, so a wider path can lose more than a fifth; `pourcheck.py` flags it.
+- A free test pad with no spot stays where it was, unconnected, and DRC reports it. If the routing went over that place the
+  run stops: the router never saw the pad there, so it has to route again with the pad out of `free`.
 
 ## Results
 

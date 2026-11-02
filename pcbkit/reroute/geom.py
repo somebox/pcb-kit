@@ -2,8 +2,8 @@
 pad, in the router's frame (KiCad - 100 mm). Zones are refilled first. This is all the router knows of a board.
 
 Copper no net owns (a bridged jumper's link, a logo, a dimension drawn on a copper layer) comes as kind "graphic", first,
-so pads paint over it. An arc comes as a few "track" items, one per chord, with its polygons on the first: all that reads
-"seg" stays on its copper that way.
+so pads paint over it. An arc comes as "track" items, one per chord, with its polygons on the first: the chords are short
+enough that all that reads "seg", a chord's middle too, stays on its copper.
 
     python -m pcbkit.reroute.geom BOARD.kicad_pcb OUT.json        (KiCad's Python)
 """
@@ -12,7 +12,6 @@ import math
 import sys
 
 OFF = 100.0
-ARC_CHORDS = 8
 
 
 def main(argv=None):
@@ -43,8 +42,8 @@ def main(argv=None):
         a0, am, a1 = (math.atan2(p.y - c.y, p.x - c.x) for p in (s, m, e))
         ccw = (am - a0) % (2 * math.pi) < math.pi      # the way round the mid point lies: start to mid is under half the circle
         span = (a1 - a0) % (2 * math.pi) if ccw else -((a0 - a1) % (2 * math.pi))
-        pts = [(c.x + r * math.cos(a0 + span * i / ARC_CHORDS), c.y + r * math.sin(a0 + span * i / ARC_CHORDS))
-               for i in range(1, ARC_CHORDS)]
+        n = max(2, math.ceil(abs(span) / (2 * math.acos(max(1 - t.GetWidth() / (4 * r), 0)))))     # a chord strays a quarter of the width
+        pts = [(c.x + r * math.cos(a0 + span * i / n), c.y + r * math.sin(a0 + span * i / n)) for i in range(1, n)]
         return [[mmv(s.x), mmv(s.y)]] + [[mmv(int(x)), mmv(int(y))] for x, y in pts] + [[mmv(e.x), mmv(e.y)]]
 
     items, pads = [], []
@@ -121,6 +120,8 @@ def main(argv=None):
         parts.append({"ref": fp.GetReference(), "at": [mmv(p.x), mmv(p.y)], "rot": fp.GetOrientationDegrees(),
                       "side": side, "value": fp.GetValue(),
                       "court": [mmv(bb.GetLeft()), mmv(bb.GetTop()), mmv(bb.GetRight()), mmv(bb.GetBottom())]})
+        if fp.IsLocked():
+            parts[-1]["locked"] = True
     ol = pcbnew.SHAPE_POLY_SET()
     b.GetBoardPolygonOutlines(ol, True)
     with open(argv[1], "w") as fh:

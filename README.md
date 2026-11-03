@@ -198,10 +198,10 @@ assemble it (the front, the back, both sides: Economic PCBA does one side). Besi
 a checklist for JLC's placement preview, to go through before paying: every placed part whose orientation matters
 (more than two pads, or a polarity mark), with the rotation rule behind its CPL angle, when that rule was last seen
 right in the preview, and where its pad 1 should be, in the Gerbers' frame. With `--houses jlcpcb,pcbway`, it also
-writes PCBWay's BOM (manufacturer and part number) and centroid. The Gerbers have the mask openings subtracted from
-the silkscreen; a board that prints inside them on purpose takes `--keep-silk-in-mask`, or
-`keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit assembly panels with rails,
-fiducials and tooling holes, and runs DRC on each.
+writes PCBWay's BOM (manufacturer and part number, from konnect's parts cache, which it then needs) and centroid.
+The Gerbers have the mask openings subtracted from the silkscreen; a board that prints inside them on purpose takes
+`--keep-silk-in-mask`, or `keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit
+assembly panels with rails, fiducials and tooling holes, and runs DRC on each.
 
 `pcbkit release` is the step before an order. It checks every board, and gives each one that changed since its last
 release the next version (a fix to v1.0 makes v1.0.1), stamped into the title block and the silkscreen, so the KiCad

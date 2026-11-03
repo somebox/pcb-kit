@@ -316,6 +316,10 @@ def main(argv=None):
         V.parse(a.version)
     part = "major" if a.major else "minor" if a.minor else "patch"
     pcbs = [project.pcb(n) for n in a.pcbs] if a.pcbs else project.pcbs()
+    if (project.release["enabled"] and not a.refresh_parts and "pcbway" in project.release["fab"]
+            and any(p["profile"]["release"] and p["profile"]["assembly"] for p in pcbs if not p["excluded"])):
+        from .pcbway import require_cache        # before the checks: a fab fingerprint made without it would differ
+        require_cache("pcbkit release")
     if a.refresh_parts:
         for pcb in pcbs:
             r = refresh_parts(project, pcb, a.dry_run)

@@ -146,6 +146,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **`pcbkit drc` no longer stops with an IndexError on a board with a split pour.** Its "split zones" line took each
   zone's name from between quotes, and KiCad 10.0.7 describes an unnamed zone without them (`Zone [GND] on F.Cu,
   priority 0`); such a zone is now listed by that description.
+- **`pcbkit fab` and `pcbkit release` stop when PCBWay's files are wanted and konnect's parts cache is missing**
+  (`~/.konnect/jlcpcb.db`). PCBWay's BOM takes each part's manufacturer, and a part number its footprint lacks, from
+  the cache; without it the BOM came out incomplete, and `pcbkit release --dry-run` on a new machine reported every
+  changed board as new fab output (would release) where, with the cache, they had the same fab output as their last
+  release. `pcbkit fab --no-assembly`, a release without `pcbway` in `[release] fab`, and `--refresh-parts` don't
+  need it.
 
 ## [0.3.0] - 2026-10-18
 

@@ -44,10 +44,11 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   a date has no check on record, and PLACEMENT-<name>.md marks the parts under it.
 Check rotations and polarity in JLC's placement preview before ordering, with PLACEMENT-<name>.md. Harvested from the
 sign's jlc_fab.py.
---houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
-board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
-lines are drawn. --keep-silk-in-mask leaves silkscreen inside mask openings in the Gerbers, for a board that prints
-there on purpose (legends in a face panel's mask windows); say so in the order remark, or the fab house may clip it.
+--houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py), which need konnect's parts cache: without
+it nothing is written. --no-assembly writes the Gerbers only (a bare board, or a panel of breakouts). --extra-layers
+adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score lines are drawn. --keep-silk-in-mask leaves
+silkscreen inside mask openings in the Gerbers, for a board that prints there on purpose (legends in a face panel's
+mask windows); say so in the order remark, or the fab house may clip it.
 """
 import argparse
 import csv
@@ -125,6 +126,9 @@ def selector(placed):
 
 
 def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, extra_layers=(), keep_silk_in_mask=False):
+    if assembly and "pcbway" in houses:
+        from .pcbway import require_cache
+        require_cache("pcbkit fab")
     ensure_pcbnew()
     import pcbnew
     mm = pcbnew.ToMM

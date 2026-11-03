@@ -83,9 +83,8 @@ def build_net(pcbnew, tracks, vias, pads, islands):
                 if j != i and u.GetLayer() == layer and seg_dist(e, u.GetStart(), u.GetEnd()) <= u.GetWidth() / 2 + TOL:
                     contacts.append((i, j))
                     hit = True
-            for j, v in enumerate(vias):
+            for v in vias:  # the contact itself is made below
                 if v.IsOnLayer(layer) and math.hypot(v.GetPosition().x - e.x, v.GetPosition().y - e.y) <= v.GetWidth(layer) / 2 + TOL:
-                    contacts.append((i, iv + j))
                     hit = True
             for j, p in enumerate(pads):
                 if p.IsOnLayer(layer) and p.HitTest(e, TOL):
@@ -96,6 +95,9 @@ def build_net(pcbnew, tracks, vias, pads, islands):
                     hit = True
             if not hit:
                 free_ends[i].append(e)
+        for j, v in enumerate(vias):  # anywhere along the track, not only at its ends: a via stitched into a straight run
+            if v.IsOnLayer(layer) and seg_dist(v.GetPosition(), t.GetStart(), t.GetEnd()) <= (t.GetWidth() + v.GetWidth(layer)) / 2 + TOL:
+                contacts.append((i, iv + j))
         for k in range(ii, ii + len(islands)):
             if overlaps(i, layer, k):
                 contacts.append((i, k))

@@ -7,13 +7,19 @@ Where a version is written on a board:
 - any silkscreen text (gr_text) that carries the old label as a word, e.g. "v1.0" on a front tag or
   "<name> v1.0 2026-10-19" on the back; a date in such a text becomes the release date.
 Each stamp must change exactly what it means to: the masked text before and after must be identical.
+
+Fab output is compared by fab_fingerprint, a hash. When the hash differs, fab_gap compares the files themselves with a
+release's: zone fills (Gerber regions) whose vertices lie within ZONE_TOLERANCE of the release's are the same copper,
+since a KiCad that refills zones a little differently moves them by a nanometre or drops a vertex.
 """
 import csv
 import datetime
+import difflib
 import glob
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import zipfile
@@ -27,6 +33,9 @@ DATE = r"\d{4}-\d{2}-\d{2}"
 TEXT = re.compile(r'(\(gr_text ")((?:[^"\\]|\\.)*)(")')
 STR = r'"(?:[^"\\]|\\.)*"'
 STAMP = re.compile(r'\s*\((?:rev|date) ' + STR + r'\)')
+HEADER = ("%TF", "G04", ";", "%TA")    # Gerber and drill header comments and attributes: dates, the project ID and rev
+ZONE_TOLERANCE = 0.005                 # mm: KiCad's own default maximum error for arcs and zone fills
+VERTEX = re.compile(r"X(-?\d+)Y(-?\d+)D0([12])\*$")
 
 
 def parse(v):
@@ -114,14 +123,15 @@ def mask(text):
     return _label_texts(text, None, None)
 
 
-def neutral(text):
-    """The file with neutral version and date stamps, so that two versions of a board fab the same."""
+def neutral(text, label="v0.0", date="2000-01-01"):
+    """The file with neutral version and date stamps, so that two versions of a board fab the same; or with a given
+    label and date, as a release stamped it."""
     b = title_block(text)
     if b:
-        block = re.sub(r'(\(rev )' + STR, r'\1"v0.0"', text[b[0]:b[1]])
-        block = re.sub(r'(\(date )' + STR, r'\1"2000-01-01"', block)
+        block = re.sub(r'(\(rev )' + STR, lambda m: f'{m.group(1)}"{label}"', text[b[0]:b[1]])
+        block = re.sub(r'(\(date )' + STR, lambda m: f'{m.group(1)}"{date}"', block)
         text = text[:b[0]] + block + text[b[1]:]
-    return _label_texts(text, "v0.0", "2000-01-01")
+    return _label_texts(text, label, date)
 
 
 def design_files(pcb):
@@ -165,6 +175,26 @@ def preview_source(pcb):
                    for f in design_files(pcb))
 
 
+def _zip_files(path):
+    """A Gerber zip's files in name order, each by its name after the last "-" (the layer, or PTH.drl), without the
+    header comments and attributes that change from run to run."""
+    with zipfile.ZipFile(path) as z:
+        return [(n.split("-")[-1], [l for l in io.TextIOWrapper(z.open(n), encoding="utf-8", errors="replace")
+                                    .read().splitlines() if not l.startswith(HEADER)])
+                for n in sorted(z.namelist())]
+
+
+def _csv_rows(path):
+    """A BOM's, CPL's or centroid's rows; PCBWay's BOM without the description and package it takes from the parts
+    cache."""
+    f = os.path.basename(path)
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.reader(fh))
+    drop = {i for i, c in enumerate(rows[0]) if c in ("Description", "Package")} \
+        if rows and f.startswith("BOM-") and f.endswith("-pcbway.csv") else set()
+    return [[c for i, c in enumerate(r) if i not in drop] for r in rows]
+
+
 def fab_fingerprint(out):
     """A fab output folder (pcbkit fab, every house's files) hashed without what changes from run to run: Gerber and
     drill header comments and attributes (dates, the project ID with its rev), file names, and the description and
@@ -176,18 +206,136 @@ def fab_fingerprint(out):
         if f.endswith("-back.csv"):
             continue
         if f.endswith(".zip"):
-            with zipfile.ZipFile(p) as z:
-                for n in sorted(z.namelist()):
-                    lines = io.TextIOWrapper(z.open(n), encoding="utf-8", errors="replace").read().splitlines()
-                    h.update(n.split("-")[-1].encode())
-                    h.update("\n".join(l for l in lines if not l.startswith(("%TF", "G04", ";", "%TA"))).encode())
+            for n, lines in _zip_files(p):
+                h.update(n.encode())
+                h.update("\n".join(lines).encode())
         elif f.endswith(".csv"):
-            rows = list(csv.reader(open(p, newline="", encoding="utf-8-sig")))
-            drop = {i for i, c in enumerate(rows[0]) if c in ("Description", "Package")} \
-                if rows and f.startswith("BOM-") and f.endswith("-pcbway.csv") else set()
-            h.update(f.split("-")[0].encode() + b"\0" + "\n".join(
-                "\t".join(c for i, c in enumerate(r) if i not in drop) for r in rows).encode())
+            h.update(f.split("-")[0].encode() + b"\0" + "\n".join("\t".join(r) for r in _csv_rows(p)).encode())
     return h.hexdigest()
+
+
+def _step(lines):
+    """A Gerber's coordinate step in mm (%FSLAX46Y46*% with %MOMM*%: a nanometre), or None."""
+    fs = [re.match(r"%FSLAX\d(\d)Y\d(\d)\*%$", l) for l in lines if l.startswith("%FS")]
+    mo = [l for l in lines if l.startswith("%MO")]
+    if len(fs) != 1 or not fs[0] or fs[0].group(1) != fs[0].group(2) or mo not in (["%MOMM*%"], ["%MOIN*%"]):
+        return None
+    return 10.0 ** -int(fs[0].group(1)) * (25.4 if mo == ["%MOIN*%"] else 1)
+
+
+def _regions(lines):
+    """A Gerber's lines outside its regions (G36* ... G37*, which KiCad draws zone fills with) and each region's
+    lines, or None when a region isn't closed."""
+    outside, regions, region = [], [], None
+    for l in lines:
+        if region is None:
+            outside.append(l)
+            if l == "G36*":
+                region = []
+        elif l == "G37*":
+            outside.append(l)
+            regions.append(region)
+            region = None
+        else:
+            region.append(l)
+    return None if region is not None else (outside, regions)
+
+
+def _distance(p, line):
+    """From a point to a polyline."""
+    if len(line) == 1:
+        return math.hypot(p[0] - line[0][0], p[1] - line[0][1])
+    best = None
+    for (ax, ay), (bx, by) in zip(line, line[1:]):
+        dx, dy = bx - ax, by - ay
+        t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+        d = math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
+        best = d if best is None or d < best else best
+    return best
+
+
+def _polyline_gap(a, b, tol):
+    """How far apart two polylines are, or None beyond tol: the furthest that points along either, at most tol apart,
+    lie from the other (so that no point of either lies more than 1.5 tol from the other)."""
+    worst, tol = 0.0, max(tol, 1)
+    for line, other in ((a, b), (b, a)):
+        points = line[:1]
+        for (x0, y0), (x1, y1) in zip(line, line[1:]):
+            n = max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / tol)))
+            points += [(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(1, n + 1)]
+        for p in points:
+            d = _distance(p, other)
+            if d > tol:
+                return None
+            worst = max(worst, d)
+    return worst
+
+
+def _region_gap(a, b, tol):
+    """How far region b's outline lies from region a's, in coordinate steps, when only its vertices differ (moved,
+    added or dropped) and by no more than tol; else None. Each stretch that differs is compared between the vertices
+    on either side of it, which are the same in both."""
+    va, vb = [VERTEX.match(l) for l in a], [VERTEX.match(l) for l in b]
+
+    def pts(ms):
+        return [(int(m.group(1)), int(m.group(2))) for m in ms]
+    worst = 0.0
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        old, new = va[i1:i2], vb[j1:j2]
+        if not all(old) or not all(new):
+            return None
+        gap = None
+        if len(old) == len(new) and all(x.group(3) == y.group(3) for x, y in zip(old, new)):
+            # the same vertices moved: no point of the outline moves further than the furthest of them
+            g = max(math.hypot(p[0] - q[0], p[1] - q[1]) for p, q in zip(pts(old), pts(new)))
+            gap = g if g <= tol else None
+        before, after = va[i1 - 1] if i1 else None, va[i2] if i2 < len(va) else None
+        if gap is None and before and after and all(m.group(3) == "1" for m in old + new + [after]):
+            gap = _polyline_gap(pts([before] + old + [after]), pts([before] + new + [after]), tol)
+        if gap is None:
+            return None
+        worst = max(worst, gap)
+    return worst
+
+
+def gerber_gap(a, b, tol=ZONE_TOLERANCE):
+    """How far apart two Gerbers' (or drill files') lines put copper, in mm: 0 when they are the same; the furthest a
+    region's (zone fill's) outline moved when only region vertices differ, by no more than tol; else None."""
+    if a == b:
+        return 0.0
+    step, ra, rb = _step(a), _regions(a), _regions(b)
+    if not step or step != _step(b) or not ra or not rb or ra[0] != rb[0]:
+        return None
+    worst = 0.0
+    for x, y in zip(ra[1], rb[1]):
+        if x != y:
+            g = _region_gap(x, y, tol / step)
+            if g is None:
+                return None
+            worst = max(worst, g)
+    return worst * step
+
+
+def fab_gap(pairs, tol=ZONE_TOLERANCE):
+    """Two fab outputs compared file by file, as fab_fingerprint sees them: pairs of Gerber zips or of CSVs. How far
+    apart their copper is in mm (0: the same) when they differ only in their zone fills, by no more than tol; else
+    None."""
+    worst = 0.0
+    for p, q in pairs:
+        if p.endswith(".zip"):
+            a, b = _zip_files(p), _zip_files(q)
+            if [n for n, _ in a] != [n for n, _ in b]:
+                return None
+            for (_, x), (_, y) in zip(a, b):
+                g = gerber_gap(x, y, tol)
+                if g is None:
+                    return None
+                worst = max(worst, g)
+        elif _csv_rows(p) != _csv_rows(q):
+            return None
+    return worst
 
 
 # ---- stamping -------------------------------------------------------------------------------------------------------

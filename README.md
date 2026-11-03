@@ -207,10 +207,11 @@ assembly panels with rails, fiducials and tooling holes, and runs DRC on each.
 release the next version (a fix to v1.0 makes v1.0.1), stamped into the title block and the silkscreen, so the KiCad
 file always says which version it is. That version's Gerbers, BOMs, placement files and PDFs go into a committed
 release folder. A KiCad save that only reshuffles the file, or a schematic note, doesn't count as a change: only a
-different fab output does. `pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders
-in production with their state, order numbers and prices, parts costs, boards and parts in stock, and what is short.
-Orders and stock are small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says
-where everything goes and can turn either feature off.
+different fab output does, and zone fills that another KiCad refills within 0.005 mm of the release's don't.
+`pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders in production with their
+state, order numbers and prices, parts costs, boards and parts in stock, and what is short. Orders and stock are
+small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says where everything goes and
+can turn either feature off.
 
 ## Skills
 

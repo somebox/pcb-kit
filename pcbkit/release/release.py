@@ -9,7 +9,10 @@ For every PCB (or those named, by key, path or folder):
    and date stamps masked, its custom rules, the project file's design settings and net classes, and the fab
    settings); if that differs, its fab fingerprint (every house's files made from a copy with neutral stamps), so a
    KiCad save that only reshuffles a file isn't a change, and a rule change that moves copper or an MPN that changes
-   PCBWay's BOM is.
+   PCBWay's BOM is. If that differs too, the files themselves, made from a copy stamped as the last release was,
+   against that release's folder: zone fills within 0.005 mm of the release's (a KiCad that refills zones a little
+   differently) and everything else the same is no change either. A change with the same fab output is recorded as
+   equivalent, so the next run knows it by its source fingerprint.
 3. A changed board gets the next version: patch by default, --minor or --major when asked, or --version (which must
    come after the last). A board without releases adopts the version its title block carries ("v1.0" -> 1.0.0).
 4. The new version is stamped into the board and its root schematic (title block, silkscreen texts carrying the old
@@ -92,18 +95,62 @@ def source_key(project, pcb):
     return V.source_fingerprint(os.path.join(project.root, pcb["path"]), project.fab_settings(pcb["profile"]))
 
 
+def fab_output(project, pcb_path, profile, d, name, label="v0.0", date="2000-01-01"):
+    """Every configured house's files, in d/out under the given name, made from a copy of the board in d with neutral
+    stamps (or the label and date given)."""
+    stem = os.path.splitext(os.path.basename(pcb_path))[0]
+    open(os.path.join(d, stem + ".kicad_pcb"), "w", encoding="utf-8").write(
+        V.neutral(open(pcb_path, encoding="utf-8").read(), label, date))
+    for ext in (".kicad_pro", ".kicad_dru"):              # net classes and custom rules: the zone fills use them
+        if os.path.exists(os.path.splitext(pcb_path)[0] + ext):
+            shutil.copy(os.path.splitext(pcb_path)[0] + ext, d)
+    pcbkit("fab", os.path.join(d, stem + ".kicad_pcb"), os.path.join(d, "out"), "--name", name,
+           *fab_args(project, profile))
+    return os.path.join(d, "out")
+
+
 def fab_fingerprint(project, pcb_path, profile):
     """Every configured house's files, made from a copy of the board with neutral stamps."""
-    stem = os.path.splitext(os.path.basename(pcb_path))[0]
     with tempfile.TemporaryDirectory() as d:
-        open(os.path.join(d, stem + ".kicad_pcb"), "w", encoding="utf-8").write(
-            V.neutral(open(pcb_path, encoding="utf-8").read()))
-        for ext in (".kicad_pro", ".kicad_dru"):          # net classes and custom rules: the zone fills use them
-            if os.path.exists(os.path.splitext(pcb_path)[0] + ext):
-                shutil.copy(os.path.splitext(pcb_path)[0] + ext, d)
-        pcbkit("fab", os.path.join(d, stem + ".kicad_pcb"), os.path.join(d, "out"), "--name", "fp",
-               *fab_args(project, profile))
-        return V.fab_fingerprint(os.path.join(d, "out"))
+        return V.fab_fingerprint(fab_output(project, pcb_path, profile, d, "fp"))
+
+
+def kept(project, profile, out, key, label):
+    """The files of a pcbkit fab output (made under the name key) that a release keeps, each with its name in the
+    release folder: the Gerbers; with assembly, the JLC BOM, CPL and placement checklist of the side JLC assembles
+    (the front or the back when the other places nothing, as Economic assembly is single-sided, else both), and
+    PCBWay's BOM and centroid."""
+    files = [(f"GERBER-{key}.zip", f"GERBER-{key}-{label}.zip")]
+    if profile["assembly"]:
+        n = {s: len(open(os.path.join(out, f"CPL-{key}-{s}.csv")).read().splitlines())
+             for s in ("front", "back", "both")}
+        side = "front" if n["both"] == n["front"] else "back" if n["both"] == n["back"] else "both"
+        if "jlcpcb" in project.release["fab"]:
+            files += [(f"BOM-{key}-{side}.csv", f"BOM-{key}-{label}-jlcpcb.csv"),
+                      (f"CPL-{key}-{side}.csv", f"CPL-{key}-{label}-jlcpcb.csv"),
+                      (f"PLACEMENT-{key}.md", f"PLACEMENT-{key}-{label}-jlcpcb.md")]
+        if "pcbway" in project.release["fab"]:
+            files += [(f"BOM-{key}-pcbway.csv", f"BOM-{key}-{label}-pcbway.csv"),
+                      (f"centroid-{key}-pcbway.csv", f"centroid-{key}-{label}-pcbway.csv")]
+    return files
+
+
+def fab_near(project, pcb, pcb_path, profile, last):
+    """How far the board's fab output lies from its last release's own files, in mm, when it differs from them only
+    in its zone fills, by no more than V.ZONE_TOLERANCE: a KiCad that refills zones a little differently. Made from a
+    copy stamped with that release's label and date, as its files were, and compared file by file as the fab
+    fingerprint sees them. None when anything else differs, or the release's folder doesn't hold its files."""
+    vdir = os.path.join(project.release_dir(pcb), last["label"])
+    if not os.path.isdir(vdir):
+        return None
+    with tempfile.TemporaryDirectory() as d:
+        out = fab_output(project, pcb_path, profile, d, pcb["key"], last["label"], str(last["date"]))
+        pairs = [(os.path.join(out, src), os.path.join(vdir, dst))
+                 for src, dst in kept(project, profile, out, pcb["key"], last["label"]) if not dst.endswith(".md")]
+        stored = {f for f in os.listdir(vdir) if f.endswith((".zip", ".csv"))}
+        if stored != {os.path.basename(q) for _, q in pairs}:
+            return None
+        return V.fab_gap(pairs)
 
 
 def previews_current(pdir, pcb_path):
@@ -138,27 +185,12 @@ def write_release(project, pcb, pcb_path, profile, version, label, entry):
         raise SystemExit(f"{project.rel(vdir)} exists: release folders are never rewritten")
     key = pcb["key"]
     with tempfile.TemporaryDirectory() as d:
-        pcbkit("fab", pcb_path, d, *fab_args(project, profile))
+        pcbkit("fab", pcb_path, d, "--name", key, *fab_args(project, profile))
         os.makedirs(vdir)
         files = []
-
-        def take(src, dst):
+        for src, dst in kept(project, profile, d, key, label):
             shutil.copy2(os.path.join(d, src), os.path.join(vdir, dst))
             files.append(dst)
-        take(f"GERBER-{key}.zip", f"GERBER-{key}-{label}.zip")
-        if profile["assembly"]:
-            # the side JLC assembles: the front or the back when the other places nothing (Economic assembly is
-            # single-sided), else both
-            n = {s: len(open(os.path.join(d, f"CPL-{key}-{s}.csv")).read().splitlines())
-                 for s in ("front", "back", "both")}
-            side = "front" if n["both"] == n["front"] else "back" if n["both"] == n["back"] else "both"
-            if "jlcpcb" in project.release["fab"]:
-                take(f"BOM-{key}-{side}.csv", f"BOM-{key}-{label}-jlcpcb.csv")
-                take(f"CPL-{key}-{side}.csv", f"CPL-{key}-{label}-jlcpcb.csv")
-                take(f"PLACEMENT-{key}.md", f"PLACEMENT-{key}-{label}-jlcpcb.md")
-            if "pcbway" in project.release["fab"]:
-                take(f"BOM-{key}-pcbway.csv", f"BOM-{key}-{label}-pcbway.csv")
-                take(f"centroid-{key}-pcbway.csv", f"centroid-{key}-{label}-pcbway.csv")
     sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"   # this version's drawings, whatever the previews hold
     if os.path.exists(sch):
         subprocess.run([KICAD_CLI, "sch", "export", "pdf", "-o", os.path.join(vdir, "schematic.pdf"), sch], check=True,
@@ -211,10 +243,13 @@ def release(project, pcb, part="patch", version=None, note="", dry=False):
     old_label = on_board if re.fullmatch(r"v\d+(?:\.\d+){1,2}", on_board) else last["label"] if last else ""
     same = last and (src == last["source"] or src in last.get("equivalent", []))
     ffp = None if same else fab_fingerprint(project, pcb_path, profile)
-    if last and (same or ffp == last["fab"]):
+    near = fab_near(project, pcb, pcb_path, profile, last) if last and not same and ffp != last["fab"] else None
+    if last and (same or ffp == last["fab"] or near is not None):
         r = dict(state="current", version=last["version"], label=last["label"], checks=c)
         if not same:
-            r["note"] = "changed files, same fab output: recorded as equivalent"
+            r["note"] = "changed files, same fab output" + (
+                "" if near is None else f" (the same as {last['label']}'s files)" if not near else
+                f" (zone fills within {near:.6f} mm of {last['label']}'s files)") + ": recorded as equivalent"
             if not dry:
                 V.update_last(rdir, key, equivalent=last.get("equivalent", []) + [src])
         if on_board != last["label"]:

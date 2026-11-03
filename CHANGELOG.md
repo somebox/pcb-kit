@@ -152,6 +152,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   changed board as new fab output (would release) where, with the cache, they had the same fab output as their last
   release. `pcbkit fab --no-assembly`, a release without `pcbway` in `[release] fab`, and `--refresh-parts` don't
   need it.
+- **`pcbkit release` no longer gives a board a new version because a newer KiCad refills its zones a little
+  differently.** KiCad 10.0.7 moves some zone-fill vertices by a nanometre, or drops a few that lie within a couple
+  of micrometres of the outline, so two of synth-blocks' boards whose copper hadn't changed no longer matched their
+  releases' fab fingerprints. When the fingerprint differs, release now makes the files again from a copy stamped as
+  the last release was, and compares them with that release's folder: zone fills (Gerber regions) may lie within
+  0.005 mm of the release's, KiCad's own maximum error for zone fills; everything else must be the same, as the
+  fingerprint sees it. A match is recorded as equivalent, its note saying how far the fills moved. Stored
+  fingerprints keep their meaning, and a board whose release folder doesn't hold its files gets a new version, as
+  before.
 
 ## [0.3.0] - 2026-10-18
 

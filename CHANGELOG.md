@@ -143,6 +143,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   killed mid-run printed the previous board's summary and could exit 0. The report is now removed before each run.
   A non-zero exit from `kicad-cli`, or no readable report, stops the command with exit status 1 and `kicad-cli`'s
   message. That also covers `pcbkit release`'s checks and `import-easyeda`'s.
+- **`pcbkit drc` no longer stops with an IndexError on a board with a split pour.** Its "split zones" line took each
+  zone's name from between quotes, and KiCad 10.0.7 describes an unnamed zone without them (`Zone [GND] on F.Cu,
+  priority 0`); such a zone is now listed by that description.
 
 ## [0.3.0] - 2026-10-18
 

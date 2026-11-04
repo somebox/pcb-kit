@@ -158,6 +158,28 @@ class SymbolLibrary(unittest.TestCase):
         self.assertFalse(ie.same_symbol(KICAD_SAVED_RES, ie.symbol_def("RES", part("U1", "RES", CHIP3), "proj", "")))
         self.assertFalse(ie.same_symbol('(symbol "RES" (extends "R"))', new))
 
+    def test_a_symbol_split_into_units_is_not_reused(self):
+        # the same two pins, pin 2 moved to a unit 2: the schematic places unit 1 only, so pin 2 would go missing
+        i = KICAD_SAVED_RES.index("\t\t\t(pin passive line\n\t\t\t\t(at -2.54")
+        split = (KICAD_SAVED_RES[:i] + '\t\t)\n\t\t(symbol "RES_1_1"\n' + KICAD_SAVED_RES[i:]).replace('"RES_1_1"', '"RES_2_1"', 1)
+        new = ie.symbol_def("RES", part("R1", "RES", RES), "proj", "R0603")
+        self.assertEqual(ie.symbol_pins(split), ie.symbol_pins(new))
+        self.assertEqual(ie.symbol_units(split), {(0, 1), (1, 1), (2, 1)})
+        self.assertFalse(ie.same_symbol(split, new))
+        self.lib.write_text("(kicad_symbol_lib\n\t(version 20241209)\n\t" + split + "\n)\n")
+        sym_of, stats = self.load(schematic(part("R1", "RES", RES)))
+        self.assertEqual((sym_of, stats["renamed"]), ({"R1": "RES_2"}, {"RES"}))
+
+    def test_a_name_with_a_quote_is_kept_on_a_second_import(self):
+        sch = schematic(part("J1", 'Header 0.1"', RES))
+        self.load(sch)
+        text = self.lib.read_text()
+        sym_of, stats = self.load(sch)
+        self.assertEqual(sym_of, {"J1": 'Header_0.1"'})
+        self.assertEqual(list(ie.read_symbol_lib(self.lib)), ['Header_0.1"'])
+        self.assertEqual(self.lib.read_text(), text)
+        self.assertEqual((stats["new"], stats["kept"]), (0, 1))
+
     def test_a_library_saved_by_kicad_is_read_and_kept(self):
         self.lib.write_text('(kicad_symbol_lib\n\t(version 20241209)\n\t(generator "kicad_symbol_editor")\n\t'
                             + KICAD_SAVED_RES + "\n)\n")
@@ -357,6 +379,44 @@ class Boards(unittest.TestCase):
         hole = self.footprint("H1", [("", "npth", None)])
         self.assertEqual(ie.unlinked_footprint(self.pcbnew, hole, True), (None, []))
         self.assertTrue(hole.IsBoardOnly())
+
+    def test_a_footprint_signature_holds_what_a_fab_makes_and_not_where_it_is(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint("J1", [("1", "pth", None), ("2", "pth", None), ("3", "smd", None)])
+        slot = {p.GetNumber(): p for p in fp.Pads()}["3"]
+        slot.SetShape(pcbnew.PAD_SHAPE_RECTANGLE)
+        slot.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.2), pcbnew.FromMM(0.6)))
+        sig = ie.footprint_signature(pcbnew, fp)
+
+        def variant(change=None, angle=0, flip=False):
+            c = pcbnew.FOOTPRINT(fp)
+            pads = {p.GetNumber(): p for p in c.Pads()}
+            if change:
+                change(pcbnew, pads)
+            c.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(30), pcbnew.FromMM(7)))
+            c.SetOrientationDegrees(angle)
+            if flip:
+                c.Flip(c.GetPosition(), pcbnew.FLIP_DIRECTION_TOP_BOTTOM)
+            return ie.same_pads(sig, ie.footprint_signature(pcbnew, c))
+
+        for angle in (0, 33, 90, 180):
+            for flip in (False, True):
+                self.assertTrue(variant(angle=angle, flip=flip), (angle, flip))
+        mm = lambda w, h: pcbnew.VECTOR2I(pcbnew.FromMM(w), pcbnew.FromMM(h))
+        turn = lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
+        self.assertTrue(variant(turn(180)))   # a rectangle turned half round is the same pad
+        self.assertTrue(variant(lambda pcbnew, p: (turn(90)(pcbnew, p), p["3"].SetSize(mm(0.6, 1.2)))))
+        self.assertFalse(variant(turn(45)))
+        self.assertFalse(variant(lambda pcbnew, p: p["1"].SetDrillSize(mm(1.0, 1.0))))
+        self.assertFalse(variant(lambda pcbnew, p: p["2"].SetAttribute(pcbnew.PAD_ATTRIB_NPTH)))
+
+        def bottom(pcbnew, p):
+            layers = pcbnew.LSET()
+            for layer in (pcbnew.B_Cu, pcbnew.B_Mask, pcbnew.B_Paste):
+                layers.AddLayer(layer)
+            p["3"].SetLayerSet(layers)
+        self.assertFalse(variant(bottom))  # a pad on the far side of the footprint (an EasyEDA test point)
+        self.assertFalse(variant(bottom, flip=True))
 
     def edge(self, *pts, arc=False):
         pcbnew = self.pcbnew

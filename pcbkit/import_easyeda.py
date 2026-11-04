@@ -479,6 +479,11 @@ def symbol_pins(text):
     return tuple(sorted(out))
 
 
+def unq(s):
+    """A string as q() wrote it, without its quotes and escapes: the name it stands for."""
+    return re.sub(r"\\(.)", lambda m: "\n" if m.group(1) == "n" else m.group(1), s)
+
+
 def read_symbol_lib(path):
     """{name: definition text} of every top-level symbol in a .kicad_sym, in file order ({} if there is none)."""
     path = Path(path)
@@ -489,14 +494,27 @@ def read_symbol_lib(path):
     for s, e, head in child_blocks(text):
         m = re.match(r"\(symbol\s+" + _STR, text[s:e]) if head == "symbol" else None
         if m:
-            out[m.group(1)] = text[s:e]
+            out[unq(m.group(1))] = text[s:e]
+    return out
+
+
+def symbol_units(text):
+    """The (unit, body style) of each drawing unit of a library symbol: its NAME_U_S sub-symbols."""
+    out = set()
+    for s, e, head in child_blocks(text):
+        m = re.match(r"\(symbol\s+" + _STR, text[s:e]) if head == "symbol" else None
+        u = re.search(r"_(\d+)_(\d+)$", unq(m.group(1))) if m else None
+        if u:
+            out.add((int(u.group(1)), int(u.group(2))))
     return out
 
 
 def same_symbol(old, new):
     """Whether a library symbol can stand for a new one of the same name: the same pins (a symbol drawn without
-    pins, the same text). A derived symbol (extends) never does: the schematic's copy has to be flat."""
-    if "(extends" in old:
+    pins, the same text). A derived symbol (extends) never does: the schematic's copy has to be flat. Nor does
+    one with a second unit or body style: the schematic places unit 1 only, so pins moved to unit 2 would be
+    left off."""
+    if "(extends" in old or any(u > 1 or s > 1 for u, s in symbol_units(old)):
         return False
     a = symbol_pins(old)
     return a == symbol_pins(new) and (bool(a) or old.strip() == new.strip())
@@ -758,23 +776,44 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 # ---------------------------------------------------------------- PCB
 
 def footprint_signature(pcbnew, fp):
-    o, a = fp.GetPosition(), math.radians(fp.GetOrientationDegrees())
+    """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height,
+    drill width, drill height, angle, shape, type, drill shape, layers). Everything a fab makes from a pad is in
+    it, so footprints that differ in a hole size, a pad type or a pad's angle compare different."""
+    o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
+    layer = pcbnew.B_Cu if flip else pcbnew.F_Cu
+    turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
     pads = []
     for p in fp.Pads():
         dx, dy = pcbnew.ToMM(p.GetPosition().x - o.x), pcbnew.ToMM(p.GetPosition().y - o.y)
         x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
-        if fp.IsFlipped():
-            x = -x
-        layer = pcbnew.B_Cu if fp.IsFlipped() else pcbnew.F_Cu
-        size = p.GetSize(layer)
-        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, round(pcbnew.ToMM(size.x), 3),
-                     round(pcbnew.ToMM(size.y), 3), p.GetShape(layer)))
-    return tuple(sorted(pads))
+        shape, size, drill = p.GetShape(layer), p.GetSize(layer), p.GetDrillSize()
+        w, h, dw, dh = (round(pcbnew.ToMM(v), 3) for v in (size.x, size.y, drill.x, drill.y))
+        angle = p.GetFPRelativeOrientation().AsDegrees()
+        if flip:  # a flipped footprint is the library one mirrored in y: y and the angles change sign, layers swap
+            y, angle = -y, -angle
+        layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()))
+        # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
+        period = 180 if shape in turnable else 360
+        angle %= period
+        if period - angle < 0.05:
+            angle = 0.0
+        if shape in turnable and abs(angle - 90) < 0.05:
+            angle, w, h, dw, dh = 0.0, h, w, dh, dw
+        angle = round(angle, 2)
+        if shape == pcbnew.PAD_SHAPE_CIRCLE and dw == dh:
+            angle = 0.0
+        holed = dw > 0 or dh > 0
+        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, angle + 0.0, shape,
+                     p.GetAttribute(), p.GetDrillShape() if holed else None, layers))
+    return tuple(sorted(pads, key=lambda t: t[:8]))
 
 
-def same_pads(a, b, tol=0.02):
-    return len(a) == len(b) and all(p[0] == r[0] and p[5] == r[5] and all(abs(u - v) <= tol for u, v in zip(p[1:5], r[1:5]))
-                                    for p, r in zip(a, b))
+def same_pads(a, b, tol=0.02, angle_tol=0.1):
+    """Whether two footprint signatures are the same pads: sizes and places within tol mm, angles within
+    angle_tol degrees, everything else equal."""
+    return len(a) == len(b) and all(
+        p[0] == r[0] and p[8:] == r[8:] and all(abs(u - v) <= tol for u, v in zip(p[1:7], r[1:7]))
+        and abs(p[7] - r[7]) <= angle_tol for p, r in zip(a, b))
 
 
 def ref_order(fp):

@@ -139,13 +139,16 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **`pcbkit import-easyeda` merges into the library instead of rewriting it**, so several boards can share one
   `--lib`/`--lib-name`. It wrote `<nick>.kicad_sym` afresh on every run, and the second board's import took the first
   board's symbols away. A symbol already in the library with the same name and pins is used as it is (also one saved
-  by KiCad's symbol editor), and so is a footprint with the same name and pads; one with the same name and other
-  pins or pads makes the new one `name_2` (the schematic's Footprint field follows); every other symbol and
-  footprint stays. Importing a board again leaves the library as it was. Library footprints no longer carry the
-  sheet file of the board they were copied from. A schematic part with no footprint on the PCB no longer stops the
-  run: it is listed as schematic-only and gets an empty Footprint field (ERC gave `footprint_link_issues` for a
-  footprint no library had; DRC parity still lists it as `missing_footprint`). Sheet files drop the " copy" EasyEDA gives a duplicated sheet and are named in lower case
-  with `-` (`ESP32+USB copy` is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer `esp32+usb_copy.kicad_sch`).
+  by KiCad's symbol editor, but not one derived from another or split into units), and so is a footprint with the
+  same name and pads (places, sizes, shapes, angles, holes, pad types and layers; a top or bottom placement at any
+  angle compares as the library footprint); one with the same name and other pins or pads makes the new one
+  `name_2` (the schematic's Footprint field follows); every other symbol and footprint stays. Importing a board
+  again leaves the library as it was. Library footprints no longer carry the sheet file of the board they were
+  copied from. A schematic part with no footprint on the PCB no longer stops the run: it is listed as
+  schematic-only and gets an empty Footprint field (ERC gave `footprint_link_issues` for a footprint no library had;
+  DRC parity still lists it as `missing_footprint`). Sheet files drop the " copy" EasyEDA gives a duplicated sheet
+  and are named in lower case with `-` (`ESP32+USB copy` is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no
+  longer `esp32+usb_copy.kicad_sch`).
 
 ### Fixed
 - **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a

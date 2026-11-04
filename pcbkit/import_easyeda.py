@@ -778,12 +778,15 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 def footprint_signature(pcbnew, fp):
     """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height,
     drill width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio,
-    copper outline). Everything a fab makes from a pad is in it, so footprints that differ in a hole size, a pad
-    type, a pad's angle or a custom pad's copper compare different. The outline (each outline's points in order,
-    with its holes', in the library's frame) is there for the shapes size and angle don't describe: custom pads
-    (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and trapezoids."""
+    copper outline, back copper). Everything a fab makes from a pad is in it, so footprints that differ in a hole
+    size, a pad type, a pad's angle or a custom pad's copper compare different. The outline (each outline's points
+    in order, with its holes', in the library's frame) is there for the shapes size and angle don't describe: custom
+    pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and trapezoids. Back
+    copper is there for a pad whose padstack gives the far side other copper (KiCad's front/inner/back and custom
+    padstacks): its shape, width, height, x and y from the hole, corner ratio and outline. Inner layers are not
+    compared (a flipped front/inner/back pad reads 0 for them in KiCad 10)."""
     o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
-    layer = pcbnew.B_Cu if flip else pcbnew.F_Cu
+    near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
     drawn = (pcbnew.PAD_SHAPE_CUSTOM, pcbnew.PAD_SHAPE_CHAMFERED_RECT, pcbnew.PAD_SHAPE_TRAPEZOID)
     cornered = (pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_CHAMFERED_RECT)
@@ -794,40 +797,51 @@ def footprint_signature(pcbnew, fp):
         x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
         return (x, -y) if flip else (x, y)
 
+    def ring(r):
+        pts = (local(r.CPoint(i)) for i in range(r.PointCount()))
+        return tuple((round(u, 3) + 0.0, round(v, 3) + 0.0) for u, v in pts)
+
+    def copper(p, layer, swap, x, y):
+        """A pad's copper on one layer: (shape, width, height, x and y from the hole, corner ratio, outline); width
+        and height swapped when the pad's sides are."""
+        shape, size = p.GetShape(layer), p.GetSize(layer)
+        w, h = (round(pcbnew.ToMM(v), 3) for v in (size.x, size.y))
+        cx, cy = local(p.ShapePos(layer))
+        outline = None
+        if shape in drawn:
+            poly = p.GetEffectivePolygon(layer)
+            outline = tuple(sorted(
+                (ring(poly.Outline(k)), tuple(sorted(ring(poly.Hole(k, j)) for j in range(poly.HoleCount(k)))))
+                for k in range(poly.OutlineCount())))
+        return (shape, *((h, w) if swap else (w, h)), round(cx - x, 3) + 0.0, round(cy - y, 3) + 0.0,
+                round(p.GetRoundRectRadiusRatio(layer), 3) if shape in cornered else None, outline)
+
     pads = []
     for p in fp.Pads():
         x, y = local(p.GetPosition())
-        cx, cy = local(p.ShapePos(layer))
-        shape, size, drill = p.GetShape(layer), p.GetSize(layer), p.GetDrillSize()
-        w, h, dw, dh = (round(pcbnew.ToMM(v), 3) for v in (size.x, size.y, drill.x, drill.y))
+        shape, drill = p.GetShape(near), p.GetDrillSize()
+        dw, dh = (round(pcbnew.ToMM(v), 3) for v in (drill.x, drill.y))
         angle = p.GetFPRelativeOrientation().AsDegrees()
         if flip:  # mirrored in y: the angles change sign and the layers swap sides
             angle = -angle
         layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()))
-        copper = None
-        if shape in drawn:  # each outline's points in order, with its holes'
-            def ring(r):
-                pts = (local(r.CPoint(i)) for i in range(r.PointCount()))
-                return tuple((round(u, 3) + 0.0, round(v, 3) + 0.0) for u, v in pts)
-            poly = p.GetEffectivePolygon(layer)
-            copper = tuple(sorted(
-                (ring(poly.Outline(k)), tuple(sorted(ring(poly.Hole(k, j)) for j in range(poly.HoleCount(k)))))
-                for k in range(poly.OutlineCount())))
+        stacked = p.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL
         # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
         period = 180 if shape in turnable else 360
         angle %= period
         if period - angle < 0.05:
             angle = 0.0
-        if shape in turnable and abs(angle - 90) < 0.05:
-            angle, w, h, dw, dh = 0.0, h, w, dh, dw
+        swap = shape in turnable and abs(angle - 90) < 0.05
+        if swap:
+            angle, dw, dh = 0.0, dh, dw
         angle = round(angle, 2)
-        if shape == pcbnew.PAD_SHAPE_CIRCLE and dw == dh:
+        if shape == pcbnew.PAD_SHAPE_CIRCLE and dw == dh and not stacked:
             angle = 0.0
+        _, w, h, ox, oy, corner, outline = copper(p, near, swap, x, y)
+        back = copper(p, far, swap, x, y) if stacked else None
         holed = dw > 0 or dh > 0
-        corner = round(p.GetRoundRectRadiusRatio(layer), 3) if shape in cornered else None
-        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, round(cx - x, 3) + 0.0,
-                     round(cy - y, 3) + 0.0, angle + 0.0, shape, p.GetAttribute(), p.GetDrillShape() if holed else None,
-                     layers, corner, copper))
+        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, ox, oy, angle + 0.0, shape,
+                     p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back))
     return tuple(sorted(pads, key=lambda t: t[:10]))
 
 
@@ -857,9 +871,13 @@ def same_pads(a, b, tol=0.02, angle_tol=0.1):
     def same_copper(u, v):  # outlines, each with its holes
         return u == v or (u is not None and v is not None
                           and matched(u, v, lambda s, t: same_ring(s[0], t[0]) and matched(s[1], t[1], same_ring)))
+
+    def same_layer(u, v):  # one layer's copper, as footprint_signature's copper() gives it
+        return u == v or (u is not None and v is not None and u[0] == v[0] and u[5] == v[5]
+                          and close(u[1:5], v[1:5]) and same_copper(u[6], v[6]))
     return len(a) == len(b) and all(
         p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
-        and same_copper(p[15], r[15]) for p, r in zip(a, b))
+        and same_copper(p[15], r[15]) and same_layer(p[16], r[16]) for p, r in zip(a, b))
 
 
 def ref_order(fp):

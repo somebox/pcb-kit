@@ -433,12 +433,27 @@ class Boards(unittest.TestCase):
         outline(poly, *ell)
         sig = ie.footprint_signature(pcbnew, fp)
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetOffset(pcbnew.F_Cu, mm(0.3, 0))))
-        turn =lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
+        turn = lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
         self.assertTrue(variant(turn(180)))   # a rectangle turned half round is the same pad
         self.assertTrue(variant(lambda pcbnew, p: (turn(90)(pcbnew, p), p["3"].SetSize(mm(0.6, 1.2)))))
         self.assertFalse(variant(turn(45)))
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetDrillSize(mm(1.0, 1.0))))
         self.assertFalse(variant(lambda pcbnew, p: p["2"].SetAttribute(pcbnew.PAD_ATTRIB_NPTH)))
+
+        def back(w, h, shape=pcbnew.PAD_SHAPE_RECTANGLE):  # other copper on the back: a front/inner/back padstack
+            def change(pcbnew, p):
+                p["1"].Padstack().SetMode(pcbnew.PADSTACK.MODE_FRONT_INNER_BACK)
+                p["1"].SetShape(pcbnew.B_Cu, shape)
+                p["1"].SetSize(pcbnew.B_Cu, mm(w, h))
+            return change
+        back(1.6, 1.0)(pcbnew, pads)
+        sig = ie.footprint_signature(pcbnew, fp)
+        for angle in (0, 33, 90):
+            for flip in (False, True):
+                self.assertTrue(variant(angle=angle, flip=flip), (angle, flip))
+        self.assertFalse(variant(back(2.0, 1.0)))
+        self.assertFalse(variant(back(1.6, 1.0, pcbnew.PAD_SHAPE_OVAL)))
+        self.assertFalse(variant(back(1.0, 1.6)))  # turned a quarter round
 
         def bottom(pcbnew, p):
             layers = pcbnew.LSET()

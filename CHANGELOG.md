@@ -140,9 +140,10 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   `--lib`/`--lib-name`. It wrote `<nick>.kicad_sym` afresh on every run, and the second board's import took the first
   board's symbols away. A symbol already in the library with the same name and pins is used as it is (also one saved
   by KiCad's symbol editor, but not one derived from another or split into units), and so is a footprint with the
-  same name and pads (places, sizes, shapes, angles, holes, copper offsets from the hole, pad types and layers, and
-  the copper outline of custom pads such as EasyEDA's polygon pads; a top or bottom placement at any angle compares
-  as the library footprint); one with the same name and other pins or pads makes the new one
+  same name and pads (places, sizes, shapes, angles, holes, copper offsets from the hole, pad types and layers, the
+  copper outline of custom pads such as EasyEDA's polygon pads, and the back copper of a pad whose padstack gives
+  the back other copper; a top or bottom placement at any angle compares as the library footprint); one with the
+  same name and other pins or pads makes the new one
   `name_2` (the schematic's Footprint field follows); every other symbol and footprint stays. Importing a board
   again leaves the library as it was. Library footprints no longer carry the sheet file of the board they were
   copied from. A schematic part with no footprint on the PCB no longer stops the run: it is listed as

@@ -828,6 +828,8 @@ def footprint_signature(pcbnew, fp):
     margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's own)."""
     o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
     near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
+    copper_count = fp.GetBoard().GetCopperLayerCount() if fp.GetBoard() else 32  # a library footprint: all of them
+    inner_count = copper_count - 2
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
     drawn = (pcbnew.PAD_SHAPE_CUSTOM, pcbnew.PAD_SHAPE_CHAMFERED_RECT, pcbnew.PAD_SHAPE_TRAPEZOID)
     cornered = (pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_CHAMFERED_RECT)
@@ -857,6 +859,12 @@ def footprint_signature(pcbnew, fp):
         return (shape, *((h, w) if swap else (w, h)), round(cx - x, 3) + 0.0, round(cy - y, 3) + 0.0,
                 round(p.GetRoundRectRadiusRatio(layer), 3) if shape in cornered else None, outline)
 
+    def inner_place(layer):
+        """An inner copper layer's place counted from the library footprint's top (1 for In1): a flip on a board of
+        more than two copper layers turns the inner layers over too, In1 to the last."""
+        i = (int(layer) - pcbnew.In1_Cu) // 2 + 1
+        return copper_count - 1 - i if flip and i <= inner_count else i
+
     def margins(p):
         out = []
         for get, mm in (("GetLocalSolderPasteMargin", True), ("GetLocalSolderPasteMarginRatio", False),
@@ -874,10 +882,18 @@ def footprint_signature(pcbnew, fp):
         angle = p.GetFPRelativeOrientation().AsDegrees()
         if flip:  # mirrored in y: the angles change sign and the layers swap sides
             angle = -angle
-        # the outer copper and the other layers: inner copper only says "through all copper", and KiCad cuts a
-        # flipped pad's inner layers down to its board's (a library footprint has all 30)
+        # the outer copper and the other layers, then the inner copper: none, all the inner layers there are (KiCad
+        # cuts a flipped pad's inner layers down to its board's, and a library footprint has all 30), or which ones,
+        # counted from the library footprint's top
         layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()
                               if not pcbnew.IsInnerCopperLayer(l)))
+        inner_cu = {inner_place(l) for l in p.GetLayerSet().Seq() if pcbnew.IsInnerCopperLayer(l)}
+        if not inner_cu:
+            layers += ("none",)
+        elif set(range(1, (inner_count if inner_count > 0 else 30) + 1)) <= inner_cu:  # two layers: KiCad keeps 30
+            layers += ("all",)
+        else:
+            layers += (tuple(sorted(inner_cu)),)
         stacked = p.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL
         # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
         period = 180 if shape in turnable else 360
@@ -896,16 +912,8 @@ def footprint_signature(pcbnew, fp):
         if stacked and p.Padstack().Mode() == pcbnew.PADSTACK.MODE_FRONT_INNER_BACK:
             inner = ((0, copper(p, pcbnew.PADSTACK.INNER_LAYERS, swap, x, y)),)
         elif stacked:  # a custom padstack: each inner layer it defines, counted from the library footprint's top
-            n = fp.GetBoard().GetCopperLayerCount() if fp.GetBoard() else 0
-            inner = []
-            for lay in p.Padstack().UniqueLayers():
-                if lay in (pcbnew.F_Cu, pcbnew.B_Cu):
-                    continue
-                i = (int(lay) - pcbnew.In1_Cu) // 2 + 1
-                if flip and 2 < n and i <= n - 2:  # a flip turns the inner layers over too (In1 to the last)
-                    i = n - 1 - i
-                inner.append((i, copper(p, lay, swap, x, y)))
-            inner = tuple(sorted(inner))
+            inner = tuple(sorted((inner_place(lay), copper(p, lay, swap, x, y)) for lay in p.Padstack().UniqueLayers()
+                                 if lay not in (pcbnew.F_Cu, pcbnew.B_Cu)))
         holed = dw > 0 or dh > 0
         pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, ox, oy, angle + 0.0, shape,
                      p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back,
@@ -1001,11 +1009,20 @@ def export_footprints(pcb_path, items, libdir):
     fps = {f.GetReference(): f for f in b.GetFootprints()}
     Path(libdir).mkdir(parents=True, exist_ok=True)
     keep = []
+    board_inner = pcbnew.LSET()
+    for i in range(b.GetCopperLayerCount() - 2):
+        board_inner.AddLayer(pcbnew.In1_Cu + 2 * i)
     for ref, name in items:
         c = pcbnew.FOOTPRINT(fps[ref])
         keep.append(c)
         if c.IsFlipped():
             c.Flip(c.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+            # a flip on a board of more than two copper layers cuts a through-hole pad's inner copper down to the
+            # board's: one that has all of those has copper on every layer, and the library footprint gets all 30
+            for p in c.Pads() if board_inner.Seq() else ():
+                layers = p.GetLayerSet()
+                if all(layers.Contains(l) for l in board_inner.Seq()):
+                    p.SetLayerSet(pcbnew.LSET(layers).AddLayerSet(pcbnew.LSET.InternalCuMask()))
         c.SetOrientationDegrees(0)
         c.SetPosition(pcbnew.VECTOR2I(0, 0))
         c.SetFPID(pcbnew.LIB_ID("", name))

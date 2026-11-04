@@ -464,6 +464,16 @@ class Boards(unittest.TestCase):
         self.assertFalse(variant(turn(45)))
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetDrillSize(mm(1.0, 1.0))))
         self.assertFalse(variant(lambda pcbnew, p: p["2"].SetAttribute(pcbnew.PAD_ATTRIB_NPTH)))
+
+        def copper_on(*extra):  # pad 1 on the outer copper and the masks, and the extra (inner) layers
+            def change(pcbnew, p):
+                layers = pcbnew.LSET()
+                for layer in (pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.F_Mask, pcbnew.B_Mask) + extra:
+                    layers.AddLayer(layer)
+                p["1"].SetLayerSet(layers)
+            return change
+        self.assertFalse(variant(copper_on()))  # no inner copper is not copper on every layer
+        self.assertFalse(variant(copper_on(pcbnew.In1_Cu)))
         self.assertTrue(ie.same_pads(sig, sig[::-1]))  # pads match in any order
         paste = lambda v: (lambda pcbnew, p: p["3"].SetLocalSolderPasteMargin(pcbnew.FromMM(v)))
         self.assertTrue(variant(paste(0)))  # an override of 0 is no override
@@ -497,6 +507,25 @@ class Boards(unittest.TestCase):
             p["3"].SetLayerSet(layers)
         self.assertFalse(variant(bottom))  # a pad on the far side of the footprint (an EasyEDA test point)
         self.assertFalse(variant(bottom, flip=True))
+
+    def test_a_bottom_through_hole_part_on_four_layers_keeps_copper_on_every_layer(self):
+        import json
+        import subprocess
+        pcbnew = self.pcbnew
+        self.board.SetCopperLayerCount(4)
+        fp = self.footprint("J1", [("1", "pth", None), ("2", "pth", None)])
+        fp.SetFPID(pcbnew.LIB_ID("", "HDR"))
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_TOP_BOTTOM)  # KiCad cuts its pads' inner copper to In1, In2
+        with tempfile.TemporaryDirectory() as d:
+            pcb, pretty = os.path.join(d, "b.kicad_pcb"), os.path.join(d, "lib.pretty")
+            pcbnew.SaveBoard(pcb, self.board)
+            run = ("import sys, json; from pcbkit.import_easyeda import export_footprints; "
+                   "export_footprints(sys.argv[1], json.loads(sys.argv[2]), sys.argv[3])")
+            subprocess.run([sys.executable, "-c", run, pcb, json.dumps([["J1", "HDR"]]), pretty],
+                           check=True, capture_output=True, env=dict(os.environ, PYTHONPATH=ROOT))
+            lib = pcbnew.FootprintLoad(pretty, "HDR")
+        self.assertTrue(all(p.GetLayerSet().Contains(pcbnew.In30_Cu) for p in lib.Pads()))
+        self.assertTrue(ie.same_pads(ie.footprint_signature(pcbnew, fp), ie.footprint_signature(pcbnew, lib)))
 
     def edge(self, *pts, arc=False):
         pcbnew = self.pcbnew

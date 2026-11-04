@@ -518,7 +518,7 @@ class Boards(unittest.TestCase):
         fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_TOP_BOTTOM)  # KiCad cuts its pads' inner copper to In1, In2
         with tempfile.TemporaryDirectory() as d:
             pcb, pretty = os.path.join(d, "b.kicad_pcb"), os.path.join(d, "lib.pretty")
-            pcbnew.SaveBoard(pcb, self.board)
+            kicad.save_board(self.board, pcb)  # headless: pcbnew.SaveBoard can abort without a wxApp
             run = ("import sys, json; from pcbkit.import_easyeda import export_footprints; "
                    "export_footprints(sys.argv[1], json.loads(sys.argv[2]), sys.argv[3])")
             subprocess.run([sys.executable, "-c", run, pcb, json.dumps([["J1", "HDR"]]), pretty],

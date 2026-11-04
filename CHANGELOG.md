@@ -147,11 +147,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   (the schematic's Footprint field follows); every other symbol and footprint stays. Importing a board again leaves
   the library as it was, byte for byte, also one KiCad's symbol editor saved last: the library's text is kept and new
   symbols go in among the old ones, in name order. Library footprints no longer carry the sheet file of the board they
-  were copied from. A schematic part with no footprint on the PCB no longer stops the run: it is listed as
-  schematic-only and gets an empty Footprint field (ERC gave `footprint_link_issues` for a footprint no library had;
-  DRC parity still lists it as `missing_footprint`). Sheet files drop the " copy" EasyEDA gives a duplicated sheet and
-  are named in lower case with `-` (`ESP32+USB copy` is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer
-  `esp32+usb_copy.kicad_sch`).
+  were copied from, and one copied from a bottom-side through-hole part on a board of more than two copper layers
+  keeps copper on every layer (KiCad's flip had cut it to that board's inner layers). A schematic part with no
+  footprint on the PCB no longer stops the run: it is listed as schematic-only and gets an empty Footprint field (ERC
+  gave `footprint_link_issues` for a footprint no library had; DRC parity still lists it as `missing_footprint`).
+  Sheet files drop the " copy" EasyEDA gives a duplicated sheet and are named in lower case with `-` (`ESP32+USB copy`
+  is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer `esp32+usb_copy.kicad_sch`).
 
 ### Fixed
 - **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a

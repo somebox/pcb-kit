@@ -383,9 +383,27 @@ class Boards(unittest.TestCase):
     def test_a_footprint_signature_holds_what_a_fab_makes_and_not_where_it_is(self):
         pcbnew = self.pcbnew
         fp = self.footprint("J1", [("1", "pth", None), ("2", "pth", None), ("3", "smd", None)])
-        slot = {p.GetNumber(): p for p in fp.Pads()}["3"]
-        slot.SetShape(pcbnew.PAD_SHAPE_RECTANGLE)
-        slot.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(1.2), pcbnew.FromMM(0.6)))
+        mm = lambda w, h: pcbnew.VECTOR2I(pcbnew.FromMM(w), pcbnew.FromMM(h))
+        pads = {p.GetNumber(): p for p in fp.Pads()}
+        pads["3"].SetShape(pcbnew.PAD_SHAPE_RECTANGLE)
+        pads["3"].SetSize(mm(1.2, 0.6))
+        pads["2"].SetOffset(pcbnew.F_Cu, mm(0.2, 0.1))  # copper off-centre on its hole
+
+        def outline(pad, *pts):
+            pad.DeletePrimitivesList()
+            pad.AddPrimitivePoly(pcbnew.F_Cu, pcbnew.VECTOR_VECTOR2I([mm(x, y) for x, y in pts]), 0, True)
+        square = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+        ell = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0), (0, 0), (0, 0.5), (-0.5, 0.5)]  # the same box, a corner cut away
+        poly = pcbnew.PAD(fp)  # an EasyEDA polygon pad: a tiny anchor and the copper drawn round it
+        poly.SetNumber("4")
+        poly.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        poly.SetLayerSet(pcbnew.PAD.SMDMask())
+        poly.SetShape(pcbnew.PAD_SHAPE_CUSTOM)
+        poly.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+        poly.SetSize(mm(0.005, 0.005))
+        poly.SetPosition(mm(6, 1))
+        outline(poly, *ell)
+        fp.Add(poly)
         sig = ie.footprint_signature(pcbnew, fp)
 
         def variant(change=None, angle=0, flip=False):
@@ -402,8 +420,9 @@ class Boards(unittest.TestCase):
         for angle in (0, 33, 90, 180):
             for flip in (False, True):
                 self.assertTrue(variant(angle=angle, flip=flip), (angle, flip))
-        mm = lambda w, h: pcbnew.VECTOR2I(pcbnew.FromMM(w), pcbnew.FromMM(h))
-        turn = lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
+        self.assertFalse(variant(lambda pcbnew, p: outline(p["4"], *square)))
+        self.assertFalse(variant(lambda pcbnew, p: p["1"].SetOffset(pcbnew.F_Cu, mm(0.3, 0))))
+        turn =lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
         self.assertTrue(variant(turn(180)))   # a rectangle turned half round is the same pad
         self.assertTrue(variant(lambda pcbnew, p: (turn(90)(pcbnew, p), p["3"].SetSize(mm(0.6, 1.2)))))
         self.assertFalse(variant(turn(45)))

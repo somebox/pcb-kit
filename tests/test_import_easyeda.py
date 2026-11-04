@@ -158,6 +158,17 @@ class SymbolLibrary(unittest.TestCase):
         self.assertFalse(ie.same_symbol(KICAD_SAVED_RES, ie.symbol_def("RES", part("U1", "RES", CHIP3), "proj", "")))
         self.assertFalse(ie.same_symbol('(symbol "RES" (extends "R"))', new))
 
+    def test_text_that_reads_like_a_pin_is_not_one(self):
+        noisy = KICAD_SAVED_RES.replace('\t\t(symbol "RES_0_1"', '\t\t(property "Description" "wire it as (pin input '
+                                        'line (at 1 2 0) (length 3))")\n\t\t(property "Note" "half a (pin output line '
+                                        '(at 4 5 and an (extends \\"R\\")")\n\t\t(symbol "RES_0_1"', 1)
+        new = ie.symbol_def("RES", part("R1", "RES", RES), "proj", "R0603")
+        self.assertEqual(ie.symbol_pins(noisy), ie.symbol_pins(KICAD_SAVED_RES))
+        self.assertTrue(ie.same_symbol(noisy, new))
+        self.lib.write_text("(kicad_symbol_lib\n\t(version 20241209)\n\t" + noisy + "\n)\n")
+        sym_of, stats = self.load(schematic(part("R1", "RES", RES)))
+        self.assertEqual((sym_of, stats["kept"], stats["renamed"]), ({"R1": "RES"}, 1, set()))
+
     def test_a_symbol_split_into_units_is_not_reused(self):
         # the same two pins, pin 2 moved to a unit 2: the schematic places unit 1 only, so pin 2 would go missing
         i = KICAD_SAVED_RES.index("\t\t\t(pin passive line\n\t\t\t\t(at -2.54")

@@ -460,22 +460,30 @@ def png_size(data):
     return w, h, ppi
 
 
-_LIB_PIN = re.compile(r"\(pin\s+[a-z_]+\s+[a-z_]+\b")
 _STR = r'"((?:[^"\\]|\\.)*)"'
+_NUM = r"([-+\d.eE]+)"
 
 
 def symbol_pins(text):
     """The pins of a library symbol definition as sorted (number, name, x, y, angle, length): what wires land on.
-    Reads the importer's own definitions and KiCad-saved ones alike."""
+    Reads the importer's own definitions and KiCad-saved ones alike, list by list, so text in a property that reads
+    like a pin is not taken for one: the pins of each unit, and of each pin its at, length, name and number."""
     out = []
-    for m in _LIB_PIN.finditer(text):
-        blk = text[m.start():block_end(text, m.start())]
-        at = re.search(r"\(at\s+([-\d.e]+)\s+([-\d.e]+)(?:\s+([-\d.e]+))?\s*\)", blk)
-        length = re.search(r"\(length\s+([-\d.e]+)\s*\)", blk)
-        name, num = re.search(r"\(name\s+" + _STR, blk), re.search(r"\(number\s+" + _STR, blk)
-        out.append((num.group(1) if num else "", name.group(1) if name else "", round(float(at.group(1)), 4),
-                    round(float(at.group(2)), 4), int(float(at.group(3) or 0)) % 360,
-                    round(float(length.group(1)), 4) if length else 2.54))
+    root = text.index("(")
+    for s, _, head in child_blocks(text, root):
+        if head not in ("symbol", "pin"):
+            continue
+        for ps in [s] if head == "pin" else [ps for ps, _, h in child_blocks(text, s) if h == "pin"]:
+            part = {}
+            for cs, ce, h in child_blocks(text, ps):
+                part.setdefault(h, text[cs:ce])
+            at = re.match(r"\(at\s+" + _NUM + r"\s+" + _NUM + r"(?:\s+" + _NUM + ")?", part.get("at", ""))
+            length = re.match(r"\(length\s+" + _NUM, part.get("length", ""))
+            name = re.match(r"\(name\s+" + _STR, part.get("name", ""))
+            num = re.match(r"\(number\s+" + _STR, part.get("number", ""))
+            x, y, a = (float(at.group(1)), float(at.group(2)), float(at.group(3) or 0)) if at else (0.0, 0.0, 0.0)
+            out.append((num.group(1) if num else "", name.group(1) if name else "", round(x, 4), round(y, 4),
+                        int(a) % 360, round(float(length.group(1)), 4) if length else 2.54))
     return tuple(sorted(out))
 
 
@@ -514,7 +522,7 @@ def same_symbol(old, new):
     pins, the same text). A derived symbol (extends) never does: the schematic's copy has to be flat. Nor does
     one with a second unit or body style: the schematic places unit 1 only, so pins moved to unit 2 would be
     left off."""
-    if "(extends" in old or any(u > 1 or s > 1 for u, s in symbol_units(old)):
+    if any(h == "extends" for _, _, h in child_blocks(old)) or any(u > 1 or s > 1 for u, s in symbol_units(old)):
         return False
     a = symbol_pins(old)
     return a == symbol_pins(new) and (bool(a) or old.strip() == new.strip())

@@ -136,6 +136,16 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   Standard, every unique part pays the same loading fee, Basic or Extended, so swapping an Extended part for a Basic
   one saves only the price difference. BOM.md gains an assembly estimate. A new rule says hand-soldering pays only
   when it takes a whole side off the order.
+- **`pcbkit import-easyeda` merges into the library instead of rewriting it**, so several boards can share one
+  `--lib`/`--lib-name`. It wrote `<nick>.kicad_sym` afresh on every run, and the second board's import took the first
+  board's symbols away. A symbol already in the library with the same name and pins is used as it is (also one saved
+  by KiCad's symbol editor), and so is a footprint with the same name and pads; one with the same name and other
+  pins or pads makes the new one `name_2` (the schematic's Footprint field follows); every other symbol and
+  footprint stays. Importing a board again leaves the library as it was. Library footprints no longer carry the
+  sheet file of the board they were copied from. A schematic part with no footprint on the PCB no longer stops the
+  run: it is listed as schematic-only and gets an empty Footprint field (ERC gave `footprint_link_issues` for a
+  footprint no library had; DRC parity still lists it as `missing_footprint`). Sheet files drop the " copy" EasyEDA gives a duplicated sheet and are named in lower case
+  with `-` (`ESP32+USB copy` is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer `esp32+usb_copy.kicad_sch`).
 
 ### Fixed
 - **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a
@@ -143,6 +153,16 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   killed mid-run printed the previous board's summary and could exit 0. The report is now removed before each run.
   A non-zero exit from `kicad-cli`, or no readable report, stops the command with exit status 1 and `kicad-cli`'s
   message. That also covers `pcbkit release`'s checks and `import-easyeda`'s.
+- **`pcbkit import-easyeda` no longer leaves what took hand fixes on espcandle-pcb's two boards.** The copper-pour
+  keep-outs KiCad's importer makes on User.4 from EasyEDA's pin outlines (layer-100 cutouts in LCSC's SOT-23, SC-70
+  and SOD-123 footprints) are removed from the board and the library footprints: they were 11 and 16 DRC
+  `items_not_allowed` errors. Edge.Cuts ends less than 0.05 mm apart are joined (a 0.0127 mm gap failed DRC with
+  `invalid_outline`); only ends that meet no other end move, so short segments keep their length. Pads without a
+  number and NPTH pegs (a switch's, a USB-C socket's) are no longer "pad has no schematic pin", and a pad the symbol
+  lacks that is unconnected on the PCB too (USB-C shell pads) is listed instead of stopping the run. A loose pad with
+  a net, such as a GND test pad, becomes a board-only footprint out of the BOM and placement files and is listed; only
+  a PCB part with nets and no symbol still stops the run. Both boards now import without `--force`. Fixtures in
+  `tests/test_import_easyeda.py`.
 
 ## [0.3.0] - 2026-10-18
 

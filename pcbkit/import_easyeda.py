@@ -805,15 +805,17 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 # ---------------------------------------------------------------- PCB
 
 def footprint_signature(pcbnew, fp):
-    """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height,
-    drill width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio,
-    copper outline, back copper). Everything a fab makes from a pad is in it, so footprints that differ in a hole
-    size, a pad type, a pad's angle or a custom pad's copper compare different. The outline (each outline's points
-    in order, with its holes', in the library's frame) is there for the shapes size and angle don't describe: custom
-    pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and trapezoids. Back
-    copper is there for a pad whose padstack gives the far side other copper (KiCad's front/inner/back and custom
-    padstacks): its shape, width, height, x and y from the hole, corner ratio and outline. Inner layers are not
-    compared (a flipped front/inner/back pad reads 0 for them in KiCad 10)."""
+    """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height, drill
+    width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio, copper
+    outline, back copper, margins). Everything a fab makes from a pad is in it, so footprints that differ in a hole
+    size, a pad type, a pad's angle, a custom pad's copper or a paste or mask margin compare different. The outline
+    (each outline's points in order, with its holes', in the library's frame) is there for the shapes size and angle
+    don't describe: custom pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and
+    trapezoids. Back copper is there for a pad whose padstack gives the far side other copper (KiCad's front/inner/back
+    and custom padstacks): its shape, width, height, x and y from the hole, corner ratio and outline. Inner layers are
+    not compared (a flipped front/inner/back pad reads 0 for them in KiCad 10). Margins are the pad's solder paste
+    margin, paste margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's
+    own)."""
     o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
     near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
@@ -845,6 +847,15 @@ def footprint_signature(pcbnew, fp):
         return (shape, *((h, w) if swap else (w, h)), round(cx - x, 3) + 0.0, round(cy - y, 3) + 0.0,
                 round(p.GetRoundRectRadiusRatio(layer), 3) if shape in cornered else None, outline)
 
+    def margins(p):
+        out = []
+        for get, mm in (("GetLocalSolderPasteMargin", True), ("GetLocalSolderPasteMarginRatio", False),
+                        ("GetLocalSolderMaskMargin", True)):
+            v = getattr(p, get)()
+            v = getattr(fp, get)() if v is None else v
+            out.append(0.0 if v is None else round(pcbnew.ToMM(v) if mm else v, 4) + 0.0)
+        return tuple(out)
+
     pads = []
     for p in fp.Pads():
         x, y = local(p.GetPosition())
@@ -870,14 +881,16 @@ def footprint_signature(pcbnew, fp):
         back = copper(p, far, swap, x, y) if stacked else None
         holed = dw > 0 or dh > 0
         pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, ox, oy, angle + 0.0, shape,
-                     p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back))
+                     p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back,
+                     margins(p)))
     return tuple(sorted(pads, key=lambda t: t[:10]))
 
 
 def same_pads(a, b, tol=0.02, angle_tol=0.1):
-    """Whether two footprint signatures are the same pads: sizes, places and outline points within tol mm, angles
-    within angle_tol degrees, everything else equal. Outlines match from any starting point and either way round
-    (a flipped footprint's run the other way)."""
+    """Whether two footprint signatures are the same pads: sizes, places, margins and outline points within tol mm,
+    angles within angle_tol degrees, paste ratios within 0.001, everything else equal. Pads match one to one in any
+    order (pads of one number can sort either way when their places differ by rounding), and outlines from any
+    starting point and either way round (a flipped footprint's run the other way)."""
     def close(u, v):
         return all(abs(s - t) <= tol for s, t in zip(u, v))
 
@@ -904,9 +917,11 @@ def same_pads(a, b, tol=0.02, angle_tol=0.1):
     def same_layer(u, v):  # one layer's copper, as footprint_signature's copper() gives it
         return u == v or (u is not None and v is not None and u[0] == v[0] and u[5] == v[5]
                           and close(u[1:5], v[1:5]) and same_copper(u[6], v[6]))
-    return len(a) == len(b) and all(
-        p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
-        and same_copper(p[15], r[15]) and same_layer(p[16], r[16]) for p, r in zip(a, b))
+    def same_pad(p, r):
+        return (p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
+                and same_copper(p[15], r[15]) and same_layer(p[16], r[16]) and close(p[17][::2], r[17][::2])
+                and abs(p[17][1] - r[17][1]) <= 0.001)
+    return len(a) == len(b) and (all(same_pad(p, r) for p, r in zip(a, b)) or matched(a, b, same_pad))
 
 
 def ref_order(fp):
@@ -1122,6 +1137,11 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
         fp_refs.add(ref)
         link = links[ref]
         base = link["footprint"] or safe_name(str(fp.GetFPID().GetLibItemName()))
+        for p in fp.Pads():  # before the signature, which holds the paste margin: the library gets the fixed pads
+            m = p.GetLocalSolderPasteMargin()
+            if m is not None and m < -pcbnew.FromMM(1):
+                p.SetLocalSolderPasteMargin(None)
+                paste_fixed += 1
         sig = footprint_signature(pcbnew, fp)
         name, k = base, 1
         while True:
@@ -1149,11 +1169,6 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
         ref_shown, value_shown = shown.get(ref, (True, False))
         fp.Reference().SetVisible(ref_shown)
         fp.Value().SetVisible(value_shown)
-        for p in fp.Pads():
-            m = p.GetLocalSolderPasteMargin()
-            if m is not None and m < -pcbnew.FromMM(1):
-                p.SetLocalSolderPasteMargin(None)
-                paste_fixed += 1
     schematic_only = sorted(set(links) - fp_refs, key=lambda r: [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", r))])
     # a footprint the library has with the same pads stays as it is: another board may have put it there
     exports = [(min(p)[1], name) for name, p in placements.items() if lib_sigs.get(name) is None]

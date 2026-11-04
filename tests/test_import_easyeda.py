@@ -453,6 +453,11 @@ class Boards(unittest.TestCase):
         self.assertFalse(variant(turn(45)))
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetDrillSize(mm(1.0, 1.0))))
         self.assertFalse(variant(lambda pcbnew, p: p["2"].SetAttribute(pcbnew.PAD_ATTRIB_NPTH)))
+        self.assertTrue(ie.same_pads(sig, sig[::-1]))  # pads match in any order
+        paste = lambda v: (lambda pcbnew, p: p["3"].SetLocalSolderPasteMargin(pcbnew.FromMM(v)))
+        self.assertTrue(variant(paste(0)))  # an override of 0 is no override
+        self.assertFalse(variant(paste(-0.1)))
+        self.assertFalse(variant(lambda pcbnew, p: p["1"].SetLocalSolderMaskMargin(pcbnew.FromMM(0.1))))
 
         def back(w, h, shape=pcbnew.PAD_SHAPE_RECTANGLE):  # other copper on the back: a front/inner/back padstack
             def change(pcbnew, p):

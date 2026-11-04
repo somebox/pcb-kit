@@ -11,14 +11,22 @@ symbols unlinked from the footprints. This converts the schematic itself, keepin
   * net ports and net labels become global labels (EasyEDA joins both by name across all sheets), GND/VCC/+5V
     flags become power symbols named after the flag;
   * every footprint is linked to its symbol, the PCB nets are renamed to the schematic's, and any connectivity
-    difference between the EasyEDA schematic and PCB is reported (and stops the run unless --force);
+    difference between the EasyEDA schematic and PCB is reported (and stops the run unless --force): a PCB part
+    with nets but no symbol, a pad on a net with no schematic pin, nets joined or split. Pegs and holes (pads with
+    no number, NPTH) are not compared; a pad the symbol lacks that is unconnected on the PCB too is only listed;
   * footprints go into LIBDIR/<nick>.pretty, each copied from one placement chosen the same way every run (right-
     angle rotations first, then top side, unrotated, lowest reference), and symbols into LIBDIR/<nick>.kicad_sym,
-    with project lib tables;
+    with project lib tables. Both are merged with what the library has, so several boards can share it: a symbol
+    of the same name and pins, or a footprint of the same name and pads, is the same part and the library's is kept
+    as it is; one that differs takes the next free name_2, name_3;
   * what KiCad's PCB importer gets wrong is corrected: -100 mm paste margins, every designator shown, duplicate
-    vias, EasyEDA layer names, zone fill minimums; the zones are refilled and the board saved filled.
-Loose pads and holes on the PCB (no symbol) become board-only footprints. Writes OUT_DIR/BOARD.kicad_{pro,sch,pcb}
-and runs ERC and DRC with the schematic parity check. Harvested from dodeca's panels/tools/easyeda_to_kicad.py.
+    vias, EasyEDA layer names, zone fill minimums, the copper-pour keep-outs on User.4 it makes of EasyEDA's pin
+    outlines, Edge.Cuts ends a few microns apart; the zones are refilled and the board saved filled.
+Loose pads and holes on the PCB (no symbol) become board-only footprints, out of the BOM and placement files; one
+with a net (a GND test pad) is listed. A schematic part with no footprint on the PCB is listed as schematic-only and
+gets an empty Footprint field. Sheet files are named after the EasyEDA sheets, without EasyEDA's " copy"
+(ESP32+USB copy -> esp32-usb.kicad_sch). Writes OUT_DIR/BOARD.kicad_{pro,sch,pcb} and runs ERC and DRC with the
+schematic parity check. Harvested from dodeca's panels/tools/easyeda_to_kicad.py.
 """
 import argparse
 import base64
@@ -82,6 +90,87 @@ def font(size=1.27, justify=None, hide=False, bold=False):
 
 def safe_name(s):
     return re.sub(r"[\s/:\\]+", "_", s.strip()) or "unnamed"
+
+
+# ---------------------------------------------------------------- s-expression text
+
+_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|[()]')
+_HEAD = re.compile(r'\(\s*([^\s()"]*)')
+
+
+def block_end(text, i):
+    """Index just past the list that opens at text[i]."""
+    depth = 0
+    for m in _TOK.finditer(text, i):
+        t = m.group(0)
+        if t == "(":
+            depth += 1
+        elif t == ")":
+            depth -= 1
+            if depth == 0:
+                return m.end()
+    raise ValueError("unbalanced s-expression")
+
+
+def child_blocks(text, start=None):
+    """(start, end, head) of each list directly inside the list that opens at text[start] (default: the root)."""
+    start = text.index("(") if start is None else start
+    out, depth, s = [], 0, None
+    for m in _TOK.finditer(text, start):
+        t = m.group(0)
+        if t == "(":
+            depth += 1
+            if depth == 2:
+                s = m.start()
+        elif t == ")":
+            if depth == 2:
+                out.append((s, m.end(), _HEAD.match(text, s).group(1)))
+            depth -= 1
+            if depth == 0:
+                break
+    return out
+
+
+def cut(text, spans):
+    """text without the given (start, end) spans, each with the whitespace before it."""
+    out, i = [], 0
+    for s, e in sorted(spans):
+        j = s
+        while j > i and text[j - 1] in " \t\n":
+            j -= 1
+        out.append(text[i:j])
+        i = e
+    return "".join(out) + text[i:]
+
+
+def strip_user_keepouts(path):
+    """Remove keep-out rule areas that lie only on User.* layers, on the board and inside its footprints, from a
+    saved .kicad_pcb or .kicad_mod (on the text: BOARD.Remove() corrupts the bindings). KiCad's EasyEDA importer
+    turns layer-100 "cutout" regions (the pin outlines in LCSC footprints) into copper-pour keep-outs on User.4,
+    which DRC then reports as items_not_allowed. Returns how many were removed."""
+    path = Path(path)
+    text = path.read_text()
+    drop = []
+
+    def check(s, e):
+        kids = {h: (a, b) for a, b, h in child_blocks(text, s)}
+        if "keepout" not in kids or "(enabled yes)" in text[slice(*kids.get("placement", (0, 0)))]:
+            return
+        lay = kids.get("layers") or kids.get("layer")
+        names = re.findall(r'"([^"]*)"', text[lay[0]:lay[1]]) if lay else []
+        if names and all(x.startswith("User.") for x in names):
+            drop.append((s, e))
+
+    for s, e, head in child_blocks(text):
+        if head == "zone":
+            check(s, e)
+        elif head == "footprint":
+            for s2, e2, h2 in child_blocks(text, s):
+                if h2 == "zone":
+                    check(s2, e2)
+    if drop:
+        path.write_text(cut(text, drop))
+    return len(drop)
 
 
 # ---------------------------------------------------------------- EasyEDA schematic parsing
@@ -371,34 +460,168 @@ def png_size(data):
     return w, h, ppi
 
 
-def register_symbols(sch, nick):
-    """One library symbol per distinct (name, geometry). Returns ({ref: symbol name}, {name: definition})."""
+_STR = r'"((?:[^"\\]|\\.)*)"'
+_NUM = r"([-+\d.eE]+)"
+
+
+def symbol_pins(text):
+    """The pins of a library symbol definition as sorted (number, name, x, y, angle, length): what wires land on.
+    Reads the importer's own definitions and KiCad-saved ones alike, list by list, so text in a property that reads
+    like a pin is not taken for one: the pins of each unit, and of each pin its at, length, name and number."""
+    out = []
+    root = text.index("(")
+    for s, _, head in child_blocks(text, root):
+        if head not in ("symbol", "pin"):
+            continue
+        for ps in [s] if head == "pin" else [ps for ps, _, h in child_blocks(text, s) if h == "pin"]:
+            part = {}
+            for cs, ce, h in child_blocks(text, ps):
+                part.setdefault(h, text[cs:ce])
+            at = re.match(r"\(at\s+" + _NUM + r"\s+" + _NUM + r"(?:\s+" + _NUM + ")?", part.get("at", ""))
+            length = re.match(r"\(length\s+" + _NUM, part.get("length", ""))
+            name = re.match(r"\(name\s+" + _STR, part.get("name", ""))
+            num = re.match(r"\(number\s+" + _STR, part.get("number", ""))
+            x, y, a = (float(at.group(1)), float(at.group(2)), float(at.group(3) or 0)) if at else (0.0, 0.0, 0.0)
+            out.append((num.group(1) if num else "", name.group(1) if name else "", round(x, 4), round(y, 4),
+                        int(a) % 360, round(float(length.group(1)), 4) if length else 2.54))
+    return tuple(sorted(out))
+
+
+def unq(s):
+    """A string as q() wrote it, without its quotes and escapes: the name it stands for."""
+    return re.sub(r"\\(.)", lambda m: "\n" if m.group(1) == "n" else m.group(1), s)
+
+
+def read_symbol_lib(path):
+    """{name: definition text} of every top-level symbol in a .kicad_sym, in file order ({} if there is none)."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    text = path.read_text()
+    out = {}
+    for s, e, head in child_blocks(text):
+        m = re.match(r"\(symbol\s+" + _STR, text[s:e]) if head == "symbol" else None
+        if m:
+            out[unq(m.group(1))] = text[s:e]
+    return out
+
+
+def symbol_units(text):
+    """The (unit, body style) of each drawing unit of a library symbol: its NAME_U_S sub-symbols."""
+    out = set()
+    for s, e, head in child_blocks(text):
+        m = re.match(r"\(symbol\s+" + _STR, text[s:e]) if head == "symbol" else None
+        u = re.search(r"_(\d+)_(\d+)$", unq(m.group(1))) if m else None
+        if u:
+            out.add((int(u.group(1)), int(u.group(2))))
+    return out
+
+
+def same_symbol(old, new):
+    """Whether a library symbol can stand for a new one of the same name: the same pins (a symbol drawn without
+    pins, the same text). A derived symbol (extends) never does: the schematic's copy has to be flat. Nor does
+    one with a second unit or body style: the schematic places unit 1 only, so pins moved to unit 2 would be
+    left off."""
+    if any(h == "extends" for _, _, h in child_blocks(old)) or any(u > 1 or s > 1 for u, s in symbol_units(old)):
+        return False
+    a = symbol_pins(old)
+    return a == symbol_pins(new) and (bool(a) or old.strip() == new.strip())
+
+
+def write_symbol_lib(path, existing, defs):
+    """The library: every symbol it had, plus this import's new ones. A library that exists keeps its text as it is
+    (KiCad's header and tabs, if KiCad saved it last): one this import adds nothing to is not written, and a new
+    symbol goes in before the first symbol whose name sorts after it, so a sorted library stays sorted. A new
+    library has the symbols sorted by name."""
+    path = Path(path)
+    new = {k: v for k, v in defs.items() if k not in existing}
+    if not path.exists():
+        path.write_text('(kicad_symbol_lib (version 20241209) (generator "pcbkit_import_easyeda") (generator_version '
+                        '"10.0")\n' + "\n".join(new[k] for k in sorted(new)) + "\n)\n")
+        return
+    if not new:
+        return
+    text = path.read_text()
+    root = text.index("(")
+    spots = [(unq(re.match(r"\(symbol\s+" + _STR, text[s:e]).group(1)), s)
+             for s, e, head in child_blocks(text, root) if head == "symbol"]
+    close = block_end(text, root) - 1
+
+    def indent(i):
+        """The white space before text[i] on its line; None if there is something else."""
+        before = text[text.rfind("\n", 0, i) + 1:i]
+        return None if before.strip() else before
+    own = next((indent(s) for _, s in spots if indent(s) is not None), "\t")  # the library's symbol indent
+    out, last = [], 0
+    for name in sorted(new):
+        at = next((s for other, s in spots if other > name), close)
+        ind = indent(at)
+        if ind is None:  # not at the start of a line: give the symbol lines of its own
+            out.append(text[last:at] + "\n" + own + new[name] + "\n")
+            last = at
+        else:
+            out.append(text[last:at - len(ind)] + own + new[name] + "\n")
+            last = at - len(ind)
+    path.write_text("".join(out) + text[last:])
+
+
+def register_symbols(sch, nick, existing=None):
+    """One library symbol per distinct (name, geometry), merged with the symbols the library already has
+    (existing, {name: definition}): one with the same name and the same pins is used as it is, so another board
+    imported into the same library keeps its symbols; one with the same name and other pins makes this one take
+    the next free name_N. Returns ({ref: symbol name}, {name: definition}, stats)."""
+    existing = existing or {}
     defs, geos, by_ref = {}, {}, {}
+    stats = dict(new=0, kept=0, renamed=set())
     for p in (p for s in sch["sheets"] for p in s["parts"]):
         base = safe_name(p["para"].get("spiceSymbolName") or p["para"].get("name") or p["fields"].get("N", {}).get("text", "part"))
         geo = symbol_geometry(p)
         fp = safe_name(p["para"].get("package", "")) if p["para"].get("package") else ""
         name, k = base, 1
-        while name in geos and geos[name] != geo:
+        while True:
+            if name in geos:
+                if geos[name] == geo:
+                    break
+            else:
+                text = symbol_def(name, p, nick, fp)
+                if name not in existing:
+                    geos[name], defs[name] = geo, text
+                    stats["new"] += 1
+                    break
+                if same_symbol(existing[name], text):
+                    geos[name], defs[name] = geo, existing[name]
+                    stats["kept"] += 1
+                    break
+                stats["renamed"].add(name)
             k += 1
             name = f"{base}_{k}"
-        if name not in geos:
-            geos[name] = geo
-            defs[name] = symbol_def(name, p, nick, fp)
         by_ref[p["fields"]["P"]["text"]] = name
-    return by_ref, defs
+    return by_ref, defs, stats
+
+
+def sheet_title(title, i):
+    """A KiCad sheet name from an EasyEDA sheet title: without the " copy" EasyEDA appends to a duplicated sheet
+    ("POWER copy", "LEDs copy copy"), and without a / (KiCad sheet names can't hold one)."""
+    t = re.sub(r"(?:\s+copy(?:\s*\(?\d+\)?)?)+\s*$", "", title.strip(), flags=re.I).strip()
+    return (t or f"Sheet {i + 1}").replace("/", "_")
+
+
+def sheet_stem(name, i):
+    """A file name stem for a sheet: lower case, every run of characters other than letters, digits and _ one -
+    ("ESP32+USB" -> esp32-usb)."""
+    return re.sub(r"[^\w]+", "-", name.lower()).strip("-_") or f"sheet-{i + 1}"
 
 
 def sheet_files(sheets, project):
     """(sheet name, file name) per EasyEDA sheet: unique, and no file clashing with the root PROJECT.kicad_sch."""
     names, files, out = set(), {f"{project}.kicad_sch".lower()}, []
     for i, s in enumerate(sheets):
-        base = (s["name"].strip() or f"Sheet {i + 1}").replace("/", "_")  # KiCad sheet names can't hold a /
+        base = sheet_title(s["name"], i)
         name, k = base, 1
         while name in names:
             k += 1
             name = f"{base} {k}"
-        stem = safe_name(name).lower()
+        stem = sheet_stem(name, i)
         file, k = f"{stem}.kicad_sch", 1
         while file.lower() in files:
             k += 1
@@ -409,9 +632,10 @@ def sheet_files(sheets, project):
     return out
 
 
-def write_schematic(sch, out_dir, sym_of, defs, power, project, nick, meta):
+def write_schematic(sch, out_dir, sym_of, defs, power, project, nick, meta, pcb_refs=None):
     """OUT_DIR/PROJECT.kicad_sch. One EasyEDA sheet is the root itself; several become a root page of sheet symbols,
     one file each. Net ports and labels are global labels, so nets join by name across sheets as in EasyEDA.
+    pcb_refs: the references the PCB has; a part not among them gets no footprint (its footprint is in no library).
     Returns (root uuid, [(sheet uuid, sheet name)], {ref: link to the footprint})."""
     root = uid(project, "root")
     flags = [f for s in sch["sheets"] for f in s["flags"]]
@@ -426,7 +650,7 @@ def write_schematic(sch, out_dir, sym_of, defs, power, project, nick, meta):
     if len(sch["sheets"]) == 1:
         file = f"{project}.kicad_sch"
         for ref, link in write_sheet(sch["sheets"][0], out_dir / file, root, "/" + root, (), sym_of, defs, power,
-                                     project, nick, meta, power_refs, power_nets).items():
+                                     project, nick, meta, power_refs, power_nets, pcb_refs).items():
             links[ref] = dict(link, path=f"/{link['uuid']}", sheetname="/", sheetfile=file)
         return root, subs, links
     pages = []
@@ -434,7 +658,7 @@ def write_schematic(sch, out_dir, sym_of, defs, power, project, nick, meta):
         su = uid(project, "sheet", i)
         for ref, link in write_sheet(sheet, out_dir / file, uid(project, "sheet-file", i), f"/{root}/{su}",
                                      ("page", i) if i else (), sym_of, defs, power, project, nick, meta, power_refs,
-                                     power_nets if i == 0 else ()).items():
+                                     power_nets if i == 0 else (), pcb_refs).items():
             links[ref] = dict(link, path=f"/{su}/{link['uuid']}", sheetname=name, sheetfile=file)
         subs.append((su, name))
         pages.append((su, name, file))
@@ -469,7 +693,7 @@ def title_block(meta):
 
 
 def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power, project, nick, meta, power_refs,
-                power_nets):
+                power_nets, pcb_refs=None):
     """One page. sheet_uuid is the file's own, inst_path its place in the hierarchy; tag keeps the uuids of items
     unique across pages (the first page has none, as a single-sheet import). power_refs numbers #PWR/#FLG across
     pages; power_nets [(net, GND|VCC)] get their PWR_FLAGs on this page. Returns {ref: link}."""
@@ -489,11 +713,13 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
         ref = p["fields"]["P"]["text"]
         name = sym_of[ref]
         para = p["para"]
-        fp = f"{nick}:{safe_name(para['package'])}" if para.get("package") else ""
+        on_pcb = pcb_refs is None or ref in pcb_refs
+        fp = f"{nick}:{safe_name(para['package'])}" if para.get("package") and on_pcb else ""
         u = sid("sym", ref)
         links[ref] = dict(uuid=u, lcsc=para.get("Supplier Part", ""), value=p["fields"].get("N", {}).get("text", ""),
                           mpn=para.get("Manufacturer Part", ""), manufacturer=para.get("Manufacturer", ""),
-                          desc=para.get("name", ""), footprint=safe_name(para.get("package", "")))
+                          desc=para.get("name", ""), footprint=safe_name(para["package"]) if para.get("package") else "",
+                          package=para.get("package", ""))
         body.append(f'(symbol (lib_id {q(nick + ":" + name)}) (at {n(X(p["x"]))} {n(Y(p["y"]))} 0) (unit 1) '
                     f'(exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no) (uuid {q(u)})')
         for key, fname in (("P", "Reference"), ("N", "Value")):
@@ -587,23 +813,154 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 # ---------------------------------------------------------------- PCB
 
 def footprint_signature(pcbnew, fp):
-    o, a = fp.GetPosition(), math.radians(fp.GetOrientationDegrees())
+    """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height, drill
+    width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio, copper
+    outline, back copper, margins, inner copper). Everything a fab makes from a pad is in it, so footprints that differ
+    in a hole size, a pad type, a pad's angle, a custom pad's copper or a paste or mask margin compare different. The
+    outline (each outline's points in order, with its holes', in the library's frame) is there for the shapes size and
+    angle don't describe: custom pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles
+    and trapezoids. Back and inner copper are there for a pad whose padstack gives other layers other copper (KiCad's
+    front/inner/back and custom padstacks): each layer's shape, width, height, x and y from the hole, corner ratio and
+    outline; a custom padstack's inner layers by their place counted from the library footprint's top (a flip on a board
+    of more than two copper layers turns them over). KiCad keeps a custom padstack's inner layers differently on a board
+    and in a library, so such a pad can compare different from its own library footprint: the import then makes a
+    variant rather than reuse it. (EasyEDA's pads have no padstacks.) Margins are the pad's solder paste margin, paste
+    margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's own)."""
+    o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
+    near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
+    copper_count = fp.GetBoard().GetCopperLayerCount() if fp.GetBoard() else 32  # a library footprint: all of them
+    inner_count = copper_count - 2
+    turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
+    drawn = (pcbnew.PAD_SHAPE_CUSTOM, pcbnew.PAD_SHAPE_CHAMFERED_RECT, pcbnew.PAD_SHAPE_TRAPEZOID)
+    cornered = (pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_CHAMFERED_RECT)
+
+    def local(v):
+        """A board point in the library footprint's frame, mm: a flipped footprint is the library one mirrored in y."""
+        dx, dy = pcbnew.ToMM(v.x - o.x), pcbnew.ToMM(v.y - o.y)
+        x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+        return (x, -y) if flip else (x, y)
+
+    def ring(r):
+        pts = (local(r.CPoint(i)) for i in range(r.PointCount()))
+        return tuple((round(u, 3) + 0.0, round(v, 3) + 0.0) for u, v in pts)
+
+    def copper(p, layer, swap, x, y):
+        """A pad's copper on one layer: (shape, width, height, x and y from the hole, corner ratio, outline); width
+        and height swapped when the pad's sides are."""
+        shape, size = p.GetShape(layer), p.GetSize(layer)
+        w, h = (round(pcbnew.ToMM(v), 3) for v in (size.x, size.y))
+        cx, cy = local(p.ShapePos(layer))
+        outline = None
+        if shape in drawn:
+            poly = p.GetEffectivePolygon(layer)
+            outline = tuple(sorted(
+                (ring(poly.Outline(k)), tuple(sorted(ring(poly.Hole(k, j)) for j in range(poly.HoleCount(k)))))
+                for k in range(poly.OutlineCount())))
+        return (shape, *((h, w) if swap else (w, h)), round(cx - x, 3) + 0.0, round(cy - y, 3) + 0.0,
+                round(p.GetRoundRectRadiusRatio(layer), 3) if shape in cornered else None, outline)
+
+    def inner_place(layer):
+        """An inner copper layer's place counted from the library footprint's top (1 for In1): a flip on a board of
+        more than two copper layers turns the inner layers over too, In1 to the last."""
+        i = (int(layer) - pcbnew.In1_Cu) // 2 + 1
+        return copper_count - 1 - i if flip and i <= inner_count else i
+
+    def margins(p):
+        out = []
+        for get, mm in (("GetLocalSolderPasteMargin", True), ("GetLocalSolderPasteMarginRatio", False),
+                        ("GetLocalSolderMaskMargin", True)):
+            v = getattr(p, get)()
+            v = getattr(fp, get)() if v is None else v
+            out.append(0.0 if v is None else round(pcbnew.ToMM(v) if mm else v, 4) + 0.0)
+        return tuple(out)
+
     pads = []
     for p in fp.Pads():
-        dx, dy = pcbnew.ToMM(p.GetPosition().x - o.x), pcbnew.ToMM(p.GetPosition().y - o.y)
-        x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
-        if fp.IsFlipped():
-            x = -x
-        layer = pcbnew.B_Cu if fp.IsFlipped() else pcbnew.F_Cu
-        size = p.GetSize(layer)
-        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, round(pcbnew.ToMM(size.x), 3),
-                     round(pcbnew.ToMM(size.y), 3), p.GetShape(layer)))
-    return tuple(sorted(pads))
+        x, y = local(p.GetPosition())
+        shape, drill = p.GetShape(near), p.GetDrillSize()
+        dw, dh = (round(pcbnew.ToMM(v), 3) for v in (drill.x, drill.y))
+        angle = p.GetFPRelativeOrientation().AsDegrees()
+        if flip:  # mirrored in y: the angles change sign and the layers swap sides
+            angle = -angle
+        # the outer copper and the other layers, then the inner copper: none, all the inner layers there are (KiCad
+        # cuts a flipped pad's inner layers down to its board's, and a library footprint has all 30), or which ones,
+        # counted from the library footprint's top
+        layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()
+                              if not pcbnew.IsInnerCopperLayer(l)))
+        inner_cu = {inner_place(l) for l in p.GetLayerSet().Seq() if pcbnew.IsInnerCopperLayer(l)}
+        if not inner_cu:
+            layers += ("none",)
+        elif set(range(1, (inner_count if inner_count > 0 else 30) + 1)) <= inner_cu:  # two layers: KiCad keeps 30
+            layers += ("all",)
+        else:
+            layers += (tuple(sorted(inner_cu)),)
+        stacked = p.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL
+        # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
+        period = 180 if shape in turnable else 360
+        angle %= period
+        if period - angle < 0.05:
+            angle = 0.0
+        swap = shape in turnable and abs(angle - 90) < 0.05
+        if swap:
+            angle, dw, dh = 0.0, dh, dw
+        angle = round(angle, 2)
+        if shape == pcbnew.PAD_SHAPE_CIRCLE and dw == dh and not stacked:
+            angle = 0.0
+        _, w, h, ox, oy, corner, outline = copper(p, near, swap, x, y)
+        back = copper(p, far, swap, x, y) if stacked else None
+        inner = None
+        if stacked and p.Padstack().Mode() == pcbnew.PADSTACK.MODE_FRONT_INNER_BACK:
+            inner = ((0, copper(p, pcbnew.PADSTACK.INNER_LAYERS, swap, x, y)),)
+        elif stacked:  # a custom padstack: each inner layer it defines, counted from the library footprint's top
+            inner = tuple(sorted((inner_place(lay), copper(p, lay, swap, x, y)) for lay in p.Padstack().UniqueLayers()
+                                 if lay not in (pcbnew.F_Cu, pcbnew.B_Cu)))
+        holed = dw > 0 or dh > 0
+        pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, ox, oy, angle + 0.0, shape,
+                     p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back,
+                     margins(p), inner))
+    return tuple(sorted(pads, key=lambda t: t[:10]))
 
 
-def same_pads(a, b, tol=0.02):
-    return len(a) == len(b) and all(p[0] == r[0] and p[5] == r[5] and all(abs(u - v) <= tol for u, v in zip(p[1:5], r[1:5]))
-                                    for p, r in zip(a, b))
+def same_pads(a, b, tol=0.02, angle_tol=0.1):
+    """Whether two footprint signatures are the same pads: sizes, places, margins and outline points within tol mm,
+    angles within angle_tol degrees, paste ratios within 0.001, everything else equal. Pads match one to one in any
+    order (pads of one number can sort either way when their places differ by rounding), and outlines from any
+    starting point and either way round (a flipped footprint's run the other way)."""
+    def close(u, v):
+        return all(abs(s - t) <= tol for s, t in zip(u, v))
+
+    def same_ring(u, v):  # one closed outline: the same points in the same order, from any start, either way round
+        n = len(u)
+        if n != len(v):
+            return False
+        return n == 0 or any(all(close(u[i], w[(i + k) % n]) for i in range(n))
+                             for w in (v, v[::-1]) for k in range(n) if close(u[0], w[k]))
+
+    def matched(us, vs, same):  # one to one, in any order
+        left = list(vs)
+        for u in us:
+            k = next((i for i, v in enumerate(left) if same(u, v)), None)
+            if k is None:
+                return False
+            del left[k]
+        return not left
+
+    def same_copper(u, v):  # outlines, each with its holes
+        return u == v or (u is not None and v is not None
+                          and matched(u, v, lambda s, t: same_ring(s[0], t[0]) and matched(s[1], t[1], same_ring)))
+
+    def same_layer(u, v):  # one layer's copper, as footprint_signature's copper() gives it
+        return u == v or (u is not None and v is not None and u[0] == v[0] and u[5] == v[5]
+                          and close(u[1:5], v[1:5]) and same_copper(u[6], v[6]))
+    def same_inner(u, v):  # (inner layer, its copper) pairs
+        return u == v or (u is not None and v is not None and [i for i, _ in u] == [i for i, _ in v]
+                          and all(same_layer(s, t) for (_, s), (_, t) in zip(u, v)))
+
+    def same_pad(p, r):
+        return (p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
+                and same_copper(p[15], r[15]) and same_layer(p[16], r[16]) and close(p[17][::2], r[17][::2])
+                and abs(p[17][1] - r[17][1]) <= 0.001 and same_inner(p[18], r[18]))
+    return len(a) == len(b) and (all(same_pad(p, r) for p, r in zip(a, b)) or matched(a, b, same_pad))
 
 
 def ref_order(fp):
@@ -652,18 +1009,30 @@ def export_footprints(pcb_path, items, libdir):
     fps = {f.GetReference(): f for f in b.GetFootprints()}
     Path(libdir).mkdir(parents=True, exist_ok=True)
     keep = []
+    board_inner = pcbnew.LSET()
+    for i in range(b.GetCopperLayerCount() - 2):
+        board_inner.AddLayer(pcbnew.In1_Cu + 2 * i)
     for ref, name in items:
         c = pcbnew.FOOTPRINT(fps[ref])
         keep.append(c)
         if c.IsFlipped():
             c.Flip(c.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+            # a flip on a board of more than two copper layers cuts a through-hole pad's inner copper down to the
+            # board's: one that has all of those has copper on every layer, and the library footprint gets all 30
+            for p in c.Pads() if board_inner.Seq() else ():
+                layers = p.GetLayerSet()
+                if all(layers.Contains(l) for l in board_inner.Seq()):
+                    p.SetLayerSet(pcbnew.LSET(layers).AddLayerSet(pcbnew.LSET.InternalCuMask()))
         c.SetOrientationDegrees(0)
         c.SetPosition(pcbnew.VECTOR2I(0, 0))
         c.SetFPID(pcbnew.LIB_ID("", name))
         c.SetReference("REF**")
         c.SetPath(pcbnew.KIID_PATH())
+        c.SetSheetname("")
+        c.SetSheetfile("")
         io.FootprintSave(libdir, c)
         drop_fields(Path(libdir) / f"{name}.kicad_mod", r"JLC_3D[^\"]*|LCSC|MPN|Manufacturer")
+        strip_user_keepouts(Path(libdir) / f"{name}.kicad_mod")
     os._exit(0)
 
 
@@ -697,37 +1066,144 @@ LAYER_NAMES = {"F_Cu": "F.Cu", "B_Cu": "B.Cu", "F_SilkS": "F.SilkS", "B_SilkS": 
                "Dwgs_User": "Dwgs.User", "In1_Cu": "In1.Cu", "In2_Cu": "In2.Cu"}
 
 
-def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
+def close_outline(pcbnew, board, tol=0.05):
+    """Join Edge.Cuts line and arc ends that miss each other by less than tol mm: EasyEDA outlines drawn in mil
+    leave gaps of a hundredth of a millimetre, which DRC reports as invalid_outline. Only ends that meet no other end
+    are moved, and of two ends the line's rather than the arc's, so short segments keep their length.
+    Returns [(gap mm, x mm, y mm)], where each gap was closed."""
+    shapes = [g for g in list(board.GetDrawings()) + [g for fp in board.GetFootprints() for g in fp.GraphicalItems()]
+              if isinstance(g, pcbnew.PCB_SHAPE) and g.GetLayer() == pcbnew.Edge_Cuts
+              and g.GetShape() in (pcbnew.SHAPE_T_SEGMENT, pcbnew.SHAPE_T_ARC)]
+    ends = [(i, k, (p.x, p.y)) for i, g in enumerate(shapes) for k, p in ((0, g.GetStart()), (1, g.GetEnd()))]
+    seen = Counter(xy for _, _, xy in ends)
+    loose = [e for e in ends if seen[e[2]] == 1]
+    lim = pcbnew.FromMM(tol)
+    pairs = sorted((math.dist(a[2], c[2]), i, j) for i, a in enumerate(loose) for j, c in enumerate(loose[:i])
+                   if a[0] != c[0])
+    done, out = set(), []
+    for d, i, j in pairs:
+        if d > lim:
+            break
+        if i in done or j in done:
+            continue
+        done |= {i, j}
+        a, c = loose[i], loose[j]
+        if shapes[a[0]].GetShape() != pcbnew.SHAPE_T_SEGMENT:
+            a, c = c, a
+        g, to = shapes[a[0]], pcbnew.VECTOR2I(*c[2])
+        if g.GetShape() == pcbnew.SHAPE_T_SEGMENT:
+            (g.SetEnd if a[1] else g.SetStart)(to)
+        elif a[1]:
+            g.SetArcGeometry(g.GetStart(), g.GetArcMid(), to)
+        else:
+            g.SetArcGeometry(to, g.GetArcMid(), g.GetEnd())
+        out.append((pcbnew.ToMM(int(round(d))), pcbnew.ToMM(c[2][0]), pcbnew.ToMM(c[2][1])))
+    return out
+
+
+def unlinked_footprint(pcbnew, fp, is_part):
+    """A footprint with no symbol: (problem or None, its nets). A part of the EasyEDA PCB (is_part) that carries
+    nets is a real difference from the schematic. Anything else is made board-only, out of the BOM and the
+    placement files: a part with no nets (a logo, a mounting hole), and the loose pads and holes EasyEDA keeps
+    outside any part, which KiCad's importer wraps in a footprint each (a GND test pad keeps its net)."""
+    nets = sorted({p.GetNetname() for p in fp.Pads() if p.GetNetCode() > 0})
+    if is_part and nets:
+        return f"{fp.GetReference()} on the PCB has no symbol (and carries nets)", nets
+    fp.SetBoardOnly(True)
+    fp.SetExcludedFromBOM(True)
+    fp.SetExcludedFromPosFiles(True)
+    return None, nets
+
+
+def pad_findings(pcbnew, fp, sch_pins):
+    """Each pad of a footprint that has a symbol, against the symbol's pins: (pads [(pad, schematic net)],
+    problems, unpinned pad numbers). Pads without a number and NPTH holes (a switch's or a USB-C socket's pegs)
+    have nothing to connect and are skipped. A pad the symbol has no pin for is a problem when it carries a net on
+    the PCB; unconnected there too (a shell pad the symbol leaves out), it is only listed."""
+    ref, pads, problems, unpinned = fp.GetReference(), [], [], []
+    for p in fp.Pads():
+        num = p.GetNumber()
+        if not num or p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH:
+            continue
+        new = sch_pins.get((ref, num))
+        pads.append((p, new))
+        if new is None:
+            if p.GetNetCode() > 0:
+                problems.append(f"{ref} pad {num} has no schematic pin (on the PCB it is on {p.GetNetname()})")
+            else:
+                unpinned.append(num)
+    return pads, problems, unpinned
+
+
+def set_footprint_fields(out_dir, links, names, nick):
+    """Point the schematic's Footprint fields at the names the footprints got in the library ({ref: name}), on the
+    text of the sheets written before the board was read."""
+    by_file = defaultdict(list)
+    for ref, name in names.items():
+        by_file[links[ref]["sheetfile"]].append((links[ref]["uuid"], name))
+    for file, items in by_file.items():
+        path = Path(out_dir) / file
+        text = path.read_text()
+        for u, name in items:
+            pat = re.compile(r'(\(uuid ' + re.escape(q(u)) + r'\)\n(?:  .*\n)*?  \(property "Footprint" )' + _STR)
+            text = pat.sub(lambda m: m.group(1) + q(f"{nick}:{name}"), text, count=1)
+        path.write_text(text)
+
+
+def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
+    """Link the imported board to the schematic and correct what the importer leaves. shown: {ref: (reference
+    shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to."""
     ensure_pcbnew()
     import pcbnew
-    shown = easyeda_text_visibility(pcb_json)
     b = pcbnew.LoadBoard(str(pcb_path))
-    problems, board_only, fp_refs, paste_fixed = [], [], set(), 0
-    signatures, placements = {}, defaultdict(list)
+    problems, board_only, loose_nets, fp_refs, paste_fixed = [], [], [], set(), 0
+    signatures, placements, fp_names, lib_sigs = {}, defaultdict(list), {}, {}
+
+    def lib_signature(name):
+        """The pads of the library's footprint of that name: None if there is none, False if it won't load."""
+        if name not in lib_sigs:
+            lib_sigs[name] = None
+            if (Path(pretty) / f"{name}.kicad_mod").exists():
+                try:
+                    lib_fp = pcbnew.FootprintLoad(str(pretty), name)
+                except Exception:  # an IO_ERROR from a file this KiCad can't read
+                    lib_fp = None
+                lib_sigs[name] = footprint_signature(pcbnew, lib_fp) if lib_fp else False
+        return lib_sigs[name]
+
     for fp in sorted(b.GetFootprints(), key=ref_order):
         ref = fp.GetReference()
         if ref not in links:
-            pads = list(fp.Pads())
-            if not pads or all(p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for p in pads) or all(p.GetNetCode() == 0 for p in pads):
-                fp.SetBoardOnly(True)
-                fp.SetExcludedFromBOM(True)
-                fp.SetExcludedFromPosFiles(True)
-                board_only.append(ref)
+            problem, nets = unlinked_footprint(pcbnew, fp, ref in shown)
+            if problem:
+                problems.append(problem)
                 continue
-            problems.append(f"{ref} on the PCB has no symbol (and carries nets)")
+            board_only.append(ref)
+            if nets:
+                loose_nets.append(f"{ref} ({', '.join(nets)})")
             continue
         fp_refs.add(ref)
         link = links[ref]
-        name = link["footprint"] or safe_name(str(fp.GetFPID().GetLibItemName()))
+        base = link["footprint"] or safe_name(str(fp.GetFPID().GetLibItemName()))
+        for p in fp.Pads():  # before the signature, which holds the paste margin: the library gets the fixed pads
+            m = p.GetLocalSolderPasteMargin()
+            if m is not None and m < -pcbnew.FromMM(1):
+                p.SetLocalSolderPasteMargin(None)
+                paste_fixed += 1
         sig = footprint_signature(pcbnew, fp)
-        if name in signatures and not same_pads(signatures[name], sig):
-            k = 2
-            while f"{name}_{k}" in signatures and not same_pads(signatures[f"{name}_{k}"], sig):
-                k += 1
-            name = f"{name}_{k}"
-            note("a footprint name covers two land patterns; the second one got a _2 suffix")
+        name, k = base, 1
+        while True:
+            known = signatures[name] if name in signatures else lib_signature(name)
+            if known is None or (known is not False and same_pads(known, sig)):
+                break
+            note("a footprint name covers two land patterns; the second one got a _2 suffix" if name in signatures
+                 else "a footprint differs from the library's one of that name; it got a _N suffix")
+            k += 1
+            name = f"{base}_{k}"
         signatures.setdefault(name, sig)
         placements[name].append((exemplar_rank(fp), ref))
+        if name != link["footprint"]:
+            fp_names[ref] = name
         fp.SetFPID(pcbnew.LIB_ID(nick, name))
         fp.SetPath(pcbnew.KIID_PATH(link["path"]))
         fp.SetSheetfile(link["sheetfile"])
@@ -741,24 +1217,21 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
         ref_shown, value_shown = shown.get(ref, (True, False))
         fp.Reference().SetVisible(ref_shown)
         fp.Value().SetVisible(value_shown)
-        for p in fp.Pads():
-            m = p.GetLocalSolderPasteMargin()
-            if m is not None and m < -pcbnew.FromMM(1):
-                p.SetLocalSolderPasteMargin(None)
-                paste_fixed += 1
-    problems += [f"{r} in the schematic has no footprint on the PCB" for r in sorted(set(links) - fp_refs)]
-    exports = [(min(p)[1], name) for name, p in placements.items()]
+    schematic_only = sorted(set(links) - fp_refs, key=lambda r: [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", r))])
+    # a footprint the library has with the same pads stays as it is: another board may have put it there
+    exports = [(min(p)[1], name) for name, p in placements.items() if lib_sigs.get(name) is None]
 
-    old_to_new, new_to_old, pads = defaultdict(set), defaultdict(set), []
-    for fp in b.GetFootprints():
-        if fp.GetReference() not in links:
+    old_to_new, new_to_old, pads, unpinned = defaultdict(set), defaultdict(set), [], []
+    for fp in sorted(b.GetFootprints(), key=ref_order):
+        if fp.GetReference() not in fp_refs:
             continue
-        for p in fp.Pads():
-            new = sch_pins.get((fp.GetReference(), p.GetNumber()))
-            pads.append((p, new))
-            if new is None:
-                problems.append(f"{fp.GetReference()} pad {p.GetNumber()} has no schematic pin")
-            elif p.GetNetCode() > 0:
+        fp_pads, fp_problems, fp_unpinned = pad_findings(pcbnew, fp, sch_pins)
+        pads += fp_pads
+        problems += fp_problems
+        if fp_unpinned:
+            unpinned.append(f"{fp.GetReference()} {', '.join(fp_unpinned)}")
+        for p, new in fp_pads:
+            if new is not None and p.GetNetCode() > 0:
                 old_to_new[p.GetNetCode()].add(new)
                 new_to_old[new].add(p.GetNetname())
     problems += [f"PCB net {b.FindNet(c).GetNetname()} joins schematic nets {sorted(v)}" for c, v in old_to_new.items() if len(v) > 1]
@@ -792,6 +1265,7 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
     for z in b.Zones():
         z.SetMinThickness(pcbnew.FromMM(0.15))
         z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.2))
+    gaps = close_outline(pcbnew, b)
     tb = b.GetTitleBlock()
     tb.SetTitle(meta["title"])
     tb.SetRevision(meta["rev"])
@@ -803,8 +1277,10 @@ def update_board(pcb_json, pcb_path, links, sch_pins, nick, meta, force):
             b.SetLayerName(getattr(pcbnew, attr), name)
     pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, str(pcb_path), b)
     drop_fields(pcb_path)
+    keepouts = strip_user_keepouts(pcb_path)
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
-                problems=problems)
+                problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
+                fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements))
 
 
 # ---------------------------------------------------------------- project
@@ -825,6 +1301,7 @@ def write_project(kdir, project, root, subs, nick, lib_rel):
 
 
 def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=None, force=False, pin_fixes=()):
+    ensure_pcbnew()  # first: it runs the command again under KiCad's Python, which must not find a half-merged library
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     lib_dir = Path(lib_dir).resolve() if lib_dir else (out_dir.parent.parent / "lib")
@@ -833,32 +1310,37 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     sch = load_schematic(sch_json, pin_fixes)
     meta = {**dict(title=sch["title"] or name, rev="", date="", company=""), **(meta or {})}
     power = power_symbols()
-    sym_of, defs = register_symbols(sch, nick)
+    sym_lib, pretty = lib_dir / f"{nick}.kicad_sym", lib_dir / f"{nick}.pretty"
+    existing = read_symbol_lib(sym_lib)
+    sym_of, defs, sym_stats = register_symbols(sch, nick, existing)
     lib_dir.mkdir(parents=True, exist_ok=True)
-    (lib_dir / f"{nick}.kicad_sym").write_text(
-        '(kicad_symbol_lib (version 20241209) (generator "pcbkit_import_easyeda") (generator_version "10.0")\n'
-        + "\n".join(defs[k] for k in sorted(defs)) + "\n)\n")
+    write_symbol_lib(sym_lib, existing, defs)
+    shown = easyeda_text_visibility(pcb_json)
     sch_path = out_dir / f"{name}.kicad_sch"
-    root, subs, links = write_schematic(sch, out_dir, sym_of, defs, power, name, nick, meta)
+    root, subs, links = write_schematic(sch, out_dir, sym_of, defs, power, name, nick, meta, set(shown))
     write_project(out_dir, name, root, subs, nick, lib_rel)
     pcb_path = out_dir / f"{name}.kicad_pcb"
     r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
-    fixes = update_board(pcb_json, pcb_path, links, read_netlist(sch_path), nick, meta, force)
+    fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty)
+    if fixes["fp_names"]:
+        set_footprint_fields(out_dir, links, fixes["fp_names"], nick)
     subprocess.run([KICAD_PYTHON, "-c", "import sys; from pcbkit.import_easyeda import export_footprints; "
                     "export_footprints(sys.argv[1], __import__('json').loads(sys.argv[2]), sys.argv[3])",
-                    str(pcb_path), json.dumps(fixes["exports"]), str(lib_dir / f"{nick}.pretty")],
+                    str(pcb_path), json.dumps(fixes["exports"]), str(pretty)],
                    check=True, capture_output=True, env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
     count = lambda k: sum(len(s[k]) for s in sch["sheets"])
     sheets = f"{len(subs)} sheets, " if subs else ""
-    print(f"{name}: {sheets}{count('parts')} parts, {len(defs)} symbols, {len(fixes['exports'])} footprints, {count('wires')} wires, "
+    print(f"{name}: {sheets}{count('parts')} parts, {len(defs)} symbols, {fixes['footprints']} footprints, {count('wires')} wires, "
           f"{count('flags')} labels/flags; {fixes['renamed']} PCB nets renamed, {fixes['paste_fixed']} pads given paste, "
           f"{fixes['duplicate_vias']} duplicate vias removed, {len(fixes['board_only'])} board-only footprints "
           f"(loose pads, holes)")
+    for line in report_lines(fixes, sym_stats, links, sym_lib):
+        print("  " + line)
     for msg, c in NOTES.most_common():
         print(f"  note: {msg} (x{c})")
-    print("lib:", lib_dir / f"{nick}.kicad_sym", "and", lib_dir / f"{nick}.pretty")
+    print("lib:", sym_lib, "and", pretty)
     from .checks import drc, erc
     v = erc.run(str(sch_path))
     print("ERC:", dict(Counter((x["severity"], x["type"]) for x in v)) or "clean")
@@ -866,6 +1348,35 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     print("DRC:", dict(Counter((x["severity"], x["type"]) for x in d["violations"])) or "clean")
     print("parity:", dict(Counter(x["type"] for x in d.get("schematic_parity", []))) or "clean", "| unconnected:", len(d["unconnected_items"]))
     return fixes
+
+
+def report_lines(fixes, sym_stats, links, sym_lib):
+    """What the import corrected or left, beyond the counts, one line each."""
+    out = []
+    if sym_stats["kept"]:
+        out.append(f"library: {sym_stats['kept']} symbols already in {sym_lib.name} used as they are, "
+                   f"{sym_stats['new']} added; its other symbols kept")
+    if fixes["footprints"] > len(fixes["exports"]):
+        out.append(f"library: {fixes['footprints'] - len(fixes['exports'])} footprints already in "
+                   f"{sym_lib.stem}.pretty with the same pads used as they are, {len(fixes['exports'])} added")
+    if sym_stats["renamed"]:
+        out.append(f"library: {', '.join(sorted(sym_stats['renamed']))} in {sym_lib.name} have other pins; "
+                   "this board's symbols of that name got a _N suffix")
+    if fixes["keepouts"]:
+        out.append(f"removed {fixes['keepouts']} copper-pour keep-outs on User layers inside footprints "
+                   "(EasyEDA's pin outlines; DRC items_not_allowed)")
+    for gap, x, y in fixes["gaps"]:
+        out.append(f"outline: closed a {gap:.4f} mm gap between Edge.Cuts ends at ({x:.2f}, {y:.2f})")
+    if fixes["loose_nets"]:
+        out.append("loose pads with a net, made board-only (no symbol, not in the BOM or placement files): "
+                   + ", ".join(fixes["loose_nets"]))
+    if fixes["unpinned"]:
+        out.append("pads the symbol has no pin for, unconnected on the PCB too: " + "; ".join(fixes["unpinned"]))
+    if fixes["schematic_only"]:
+        parts = [f"{r} ({links[r]['package']})" if links[r]["package"] else r for r in fixes["schematic_only"]]
+        out.append("schematic-only parts, no footprint on the PCB (Footprint field left empty; DRC parity lists them "
+                   "as missing_footprint): " + ", ".join(parts))
+    return out
 
 
 def main(argv=None):

@@ -52,8 +52,9 @@ only describe the steps.
 `pcbkit new` scaffolds a hardware repo: README, DESIGN, LAYOUT and PRODUCTION documents with status lines, an empty
 KiCad project with library tables, `scripts/`, a bomi project and a first commit. `pcbkit import-easyeda` brings an
 EasyEDA Std schematic and PCB across with symbols and footprints into the project library and runs ERC, DRC and
-parity on the result. It converts every sheet, and a rerun writes the same library footprints, so an import can be
-repeated. The esp32-ha-protoboard was converted this way, and esp32-s3-ha-node was started with `new`.
+parity on the result. It converts every sheet and merges into the library, so a rerun leaves the library as it was
+and several boards can share one. The esp32-ha-protoboard was converted this way, and esp32-s3-ha-node was started
+with `new`.
 
 ### Fit a board to a box
 
@@ -308,7 +309,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
 | `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards (and a screw-head keep-out with `"head"`), keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
-| `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints into `lib/`, PCB nets renamed, importer fixes, ERC/DRC/parity run |
+| `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints merged into `lib/` (boards can share it), PCB nets renamed, importer fixes (paste margins, User.4 keep-outs, outline gaps, loose pads board-only), ERC/DRC/parity run |
 
 Library use from a project script:
 

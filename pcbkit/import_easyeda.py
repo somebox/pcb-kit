@@ -521,11 +521,40 @@ def same_symbol(old, new):
 
 
 def write_symbol_lib(path, existing, defs):
-    """The library: every symbol it had, plus this import's new ones, sorted by name."""
-    merged = {**existing, **defs}
-    Path(path).write_text(
-        '(kicad_symbol_lib (version 20241209) (generator "pcbkit_import_easyeda") (generator_version "10.0")\n'
-        + "\n".join(merged[k] for k in sorted(merged)) + "\n)\n")
+    """The library: every symbol it had, plus this import's new ones. A library that exists keeps its text as it is
+    (KiCad's header and tabs, if KiCad saved it last): one this import adds nothing to is not written, and a new
+    symbol goes in before the first symbol whose name sorts after it, so a sorted library stays sorted. A new
+    library has the symbols sorted by name."""
+    path = Path(path)
+    new = {k: v for k, v in defs.items() if k not in existing}
+    if not path.exists():
+        path.write_text('(kicad_symbol_lib (version 20241209) (generator "pcbkit_import_easyeda") (generator_version '
+                        '"10.0")\n' + "\n".join(new[k] for k in sorted(new)) + "\n)\n")
+        return
+    if not new:
+        return
+    text = path.read_text()
+    root = text.index("(")
+    spots = [(unq(re.match(r"\(symbol\s+" + _STR, text[s:e]).group(1)), s)
+             for s, e, head in child_blocks(text, root) if head == "symbol"]
+    close = block_end(text, root) - 1
+
+    def indent(i):
+        """The white space before text[i] on its line; None if there is something else."""
+        before = text[text.rfind("\n", 0, i) + 1:i]
+        return None if before.strip() else before
+    own = next((indent(s) for _, s in spots if indent(s) is not None), "\t")  # the library's symbol indent
+    out, last = [], 0
+    for name in sorted(new):
+        at = next((s for other, s in spots if other > name), close)
+        ind = indent(at)
+        if ind is None:  # not at the start of a line: give the symbol lines of its own
+            out.append(text[last:at] + "\n" + own + new[name] + "\n")
+            last = at
+        else:
+            out.append(text[last:at - len(ind)] + own + new[name] + "\n")
+            last = at - len(ind)
+    path.write_text("".join(out) + text[last:])
 
 
 def register_symbols(sch, nick, existing=None):

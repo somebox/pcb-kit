@@ -180,6 +180,20 @@ class SymbolLibrary(unittest.TestCase):
         self.assertEqual(self.lib.read_text(), text)
         self.assertEqual((stats["new"], stats["kept"]), (0, 1))
 
+    def test_a_library_saved_by_kicad_keeps_its_text(self):
+        original = ('(kicad_symbol_lib\n\t(version 20241209)\n\t(generator "kicad_symbol_editor")\n'
+                    '\t(generator_version "10.0")\n\t' + KICAD_SAVED_RES + "\n)\n")
+        self.lib.write_text(original)
+        self.load(schematic(part("R1", "RES", RES)))
+        self.assertEqual(self.lib.read_text(), original)  # nothing new: not written at all
+        self.load(schematic(part("R1", "RES", RES), part("D1", "LED", LED), part("U1", "TL", CHIP3)))
+        text, lib = self.lib.read_text(), ie.read_symbol_lib(self.lib)
+        self.assertEqual(list(lib), ["LED", "RES", "TL"])  # in name order, around the symbol that was there
+        self.assertEqual(ie.block_end(text, 0), len(text.rstrip()))
+        for name in ("LED", "TL"):
+            text = text.replace("\t" + lib[name] + "\n", "", 1)
+        self.assertEqual(text, original)  # and the rest is as it was
+
     def test_a_library_saved_by_kicad_is_read_and_kept(self):
         self.lib.write_text('(kicad_symbol_lib\n\t(version 20241209)\n\t(generator "kicad_symbol_editor")\n\t'
                             + KICAD_SAVED_RES + "\n)\n")

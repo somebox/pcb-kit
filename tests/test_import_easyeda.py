@@ -421,6 +421,17 @@ class Boards(unittest.TestCase):
             for flip in (False, True):
                 self.assertTrue(variant(angle=angle, flip=flip), (angle, flip))
         self.assertFalse(variant(lambda pcbnew, p: outline(p["4"], *square)))
+        # the same five points joined another way: a notch on the top, then a notch on the right
+        notch_top = [(-1, -1), (1, -1), (1, 1), (0.5, 0.5), (-1, 1)]
+        notch_right = [(-1, -1), (1, -1), (0.5, 0.5), (1, 1), (-1, 1)]
+        outline(poly, *notch_top)
+        sig = ie.footprint_signature(pcbnew, fp)
+        for flip in (False, True):
+            self.assertTrue(variant(angle=33, flip=flip), flip)
+            self.assertFalse(variant(lambda pcbnew, p: outline(p["4"], *notch_right), angle=33, flip=flip), flip)
+        self.assertTrue(variant(lambda pcbnew, p: outline(p["4"], *notch_top[2:], *notch_top[:2])))  # another start
+        outline(poly, *ell)
+        sig = ie.footprint_signature(pcbnew, fp)
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetOffset(pcbnew.F_Cu, mm(0.3, 0))))
         turn =lambda deg: (lambda pcbnew, p: p["3"].SetFPRelativeOrientation(pcbnew.EDA_ANGLE(deg, pcbnew.DEGREES_T)))
         self.assertTrue(variant(turn(180)))   # a rectangle turned half round is the same pad

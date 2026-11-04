@@ -779,9 +779,9 @@ def footprint_signature(pcbnew, fp):
     """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height,
     drill width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio,
     copper outline). Everything a fab makes from a pad is in it, so footprints that differ in a hole size, a pad
-    type, a pad's angle or a custom pad's copper compare different. The outline (its points, in the library's
-    frame) is there for the shapes size and angle don't describe: custom pads (EasyEDA's polygon pads, whose size
-    is only their anchor's), chamfered rectangles and trapezoids."""
+    type, a pad's angle or a custom pad's copper compare different. The outline (each outline's points in order,
+    with its holes', in the library's frame) is there for the shapes size and angle don't describe: custom pads
+    (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and trapezoids."""
     o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
     layer = pcbnew.B_Cu if flip else pcbnew.F_Cu
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
@@ -805,12 +805,14 @@ def footprint_signature(pcbnew, fp):
             angle = -angle
         layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()))
         copper = None
-        if shape in drawn:
+        if shape in drawn:  # each outline's points in order, with its holes'
+            def ring(r):
+                pts = (local(r.CPoint(i)) for i in range(r.PointCount()))
+                return tuple((round(u, 3) + 0.0, round(v, 3) + 0.0) for u, v in pts)
             poly = p.GetEffectivePolygon(layer)
-            rings = [poly.Outline(k) for k in range(poly.OutlineCount())]
-            rings += [poly.Hole(k, j) for k in range(poly.OutlineCount()) for j in range(poly.HoleCount(k))]
-            copper = tuple(sorted((round(u, 3) + 0.0, round(v, 3) + 0.0)
-                                  for r in rings for u, v in (local(r.CPoint(i)) for i in range(r.PointCount()))))
+            copper = tuple(sorted(
+                (ring(poly.Outline(k)), tuple(sorted(ring(poly.Hole(k, j)) for j in range(poly.HoleCount(k)))))
+                for k in range(poly.OutlineCount())))
         # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
         period = 180 if shape in turnable else 360
         angle %= period
@@ -831,15 +833,30 @@ def footprint_signature(pcbnew, fp):
 
 def same_pads(a, b, tol=0.02, angle_tol=0.1):
     """Whether two footprint signatures are the same pads: sizes, places and outline points within tol mm, angles
-    within angle_tol degrees, everything else equal."""
+    within angle_tol degrees, everything else equal. Outlines match from any starting point and either way round
+    (a flipped footprint's run the other way)."""
     def close(u, v):
         return all(abs(s - t) <= tol for s, t in zip(u, v))
 
-    def covered(u, v):
-        return all(any(close(s, t) for t in v) for s in u)
+    def same_ring(u, v):  # one closed outline: the same points in the same order, from any start, either way round
+        n = len(u)
+        if n != len(v):
+            return False
+        return n == 0 or any(all(close(u[i], w[(i + k) % n]) for i in range(n))
+                             for w in (v, v[::-1]) for k in range(n) if close(u[0], w[k]))
 
-    def same_copper(u, v):  # outline points, each within tol of one of the other's, in any order
-        return u == v or (u is not None and v is not None and len(u) == len(v) and covered(u, v) and covered(v, u))
+    def matched(us, vs, same):  # one to one, in any order
+        left = list(vs)
+        for u in us:
+            k = next((i for i, v in enumerate(left) if same(u, v)), None)
+            if k is None:
+                return False
+            del left[k]
+        return not left
+
+    def same_copper(u, v):  # outlines, each with its holes
+        return u == v or (u is not None and v is not None
+                          and matched(u, v, lambda s, t: same_ring(s[0], t[0]) and matched(s[1], t[1], same_ring)))
     return len(a) == len(b) and all(
         p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
         and same_copper(p[15], r[15]) for p, r in zip(a, b))

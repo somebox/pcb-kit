@@ -459,20 +459,25 @@ class Boards(unittest.TestCase):
         self.assertFalse(variant(paste(-0.1)))
         self.assertFalse(variant(lambda pcbnew, p: p["1"].SetLocalSolderMaskMargin(pcbnew.FromMM(0.1))))
 
-        def back(w, h, shape=pcbnew.PAD_SHAPE_RECTANGLE):  # other copper on the back: a front/inner/back padstack
+        def back(w, h, shape=pcbnew.PAD_SHAPE_RECTANGLE, inner=(1.0, 0.8)):  # a front/inner/back padstack
             def change(pcbnew, p):
                 p["1"].Padstack().SetMode(pcbnew.PADSTACK.MODE_FRONT_INNER_BACK)
                 p["1"].SetShape(pcbnew.B_Cu, shape)
                 p["1"].SetSize(pcbnew.B_Cu, mm(w, h))
+                p["1"].SetShape(pcbnew.In1_Cu, pcbnew.PAD_SHAPE_OVAL)
+                p["1"].SetSize(pcbnew.In1_Cu, mm(*inner))
             return change
         back(1.6, 1.0)(pcbnew, pads)
         sig = ie.footprint_signature(pcbnew, fp)
-        for angle in (0, 33, 90):
-            for flip in (False, True):
-                self.assertTrue(variant(angle=angle, flip=flip), (angle, flip))
+        for copper_layers in (2, 4):  # on four, a flip also cuts the through-hole pads' layers to the board's
+            self.board.SetCopperLayerCount(copper_layers)
+            for angle in (0, 33, 90):
+                for flip in (False, True):
+                    self.assertTrue(variant(angle=angle, flip=flip), (copper_layers, angle, flip))
         self.assertFalse(variant(back(2.0, 1.0)))
         self.assertFalse(variant(back(1.6, 1.0, pcbnew.PAD_SHAPE_OVAL)))
         self.assertFalse(variant(back(1.0, 1.6)))  # turned a quarter round
+        self.assertFalse(variant(back(1.6, 1.0, inner=(1.2, 0.8))))  # other copper on the inner layers
 
         def bottom(pcbnew, p):
             layers = pcbnew.LSET()

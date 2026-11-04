@@ -807,15 +807,17 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 def footprint_signature(pcbnew, fp):
     """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height, drill
     width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio, copper
-    outline, back copper, margins). Everything a fab makes from a pad is in it, so footprints that differ in a hole
-    size, a pad type, a pad's angle, a custom pad's copper or a paste or mask margin compare different. The outline
-    (each outline's points in order, with its holes', in the library's frame) is there for the shapes size and angle
-    don't describe: custom pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles and
-    trapezoids. Back copper is there for a pad whose padstack gives the far side other copper (KiCad's front/inner/back
-    and custom padstacks): its shape, width, height, x and y from the hole, corner ratio and outline. Inner layers are
-    not compared (a flipped front/inner/back pad reads 0 for them in KiCad 10). Margins are the pad's solder paste
-    margin, paste margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's
-    own)."""
+    outline, back copper, margins, inner copper). Everything a fab makes from a pad is in it, so footprints that differ
+    in a hole size, a pad type, a pad's angle, a custom pad's copper or a paste or mask margin compare different. The
+    outline (each outline's points in order, with its holes', in the library's frame) is there for the shapes size and
+    angle don't describe: custom pads (EasyEDA's polygon pads, whose size is only their anchor's), chamfered rectangles
+    and trapezoids. Back and inner copper are there for a pad whose padstack gives other layers other copper (KiCad's
+    front/inner/back and custom padstacks): each layer's shape, width, height, x and y from the hole, corner ratio and
+    outline; a custom padstack's inner layers by their place counted from the library footprint's top (a flip on a board
+    of more than two copper layers turns them over). KiCad keeps a custom padstack's inner layers differently on a board
+    and in a library, so such a pad can compare different from its own library footprint: the import then makes a
+    variant rather than reuse it. (EasyEDA's pads have no padstacks.) Margins are the pad's solder paste margin, paste
+    margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's own)."""
     o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
     near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
@@ -864,7 +866,10 @@ def footprint_signature(pcbnew, fp):
         angle = p.GetFPRelativeOrientation().AsDegrees()
         if flip:  # mirrored in y: the angles change sign and the layers swap sides
             angle = -angle
-        layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()))
+        # the outer copper and the other layers: inner copper only says "through all copper", and KiCad cuts a
+        # flipped pad's inner layers down to its board's (a library footprint has all 30)
+        layers = tuple(sorted(int(pcbnew.FlipLayer(l) if flip else l) for l in p.GetLayerSet().Seq()
+                              if not pcbnew.IsInnerCopperLayer(l)))
         stacked = p.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL
         # a rectangle, oval or circle at 180 degrees is the same pad, and at 90 the same as its sides swapped
         period = 180 if shape in turnable else 360
@@ -879,10 +884,24 @@ def footprint_signature(pcbnew, fp):
             angle = 0.0
         _, w, h, ox, oy, corner, outline = copper(p, near, swap, x, y)
         back = copper(p, far, swap, x, y) if stacked else None
+        inner = None
+        if stacked and p.Padstack().Mode() == pcbnew.PADSTACK.MODE_FRONT_INNER_BACK:
+            inner = ((0, copper(p, pcbnew.PADSTACK.INNER_LAYERS, swap, x, y)),)
+        elif stacked:  # a custom padstack: each inner layer it defines, counted from the library footprint's top
+            n = fp.GetBoard().GetCopperLayerCount() if fp.GetBoard() else 0
+            inner = []
+            for lay in p.Padstack().UniqueLayers():
+                if lay in (pcbnew.F_Cu, pcbnew.B_Cu):
+                    continue
+                i = (int(lay) - pcbnew.In1_Cu) // 2 + 1
+                if flip and 2 < n and i <= n - 2:  # a flip turns the inner layers over too (In1 to the last)
+                    i = n - 1 - i
+                inner.append((i, copper(p, lay, swap, x, y)))
+            inner = tuple(sorted(inner))
         holed = dw > 0 or dh > 0
         pads.append((p.GetNumber(), round(x, 3) + 0.0, round(y, 3) + 0.0, w, h, dw, dh, ox, oy, angle + 0.0, shape,
                      p.GetAttribute(), p.GetDrillShape() if holed else None, layers, corner, outline, back,
-                     margins(p)))
+                     margins(p), inner))
     return tuple(sorted(pads, key=lambda t: t[:10]))
 
 
@@ -917,10 +936,14 @@ def same_pads(a, b, tol=0.02, angle_tol=0.1):
     def same_layer(u, v):  # one layer's copper, as footprint_signature's copper() gives it
         return u == v or (u is not None and v is not None and u[0] == v[0] and u[5] == v[5]
                           and close(u[1:5], v[1:5]) and same_copper(u[6], v[6]))
+    def same_inner(u, v):  # (inner layer, its copper) pairs
+        return u == v or (u is not None and v is not None and [i for i, _ in u] == [i for i, _ in v]
+                          and all(same_layer(s, t) for (_, s), (_, t) in zip(u, v)))
+
     def same_pad(p, r):
         return (p[0] == r[0] and close(p[1:9], r[1:9]) and abs(p[9] - r[9]) <= angle_tol and p[10:15] == r[10:15]
                 and same_copper(p[15], r[15]) and same_layer(p[16], r[16]) and close(p[17][::2], r[17][::2])
-                and abs(p[17][1] - r[17][1]) <= 0.001)
+                and abs(p[17][1] - r[17][1]) <= 0.001 and same_inner(p[18], r[18]))
     return len(a) == len(b) and (all(same_pad(p, r) for p, r in zip(a, b)) or matched(a, b, same_pad))
 
 

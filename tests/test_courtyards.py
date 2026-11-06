@@ -279,6 +279,21 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.redraw(pcbnew, fp), "4.50 x 4.50 mm on B.CrtYd")
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_a_through_hole_parts_keep_out_on_the_other_side_stays(self):
+        pcbnew = self.pcbnew
+        fp = self.header()
+        self.rect(fp, pcbnew.F_CrtYd, -1.3, -4.3, 1.3, 4.3)  # wrong: turned against the pins
+        ring = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_CIRCLE)  # a standoff's keep-out on the solder side
+        ring.SetCenter(self.mm(0, 0))
+        ring.SetEnd(self.mm(6, 0))
+        ring.SetLayer(pcbnew.B_CrtYd)
+        ring.SetWidth(pcbnew.FromMM(0.05))
+        fp.Add(ring)
+        self.assertEqual(cy.redraw(pcbnew, fp), "8.70 x 2.70 mm on F.CrtYd, B.CrtYd kept")
+        back = [g for g in self.courtyard_shapes(fp) if g.GetLayer() == pcbnew.B_CrtYd]
+        self.assertEqual([(g.GetShape(), g.GetRadius()) for g in back], [(pcbnew.SHAPE_T_CIRCLE, pcbnew.FromMM(6))])
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])

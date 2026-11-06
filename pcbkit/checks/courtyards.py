@@ -22,7 +22,8 @@ fab drawing shows a part over the board edge, and card-edge connectors; none on 
 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body
 (fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), one on each side it has SMD pads
-on and on its own side for through-hole parts, and saves the board or the library footprints. Every outline is
+on and on its own side for through-hole parts (a through-hole part's sound courtyard on its other side, a
+standoff's or a screw head's keep-out, stays), and saves the board or the library footprints. Every outline is
 checked at points 0.05 mm apart, so an edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit check` lists
 the same findings; `pcbkit import-easyeda` redraws them on import.
 """
@@ -46,14 +47,19 @@ def _mm(nm):
     return nm / 1e6
 
 
-def local_copy(pcbnew, fp):
-    """A copy of the footprint at the origin, unrotated (still mirrored if it is on the back), its courtyard
-    polygons built."""
-    c = pcbnew.FOOTPRINT(fp)
-    c.SetOrientationDegrees(0)
-    c.SetPosition(pcbnew.VECTOR2I(0, 0))
-    c.BuildCourtyardCaches()
-    return c
+def _frame(pcbnew, fp):
+    """(to_local, to_board): board nm to the footprint's own frame (about its position, unrotated; still mirrored
+    if it is on the back) and back, by KiCad's RotatePoint, so the footprint needn't be copied and turned."""
+    pos, a = fp.GetPosition(), fp.GetOrientation().AsRadians()
+    cs, sn = math.cos(a), math.sin(a)
+
+    def to_local(q):
+        x, y = q.x - pos.x, q.y - pos.y
+        return x * cs - y * sn, x * sn + y * cs
+
+    def to_board(x, y):
+        return pcbnew.VECTOR2I(int(round(pos.x + x * cs + y * sn)), int(round(pos.y - x * sn + y * cs)))
+    return to_local, to_board
 
 
 def _along(pcbnew, a, b, step):
@@ -175,7 +181,8 @@ def findings(pcbnew, fp):
     """What is wrong with a footprint's courtyard: a list of short sentences, empty if nothing."""
     if fp.IsBoardOnly() or fp.IsNetTie():
         return []
-    c = local_copy(pcbnew, fp)
+    c = fp
+    c.BuildCourtyardCaches()
     step = pcbnew.FromMM(STEP)
     pads = pad_shapes(pcbnew, c, step)
     if not pads:
@@ -221,41 +228,52 @@ def findings(pcbnew, fp):
 def redraw(pcbnew, fp, margin=MARGIN):
     """Replace a footprint's courtyards with a rectangle per side it has pads on, round that side's pads, its
     through-hole pads and holes, and the body drawn on that side and on any side that gets no courtyard of its own
-    (a back-side test pad's outline drawn on the front), plus margin (mm). Returns a description of the new
-    courtyards."""
-    c = local_copy(pcbnew, fp)
+    (a back-side test pad's outline drawn on the front), plus margin (mm). A through-hole part's courtyard on a
+    side it has no rectangle for is kept when it is closed and holds that side's body: a deliberate keep-out (a
+    standoff, a screw head, the solder side). An SMD part's there is the misplaced one and goes. Returns a
+    description of the new courtyards."""
+    c = fp
+    c.BuildCourtyardCaches()
+    to_local, to_board = _frame(pcbnew, fp)
     step = pcbnew.FromMM(STEP)
     pads = pad_shapes(pcbnew, c, step)
-    _, body = body_points(pcbnew, c, step)
+    kind, body = body_points(pcbnew, c, step)
     own = "B" if fp.IsFlipped() else "F"
-    smd = {side for _, _, kind, side, _ in pads if kind == "smd"}
-    sides = sorted(smd | ({own} if any(kind == "tht" for _, _, kind, _, _ in pads) or not smd else set()), key="FB".index)
+    smd = {side for _, _, k, side, _ in pads if k == "smd"}
+    tht = any(k == "tht" for _, _, k, _, _ in pads)
+    sides = sorted(smd | ({own} if tht or not smd else set()), key="FB".index)
+    layer = {"F": pcbnew.F_CrtYd, "B": pcbnew.B_CrtYd}
+    tol = pcbnew.FromMM(FAB_TOL if kind == "fab" else SILK_TOL)
+    kept = [t for t in "FB" if tht and t not in sides and c.GetCourtyard(layer[t]).OutlineCount()
+            and _outside(c.GetCourtyard(layer[t]), body[t]) <= tol]
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
     rects = []
     for s in sides:
-        pts = [q for _, _, kind, side, ps in pads if kind == "tht" or side == s for q in ps]
-        pts += [q for t in "FB" if t == s or t not in sides for q in body[t]]
-        x0 = math.floor((min(q.x for q in pts) - m) / g) * g
-        x1 = math.ceil((max(q.x for q in pts) + m) / g) * g
-        y0 = math.floor((min(q.y for q in pts) - m) / g) * g
-        y1 = math.ceil((max(q.y for q in pts) + m) / g) * g
+        pts = [q for _, _, k, side, ps in pads if k == "tht" or side == s for q in ps]
+        pts += [q for t in "FB" if t == s or (t not in sides and t not in kept) for q in body[t]]
+        xs, ys = zip(*(to_local(q) for q in pts))
+        e = 2  # nm: board points are rounded after rotation, so back in the frame they sit a hair off the grid
+        x0 = math.floor((min(xs) - m + e) / g) * g
+        x1 = math.ceil((max(xs) + m - e) / g) * g
+        y0 = math.floor((min(ys) - m + e) / g) * g
+        y1 = math.ceil((max(ys) + m - e) / g) * g
         rects.append((s, x0, y0, x1, y1))
-    for item in [i for i in fp.GraphicalItems()
-                 if isinstance(i, pcbnew.PCB_SHAPE) and i.GetLayer() in (pcbnew.F_CrtYd, pcbnew.B_CrtYd)]:
+    for item in [i for i in fp.GraphicalItems() if isinstance(i, pcbnew.PCB_SHAPE)
+                 and i.GetLayer() in [layer[t] for t in "FB" if t not in kept]]:
         fp.Remove(item)
-    pos = fp.GetPosition()
+        item.thisown = False  # Remove() hands it to Python, which would free it under the board's caches
     for s, x0, y0, x1, y1 in rects:
         shape = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_POLY)
         corners = pcbnew.VECTOR_VECTOR2I()
         for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
-            corners.append(pcbnew.VECTOR2I(pos.x + x, pos.y + y))
+            corners.append(to_board(x, y))
         shape.SetPolyPoints(corners)
-        shape.SetLayer(pcbnew.F_CrtYd if s == "F" else pcbnew.B_CrtYd)
+        shape.SetLayer(layer[s])
         shape.SetWidth(pcbnew.FromMM(WIDTH))
         shape.SetFilled(False)
-        shape.Rotate(pos, fp.GetOrientation())
         fp.Add(shape)
-    return ", ".join(f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {s}.CrtYd" for s, x0, y0, x1, y1 in rects)
+    return ", ".join([f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {s}.CrtYd" for s, x0, y0, x1, y1 in rects]
+                     + [f"{t}.CrtYd kept" for t in kept])
 
 
 def board_findings(pcbnew, board):

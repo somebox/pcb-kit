@@ -16,8 +16,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
   points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
   rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
-  own frame round pads, holes and body plus `--margin` (0.25 mm), one on each side the footprint has pads on, and
-  saves the board or the `.pretty` library it was given. `pcbkit check` gains a "courtyards" section with the
+  own frame round pads, holes and body plus `--margin` (0.25 mm), one on each side the footprint has pads on (a
+  through-hole part's sound courtyard on its other side, a standoff's or a screw head's keep-out, stays), and saves
+  the board or the `.pretty` library it was given. `pcbkit check` gains a "courtyards" section with the
   same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
   test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
   module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and

@@ -78,4 +78,6 @@ rather than guessing an anchor.
 - Project-specific data (placement tables, net lists, power-stage geometry) belongs in the project, not in the kit.
   If you find yourself adding a board's names to the kit, stop and put them in the project.
 - KiCad Python gotchas: `BOARD.Remove()` on tracks corrupts the bindings mid-run (edit the file text by uuid);
+  `FOOTPRINT.Remove(item)` hands the item to Python, which frees it under the board's caches and pcbnew starts
+  returning untyped objects a few footprints later (set `item.thisown = False` after it);
   `pcbnew.SaveBoard` aborts headless (use `PCB_IO_MGR.Save`); a `.kicad_dru` syntax error disables all custom rules.

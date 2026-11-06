@@ -17,7 +17,7 @@ pad's on F.CrtYd. This reports, per footprint:
     across: pin-1 and polarity marks). KiCad's own libraries draw silk marks up to 0.8 mm outside the courtyard
     (SOT-23's pin-1 triangle, an electrolytic's +), so silk counts only without fab.
 A courtyard larger than the part is not reported: a mounting hole's covers the screw head, a module's its antenna
-keep-out. Of KiCad 10's own 15,464 footprints it reports 142 (2026-11), most of them connectors and switches whose
+keep-out. Of KiCad 10's own 15,464 footprints it reports 141 (2026-11), most of them connectors and switches whose
 fab drawing shows a part over the board edge, and card-edge connectors; none on boards drawn from them so far.
 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body

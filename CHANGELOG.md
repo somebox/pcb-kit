@@ -16,9 +16,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
   points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
   rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
-  own frame round pads, holes and body plus `--margin` (0.25 mm), one on each side the footprint has pads on (a
-  through-hole part's sound courtyard on its other side, a standoff's or a screw head's keep-out, stays), and saves
-  the board or the `.pretty` library it was given. `pcbkit check` gains a "courtyards" section with the
+  own frame round pads, holes and body plus `--margin` (0.25 mm, as KiCad's own libraries round 0603s, SOTs and
+  QFNs), one on each side the footprint has pads on, and saves the board or the `.pretty` library it was given. A
+  sound courtyard on the other side stays when it is a keep-out beside the part's own (a standoff, a screw head);
+  a part's only courtyard, on the other side, goes (EasyEDA draws a back-mounted header's on the top).
+  `--easyeda PCB.json` first draws each part's body on F.Fab or B.Fab from the EasyEDA export it was imported from
+  (layer 99, the component shape, which KiCad's importer drops), placed by fitting its pads onto the footprint's, so
+  a part moved or turned since still gets its own; the check and the redraw then go by the body, not EasyEDA's silk,
+  which stands well off it. On espcandle-pcb's base that takes an 0603's redrawn courtyard from 3.29 x 1.94 mm to
+  2.70 x 1.42 mm and an 0402's from 2.40 x 1.50 to 1.94 x 1.06. `pcbkit check` gains a "courtyards" section with the
   same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
   test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
   module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and
@@ -192,7 +198,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   does, before the footprints go into the library, and lists them. A footprint the library already has with the
   same pads, put there by an earlier import, gets its courtyard redrawn in the library too (the rest of it stays as
   it is), so updating the board from the library doesn't bring the old one back. `--keep-courtyards` only lists
-  them.
+  them. Each part's body is drawn on F.Fab/B.Fab from EasyEDA's component shapes first, on the board and in a
+  library footprint an earlier import left without one, so the courtyards go round the body rather than the silk.
 
 ## [0.3.0] - 2026-10-18
 

@@ -1,6 +1,6 @@
 """Footprint courtyards that don't describe the part.
 
-  pcbkit courtyards BOARD.kicad_pcb [--fix] [--margin 0.25] [--ref REF ...]
+  pcbkit courtyards BOARD.kicad_pcb [--fix] [--margin 0.25] [--ref REF ...] [--easyeda PCB.json]
   pcbkit courtyards LIB.pretty [--fix] [--margin 0.25]
 
 KiCad's placement checks (courtyards_overlap, pth_inside_courtyard) trust each footprint's courtyard. A courtyard
@@ -23,11 +23,18 @@ fab drawing shows a part over the board edge, and card-edge connectors; none on 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body
 (fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), one on each side it has SMD pads
 on and on its own side for through-hole parts. A sound courtyard on a side it draws nothing for stays when it
-is a keep-out beside the part's own (a standoff, a screw head; any through-hole part's, or an SMD part's that also
-had one on its pads' side); an SMD part's only courtyard, on the side without pads, goes. It saves the board or
-the library footprints. Every outline is
-checked at points 0.05 mm apart, so an edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit check` lists
-the same findings; `pcbkit import-easyeda` redraws them on import.
+is a keep-out beside the part's own (a standoff, a screw head, the solder side: the part also had one on a side it
+draws for); a part's only courtyard, on the other side, goes (a back-side test pad's, a back-mounted header's on
+the top). It saves the board or the library footprints. Every outline is checked at points 0.05 mm apart, so an
+edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit check` lists the same findings;
+`pcbkit import-easyeda` redraws them on import.
+
+--easyeda PCB.json (a board imported from that EasyEDA Std export) first draws each part's body on its F.Fab or
+B.Fab from EasyEDA's component-shape layer, which KiCad's importer drops: the footprints come with silk only, drawn
+well off the body (an 0603's 0.3 mm beyond its pads), so a courtyard round the silk is larger than the part. Each
+outline is placed by fitting its pads onto the footprint's, so a part moved or turned since the import still gets
+its own; a part that already has a fab drawing, or whose pads no longer match, is left as it is. The check and the
+redraw then go by the body. With --fix the outlines are saved too; `pcbkit import-easyeda` draws them on import.
 """
 import argparse
 import math
@@ -238,10 +245,11 @@ def redraw(pcbnew, fp, margin=MARGIN):
     through-hole pads and holes, and the body drawn on that side and on any side that gets no courtyard of its own
     (a back-side test pad's outline drawn on the front), plus margin (mm). A side whose courtyard already holds all
     that keeps it, larger clearance and all: only the faulty side is redrawn. A courtyard on a side it draws no
-    rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own: the
-    part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard, closed or not,
-    on a side with pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
-    description of the new courtyards, naming any closed one it kept or removed."""
+    rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own (a
+    standoff, a screw head, the solder side): the part also had a courtyard, closed or not, on a side it draws one
+    for. A part's only courtyard, on the other side, is the misplaced one and goes: a back-side test pad's, a
+    back-mounted header's on the top. Returns a description of the new courtyards, naming any closed one it kept
+    or removed."""
     if not margin >= 0:  # a negative one turns a small part's rectangle inside out
         raise ValueError(f"courtyard margin must be 0 mm or more, got {margin}")
     c = fp
@@ -259,8 +267,10 @@ def redraw(pcbnew, fp, margin=MARGIN):
     closed = {t for t in "FB" if c.GetCourtyard(layer[t]).OutlineCount()}
     drawn = {t for t in "FB" if any(isinstance(i, pcbnew.PCB_SHAPE) and i.GetLayer() == layer[t]
                                     for i in c.GraphicalItems())}
-    # a keep-out beside the part's own courtyard (drawn on a side with pads, even if open), not instead of it
-    beside = tht or bool(drawn & set(sides))
+    # a keep-out beside the part's own courtyard (drawn on a side it needs one, even if open), not instead of it:
+    # a part whose only courtyard is on the far side, through-hole or not, had it misplaced (EasyEDA draws a
+    # back-mounted header's on the top)
+    beside = bool(drawn & set(sides))
     kept = [t for t in "FB" if beside and t not in sides and t in closed
             and _outside(c.GetCourtyard(layer[t]), body[t]) <= tol]
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
@@ -339,16 +349,29 @@ def main(argv=None):
     ap.add_argument("--margin", type=_margin, default=MARGIN, help="mm round pads and body when redrawing (0.25)")
     ap.add_argument("--ref", action="append", default=[], metavar="REF",
                     help="with --fix on a board: only these footprints (repeatable)")
+    ap.add_argument("--easyeda", metavar="PCB.json",
+                    help="the EasyEDA Std PCB export the board was imported from: draw each part's body on F.Fab "
+                         "or B.Fab from it first (saved with --fix)")
     a = ap.parse_args(argv)
     ensure_pcbnew()
     import pcbnew
     path = Path(a.path)
+    if a.easyeda and path.suffix == ".pretty":
+        ap.error("--easyeda takes a board, whose parts it finds by reference")
+    bodies = []
     if path.suffix == ".pretty":
         names = sorted(pcbnew.FootprintEnumerate(str(path)))
         fps = [(n, pcbnew.FootprintLoad(str(path), n)) for n in names]
         rows = [(n, n, findings(pcbnew, fp), fp) for n, fp in fps]
     else:
         board = pcbnew.LoadBoard(str(path))
+        if a.easyeda:
+            from ..import_easyeda import add_body, easyeda_bodies
+            shapes = easyeda_bodies(a.easyeda)
+            bodies = sorted((fp.GetReference() for fp in board.GetFootprints() if fp.GetReference() in shapes
+                             and add_body(pcbnew, fp, *shapes[fp.GetReference()])), key=_natural)
+            print(f"bodies from {Path(a.easyeda).name} drawn on fab: {len(bodies)}"
+                  + (f" ({', '.join(bodies)})" if bodies else ""))
         rows = [(fp.GetReference(), str(fp.GetFPID().GetLibItemName()), findings(pcbnew, fp), fp)
                 for fp in board.GetFootprints()]
     rows = sorted((r for r in rows if r[2]), key=lambda r: _natural(r[0]))
@@ -360,7 +383,7 @@ def main(argv=None):
             line += f" -> redrawn, {redraw(pcbnew, fp, a.margin)}"
             fixed.append(fp)
         print(line)
-    if not fixed:
+    if not fixed and not (a.fix and bodies):
         return
     if path.suffix == ".pretty":  # all redrawn first: after a footprint save the bindings return untyped objects
         io = pcbnew.PCB_IO_MGR.FindPlugin(pcbnew.PCB_IO_MGR.KICAD_SEXP)
@@ -368,7 +391,7 @@ def main(argv=None):
             io.FootprintSave(str(path), fp)
     else:
         save_board(board, path)
-    print(f"redrew {len(fixed)} courtyard(s) in {path}")
+    print(f"redrew {len(fixed)} courtyard(s)" + (f", drew {len(bodies)} bodies" if bodies else "") + f" in {path}")
 
 
 if __name__ == "__main__":

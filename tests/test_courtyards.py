@@ -6,6 +6,7 @@ Each case draws a footprint in pcbnew the way KiCad's EasyEDA importer left one 
 a header's courtyard turned against its pins, a connector's drawn inside its silk body, a back-side test pad's on
 F.CrtYd; and the way KiCad's own libraries draw them, which must pass.
 """
+import json
 import math
 import os
 import sys
@@ -25,8 +26,8 @@ if __name__ == "__main__" and not kicad.have_pcbnew() and not os.environ.get("PC
 from pcbkit.checks import courtyards as cy  # noqa: E402
 
 
-@unittest.skipUnless(kicad.have_pcbnew(), "needs KiCad's Python")
-class Courtyards(unittest.TestCase):
+class Board(unittest.TestCase):
+    """Footprints drawn in pcbnew, on a board of their own."""
     def setUp(self):
         import pcbnew
         self.pcbnew = pcbnew
@@ -83,6 +84,9 @@ class Courtyards(unittest.TestCase):
         return [g for g in fp.GraphicalItems()
                 if g.GetLayer() in (self.pcbnew.F_CrtYd, self.pcbnew.B_CrtYd)]
 
+
+@unittest.skipUnless(kicad.have_pcbnew(), "needs KiCad's Python")
+class Courtyards(Board):
     def test_a_library_style_footprint_passes(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-0.95, 1.1), (0, 1.1), (0.95, 1.1), (-0.95, -1.1), (0.95, -1.1)], size=(0.6, 1.1))
@@ -399,6 +403,14 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(len(front), 4)  # the four lines as drawn
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_a_through_hole_parts_only_courtyard_on_the_other_side_goes(self):
+        pcbnew = self.pcbnew
+        fp = self.header()  # mounted on its own side; EasyEDA drew a back-mounted header's courtyard on the top
+        self.rect(fp, pcbnew.B_CrtYd, -1.3, -4.3, 1.3, 4.3)  # its only one, on the far side, turned against the pins
+        self.assertEqual(cy.redraw(pcbnew, fp), "8.70 x 2.70 mm on F.CrtYd, B.CrtYd removed")
+        self.assertEqual([g.GetLayer() for g in self.courtyard_shapes(fp)], [pcbnew.F_CrtYd])
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])
@@ -417,6 +429,102 @@ class Courtyards(unittest.TestCase):
         layers = [g.GetLayer() for g in self.courtyard_shapes(fp)]
         self.assertEqual((layers.count(pcbnew.F_CrtYd), layers.count(pcbnew.B_CrtYd)), (4, 1))
         self.assertEqual(cy.findings(pcbnew, fp), [])
+
+
+@unittest.skipUnless(kicad.have_pcbnew(), "needs KiCad's Python")
+class EasyedaBodies(Board):
+    """The body outlines KiCad's EasyEDA importer drops (layer 99), drawn on fab by fitting the part's pads."""
+    PADS = [(-0.8, 0), (0.8, 0), (0, 1.2)]  # not in a line: a mirror shows
+    BODY = [(-1.2, -0.6), (1.2, -0.6), (1.2, 1.6), (-1.2, 1.6)]
+
+    def fab_points(self, fp):
+        pcbnew = self.pcbnew
+        (g,) = [g for g in fp.GraphicalItems() if g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab)]
+        o = g.GetPolyShape().Outline(0)
+        return g.GetLayer(), [(pcbnew.ToMM(o.CPoint(k).x), pcbnew.ToMM(o.CPoint(k).y)) for k in range(o.PointCount())]
+
+    def elsewhere(self, pts, turn=-20, at=(100.0, 200.0)):
+        """The points as EasyEDA's board has them: turned and moved (the part was placed differently there)."""
+        c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+        return [(at[0] + x * c - y * s, at[1] + x * s + y * c) for x, y in pts]
+
+    def assertNear(self, got, want):
+        self.assertEqual(len(got), len(want))
+        for (a, b), (c, d) in zip(got, want):
+            self.assertAlmostEqual(a, c, places=3)
+            self.assertAlmostEqual(b, d, places=3)
+
+    def test_the_component_shape_layer_is_read_by_reference(self):
+        from pcbkit.import_easyeda import easyeda_bodies
+        lib = ("LIB~100~200~package`C0603`#@$TEXT~P~95~190~0.6~0~0~3~~4.5~C7~M 1 1#@$"
+               "PAD~RECT~90~200~3~3~1~GND~1~0~~0~gge1#@$PAD~RECT~110~200~3~3~1~VCC~2~0~~0~gge2#@$"
+               "PAD~RECT~100~210~1~1~1~~~0~~0~gge3#@$"  # a peg: no number
+               "SOLIDREGION~99~~M 85 196 L 115 196 L 115 204 L 85 204 Z ~solid~gge4~~~~0")
+        bare = "LIB~0~0~package`TP`#@$TEXT~P~0~0~0.6~0~0~3~~4.5~TP1~M 1 1#@$PAD~ELLIPSE~0~0~4~4~2~~1~0~~0~gge5"
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"shape": [lib, bare, "TRACK~1~1~~0 0 1 1~gge6~0"]}, f)
+        try:
+            got = easyeda_bodies(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(list(got), ["C7"])  # TP1 draws no body
+        pads, outlines = got["C7"]
+        self.assertEqual(sorted(pads), ["1", "2"])
+        self.assertNear([pads["1"], pads["2"]], [(22.86, 50.8), (27.94, 50.8)])
+        self.assertNear(outlines[0], [(21.59, 49.784), (29.21, 49.784), (29.21, 51.816), (21.59, 51.816)])
+
+    def test_a_body_follows_a_part_moved_and_turned_since_the_import(self):
+        from pcbkit.import_easyeda import add_body
+        pcbnew = self.pcbnew
+        fp = self.footprint(self.PADS, size=(0.6, 0.6))
+        fp.SetPosition(self.mm(20, 10))
+        fp.SetOrientationDegrees(37)
+        src = self.elsewhere(self.PADS)
+        self.assertTrue(add_body(pcbnew, fp, {str(i): p for i, p in enumerate(src, 1)}, [self.elsewhere(self.BODY)]))
+        to_board = cy._frame(pcbnew, fp)[1]
+        want = [to_board(pcbnew.FromMM(x), pcbnew.FromMM(y)) for x, y in self.BODY]
+        layer, got = self.fab_points(fp)
+        self.assertEqual(layer, pcbnew.F_Fab)
+        self.assertNear(got, [(pcbnew.ToMM(p.x), pcbnew.ToMM(p.y)) for p in want])
+
+    def test_a_part_on_the_back_gets_its_body_mirrored_on_b_fab(self):
+        from pcbkit.import_easyeda import add_body
+        pcbnew = self.pcbnew
+        fp = self.footprint(self.PADS, size=(0.6, 0.6))
+        fp.SetPosition(self.mm(20, 10))
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+        src = self.elsewhere(self.PADS)  # as the library draws it, from the top
+        self.assertTrue(add_body(pcbnew, fp, {str(i): p for i, p in enumerate(src, 1)}, [self.elsewhere(self.BODY)]))
+        layer, got = self.fab_points(fp)
+        self.assertEqual(layer, pcbnew.B_Fab)
+        self.assertNear(got, [(20 - x, 10 + y) for x, y in self.BODY])
+
+    def test_no_body_where_the_pads_differ_or_a_fab_drawing_is_there(self):
+        from pcbkit.import_easyeda import add_body
+        pcbnew = self.pcbnew
+        fp = self.footprint(self.PADS, size=(0.6, 0.6))
+        wider = {str(i): (x * 1.1, y) for i, (x, y) in enumerate(self.PADS, 1)}  # another land pattern
+        self.assertFalse(add_body(pcbnew, fp, wider, [self.BODY]))
+        self.assertFalse(add_body(pcbnew, fp, {"1": (0, 0)}, [self.BODY]))  # one pad fixes nothing
+        self.rect(fp, pcbnew.F_Fab, -1, -1, 1, 1)
+        self.assertFalse(add_body(pcbnew, fp, {str(i): p for i, p in enumerate(self.PADS, 1)}, [self.BODY]))
+
+    def test_the_redraw_goes_by_the_body_not_the_silk(self):
+        from pcbkit.import_easyeda import add_body
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-0.7, 0), (0.7, 0)], size=(0.8, 0.9))  # an EasyEDA 0603
+        self.rect(fp, pcbnew.F_SilkS, -1.4, -0.72, 1.4, 0.72)  # its silk, well off the body
+        self.rect(fp, pcbnew.F_CrtYd, -0.3, -1.2, 0.3, 1.2)  # turned against the pads
+        self.assertEqual(cy.redraw(pcbnew, self.clone(fp)), "3.30 x 1.94 mm on F.CrtYd")  # round the silk
+        body = [(-0.8, -0.4), (0.8, -0.4), (0.8, 0.4), (-0.8, 0.4)]
+        self.assertTrue(add_body(pcbnew, fp, {"1": (-0.7, 0), "2": (0.7, 0)}, [body]))
+        self.assertEqual(cy.redraw(pcbnew, fp), "2.70 x 1.40 mm on F.CrtYd")  # pads and body + 0.25 mm
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
+    def clone(self, fp):
+        c = self.pcbnew.FOOTPRINT(fp)
+        self.board.Add(c)
+        return c
 
 
 if __name__ == "__main__":

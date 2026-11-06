@@ -22,10 +22,12 @@ symbols unlinked from the footprints. This converts the schematic itself, keepin
   * what KiCad's PCB importer gets wrong is corrected: -100 mm paste margins, every designator shown, duplicate
     vias, EasyEDA layer names, zone fill minimums, the copper-pour keep-outs on User.4 it makes of EasyEDA's pin
     outlines, Edge.Cuts ends a few microns apart; the zones are refilled and the board saved filled;
+  * each part's body is drawn on F.Fab/B.Fab from EasyEDA's component-shape layer (99), which KiCad's importer
+    drops, leaving the body only in silk drawn well off it;
   * courtyards that miss a part's pads or body, or sit on the other side from its pads (KiCad's importer often
     leaves them turned against the pads, a sliver, or round the pins and not the body), are redrawn round the pads
-    and the silk body + 0.25 mm, on the board and in the library (--keep-courtyards: listed only; `pcbkit
-    courtyards` checks and redraws them later).
+    and the body (its fab outline, or its silk without one) + 0.25 mm, on the board and in the library
+    (--keep-courtyards: listed only; `pcbkit courtyards` checks and redraws them later).
 Loose pads and holes on the PCB (no symbol) become board-only footprints, out of the BOM and placement files; one
 with a net (a GND test pad) is listed. A schematic part with no footprint on the PCB is listed as schematic-only and
 gets an empty Footprint field. Sheet files are named after the EasyEDA sheets, without EasyEDA's " copy"
@@ -1004,19 +1006,35 @@ def drop_fields(path, pattern=r"JLC_3D[^\"]*"):
     Path(path).write_text("".join(out) + text[i:])
 
 
-def export_footprints(pcb_path, items, libdir, repairs=()):
-    """Copy footprints from a saved board into the library, unrotated and on top, after redrawing the courtyards
-    of the library footprints named in repairs (the rest of each stays as it is). Runs in its own process: after a
-    footprint save, the pcbnew bindings start returning untyped objects, so the repairs are drawn before any save."""
+def export_footprints(pcb_path, items, libdir, kept=(), fix=True):
+    """Copy footprints from a saved board into the library, unrotated and on top. The library footprints the board
+    uses as they are, kept [(reference, name)], first get the body their board copy has on fab if they have none,
+    then, with fix, their courtyards redrawn if the check finds them wrong (the rest of each stays as it is).
+    Prints what it did to the library as a JSON line: {"bodies": [...], "redrawn": [...], "bad": [...]}. Runs in
+    its own process: after a footprint save the pcbnew bindings start returning untyped objects, so everything is
+    drawn before any save."""
     import pcbnew
     from .checks import courtyards as cy
     io = pcbnew.PCB_IO_MGR.FindPlugin(pcbnew.PCB_IO_MGR.KICAD_SEXP)
-    repaired = []
-    for name in repairs:
-        fp = pcbnew.FootprintLoad(str(libdir), name)
-        cy.redraw(pcbnew, fp)
-        repaired.append(fp)
-    for fp in repaired:
+    done, changed = {"bodies": [], "redrawn": [], "bad": []}, []
+    if kept:
+        b = pcbnew.LoadBoard(pcb_path)
+        fps = {f.GetReference(): f for f in b.GetFootprints()}
+        for ref, name in kept:
+            fp, on_board = pcbnew.FootprintLoad(str(libdir), name), fps[ref]
+            outlines = fab_outlines(pcbnew, on_board)
+            drew = bool(outlines) and add_body(pcbnew, fp, footprint_pads(pcbnew, on_board), outlines,
+                                               mirrored=on_board.IsFlipped())
+            if drew:
+                done["bodies"].append(name)
+            if cy.findings(pcbnew, fp):
+                done["bad"].append(name)
+                if fix:
+                    cy.redraw(pcbnew, fp)
+                    done["redrawn"].append(name)
+            if drew or name in done["redrawn"]:
+                changed.append(fp)
+    for fp in changed:
         io.FootprintSave(str(libdir), fp)
     b = pcbnew.LoadBoard(pcb_path)
     fps = {f.GetReference(): f for f in b.GetFootprints()}
@@ -1046,6 +1064,7 @@ def export_footprints(pcb_path, items, libdir, repairs=()):
         io.FootprintSave(libdir, c)
         drop_fields(Path(libdir) / f"{name}.kicad_mod", r"JLC_3D[^\"]*|LCSC|MPN|Manufacturer")
         strip_user_keepouts(Path(libdir) / f"{name}.kicad_mod")
+    print(json.dumps(done), flush=True)
     os._exit(0)
 
 
@@ -1070,6 +1089,114 @@ def easyeda_text_visibility(pcb_json):
             texts = {k[1]: k for k in (g.split("~") for g in x.split("#@$")) if k[0] == "TEXT" and k[1] in ("P", "N")}
             if "P" in texts:
                 out[texts["P"][10]] = tuple(texts[t][12] != "none" if t in texts else False for t in ("P", "N"))
+    return out
+
+
+def _region_outlines(path):
+    """An EasyEDA region's path ("M x y L x y ... Z", 10 mil units) as closed outlines in mm; [] for a path with
+    curves, which the component-shape layer doesn't use."""
+    if re.search(r"[A-DF-KN-Ya-df-z]", path):
+        return []
+    out = []
+    for cmd, args in re.findall(r"([MLZ])([^MLZ]*)", path):
+        v = [float(t) * U for t in re.findall(r"-?\d+(?:\.\d+)?(?:[eE]-?\d+)?", args)]
+        if cmd == "M":
+            out.append([])
+        if cmd in "ML" and out:
+            out[-1] += list(zip(v[0::2], v[1::2]))
+    return [o for o in out if len(o) >= 3]
+
+
+def easyeda_bodies(pcb_json):
+    """{reference: (pads, outlines)} for the parts of an EasyEDA Std PCB export that draw their body on layer 99,
+    EasyEDA's component shape: pads {number: (x, y)} (numbers that occur once), outlines [[(x, y), ...]], in mm in
+    EasyEDA's board frame. KiCad's importer drops that layer, so its footprints show the body only in silk, which
+    EasyEDA draws well off it."""
+    out = {}
+    with open(pcb_json) as f:
+        shapes = json.load(f)["shape"]
+    for x in shapes:
+        if not x.startswith("LIB~"):
+            continue
+        ref, pads, outlines = None, defaultdict(list), []
+        for k in (g.split("~") for g in x.split("#@$")[1:]):
+            if k[0] == "TEXT" and len(k) > 10 and k[1] == "P":
+                ref = k[10]
+            elif k[0] == "PAD" and len(k) > 8 and k[8]:
+                pads[k[8]].append((float(k[2]) * U, float(k[3]) * U))
+            elif k[0] == "SOLIDREGION" and len(k) > 3 and k[1] == "99":
+                outlines += _region_outlines(k[3])
+        if ref and outlines:
+            out[ref] = ({num: at[0] for num, at in pads.items() if len(at) == 1}, outlines)
+    return out
+
+
+def footprint_pads(pcbnew, fp):
+    """{number: (x, y)} in mm for the pads whose number occurs once."""
+    at = defaultdict(list)
+    for p in fp.Pads():
+        if p.GetNumber():
+            at[p.GetNumber()].append((pcbnew.ToMM(p.GetPosition().x), pcbnew.ToMM(p.GetPosition().y)))
+    return {num: a[0] for num, a in at.items() if len(a) == 1}
+
+
+def fit_pads(src, dst, mirrored=False, tol=0.02):
+    """The rigid map (turned, shifted, mirrored if it must be) that takes pad centres src {number: (x, y)} onto dst,
+    as a function of a point; None unless two pads or more, not all in one place, land within tol mm. Unmirrored is
+    tried first, or mirrored first when mirrored is set: two pads alone fit either way."""
+    keys = sorted(set(src) & set(dst))
+    if len(keys) < 2 or max(math.dist(src[keys[0]], src[k]) for k in keys) < 0.1:
+        return None
+    d = [dst[k] for k in keys]
+    dx, dy = sum(p[0] for p in d) / len(d), sum(p[1] for p in d) / len(d)
+    for m in ((-1, 1) if mirrored else (1, -1)):
+        s = [(m * src[k][0], src[k][1]) for k in keys]
+        sx, sy = sum(p[0] for p in s) / len(s), sum(p[1] for p in s) / len(s)
+        a = math.atan2(sum((p[0] - sx) * (q[1] - dy) - (p[1] - sy) * (q[0] - dx) for p, q in zip(s, d)),
+                       sum((p[0] - sx) * (q[0] - dx) + (p[1] - sy) * (q[1] - dy) for p, q in zip(s, d)))
+        c, n = math.cos(a), math.sin(a)
+
+        def f(p, m=m, sx=sx, sy=sy, c=c, n=n):
+            x, y = m * p[0] - sx, p[1] - sy
+            return dx + x * c - y * n, dy + x * n + y * c
+        if max(math.dist(f(src[k]), dst[k]) for k in keys) <= tol:
+            return f
+    return None
+
+
+def add_body(pcbnew, fp, pads, outlines, mirrored=False):
+    """Draw a body's outlines on the footprint's fab layer (B.Fab if it is on the back), placed by fitting pads onto
+    the footprint's own: pads {number: (x, y)} and outlines [[(x, y), ...]] in mm, in any one frame. Nothing is
+    drawn, and False returned, if the footprint already has a fab drawing or the pads don't fit."""
+    if any(isinstance(g, pcbnew.PCB_SHAPE) and g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab)
+           for g in fp.GraphicalItems()):
+        return False
+    f = fit_pads(pads, footprint_pads(pcbnew, fp), mirrored)
+    if not f:
+        return False
+    for o in outlines:
+        s = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_POLY)
+        corners = pcbnew.VECTOR_VECTOR2I()
+        for x, y in map(f, o):
+            corners.append(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+        s.SetPolyPoints(corners)
+        s.SetLayer(pcbnew.B_Fab if fp.IsFlipped() else pcbnew.F_Fab)
+        s.SetWidth(pcbnew.FromMM(0.1))  # KiCad's libraries' fab line
+        s.SetFilled(False)
+        fp.Add(s)
+    return True
+
+
+def fab_outlines(pcbnew, fp):
+    """A footprint's fab polygons as [[(x, y), ...]] in mm: what add_body drew, to copy onto another footprint."""
+    out = []
+    for g in fp.GraphicalItems():
+        if isinstance(g, pcbnew.PCB_SHAPE) and g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab) \
+                and g.GetShape() == pcbnew.SHAPE_T_POLY:
+            ps = g.GetPolyShape()
+            for i in range(ps.OutlineCount()):
+                o = ps.Outline(i)
+                out.append([(pcbnew.ToMM(o.CPoint(k).x), pcbnew.ToMM(o.CPoint(k).y)) for k in range(o.PointCount())])
     return out
 
 
@@ -1163,16 +1290,17 @@ def set_footprint_fields(out_dir, links, names, nick):
         path.write_text(text)
 
 
-def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, keep_courtyards=False):
+def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, keep_courtyards=False, bodies=None):
     """Link the imported board to the schematic and correct what the importer leaves. shown: {ref: (reference
-    shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to.
-    Courtyards that miss the pads or the body are redrawn (listed only, with keep_courtyards)."""
+    shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to;
+    bodies: easyeda_bodies() of the PCB, drawn on each part's fab. Courtyards that miss the pads or the body are
+    then redrawn (listed only, with keep_courtyards)."""
     ensure_pcbnew()
     import pcbnew
     from .checks import courtyards as cy
     b = pcbnew.LoadBoard(str(pcb_path))
     problems, board_only, loose_nets, fp_refs, paste_fixed = [], [], [], set(), 0
-    signatures, placements, fp_names, lib_sigs, lib_bad = {}, defaultdict(list), {}, {}, set()
+    signatures, placements, fp_names, lib_sigs = {}, defaultdict(list), {}, {}
 
     def lib_signature(name):
         """The pads of the library's footprint of that name: None if there is none, False if it won't load."""
@@ -1184,8 +1312,6 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
                 except Exception:  # an IO_ERROR from a file this KiCad can't read
                     lib_fp = None
                 lib_sigs[name] = footprint_signature(pcbnew, lib_fp) if lib_fp else False
-                if lib_fp and cy.findings(pcbnew, lib_fp):  # put there by an import before courtyards were checked
-                    lib_bad.add(name)
         return lib_sigs[name]
 
     for fp in sorted(b.GetFootprints(), key=ref_order):
@@ -1237,7 +1363,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     schematic_only = sorted(set(links) - fp_refs, key=lambda r: [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", r))])
     # a footprint the library has with the same pads stays as it is: another board may have put it there
     exports = [(min(p)[1], name) for name, p in placements.items() if lib_sigs.get(name) is None]
-    lib_courtyards = sorted(name for name in placements if lib_sigs.get(name) and name in lib_bad)
+    # the library's own, used as they are: export_footprints gives them the body and checks their courtyards
+    lib_kept = sorted((min(p)[1], name) for name, p in placements.items() if lib_sigs.get(name))
 
     old_to_new, new_to_old, pads, unpinned = defaultdict(set), defaultdict(set), [], []
     for fp in sorted(b.GetFootprints(), key=ref_order):
@@ -1283,6 +1410,10 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     for z in b.Zones():
         z.SetMinThickness(pcbnew.FromMM(0.15))
         z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.2))
+    # KiCad's importer drops EasyEDA's component shapes (layer 99), leaving the body only in silk drawn well off it
+    drawn = [fp.GetReference() for fp in sorted(b.GetFootprints(), key=ref_order)
+             if fp.GetReference() in fp_refs and fp.GetReference() in (bodies or {})
+             and add_body(pcbnew, fp, *bodies[fp.GetReference()])]
     # the courtyards KiCad's importer leaves are often turned against the pads, a sliver, or round the pins and
     # not the body. Redrawn before the save, so the library exports get them too.
     bad_courtyards, removed_courtyards = [], defaultdict(list)
@@ -1309,8 +1440,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
                 problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
                 fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
-                courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_courtyards=lib_courtyards,
-                courtyards_removed=dict(removed_courtyards))
+                courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_kept=lib_kept,
+                courtyards_removed=dict(removed_courtyards), bodies=drawn)
 
 
 # ---------------------------------------------------------------- project
@@ -1354,14 +1485,18 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
-    fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty, keep_courtyards)
+    fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty, keep_courtyards,
+                         easyeda_bodies(pcb_json))
     if fixes["fp_names"]:
         set_footprint_fields(out_dir, links, fixes["fp_names"], nick)
-    repairs = [] if keep_courtyards else fixes["lib_courtyards"]
-    subprocess.run([KICAD_PYTHON, "-c", "import sys, json; from pcbkit.import_easyeda import export_footprints; "
-                    "export_footprints(sys.argv[1], json.loads(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4]))",
-                    str(pcb_path), json.dumps(fixes["exports"]), str(pretty), json.dumps(repairs)],
-                   check=True, capture_output=True, env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
+    r = subprocess.run([KICAD_PYTHON, "-c", "import sys, json; from pcbkit.import_easyeda import export_footprints; "
+                        "export_footprints(sys.argv[1], json.loads(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4]), "
+                        "sys.argv[5] == '1')",
+                        str(pcb_path), json.dumps(fixes["exports"]), str(pretty), json.dumps(fixes["lib_kept"]),
+                        "0" if keep_courtyards else "1"],
+                       check=True, capture_output=True, text=True,
+                       env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
+    fixes["lib"] = json.loads(r.stdout.strip().splitlines()[-1])
     count = lambda k: sum(len(s[k]) for s in sch["sheets"])
     sheets = f"{len(subs)} sheets, " if subs else ""
     print(f"{name}: {sheets}{count('parts')} parts, {len(defs)} symbols, {fixes['footprints']} footprints, {count('wires')} wires, "
@@ -1406,10 +1541,16 @@ def report_lines(fixes, sym_stats, links, sym_lib):
                    "courtyards redrawn round pads and body + 0.25 mm (the imported ones missed pads or the "
                    f"body, or sat on the other side): {refs}")
     for layer, refs in sorted(fixes["courtyards_removed"].items()):
-        out.append(f"{layer} removed from parts whose only courtyard it was, on the side without their pads: "
-                   + ", ".join(refs))
-    if fixes["lib_courtyards"]:
-        names = ", ".join(fixes["lib_courtyards"])
+        out.append(f"{layer} removed from parts whose only courtyard it was, on the other side: " + ", ".join(refs))
+    if fixes["bodies"]:
+        out.append("bodies drawn on F.Fab/B.Fab from EasyEDA's component shapes (KiCad's importer drops them), so "
+                   f"courtyards go by the body, not the silk: {', '.join(fixes['bodies'])}")
+    lib = fixes.get("lib", {})
+    if lib.get("bodies"):
+        out.append(f"library: bodies drawn in footprints already in {sym_lib.stem}.pretty, from their board copy: "
+                   + ", ".join(lib["bodies"]))
+    if lib.get("bad"):
+        names = ", ".join(lib["bad"])
         out.append(f"library: courtyards that miss pads or the body in footprints already in {sym_lib.stem}.pretty, "
                    f"kept: {names} (`pcbkit courtyards {sym_lib.stem}.pretty --fix` redraws them)"
                    if fixes["courtyards_kept"] else

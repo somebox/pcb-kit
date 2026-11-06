@@ -126,10 +126,10 @@ def shape_points(pcbnew, s, step):
 
 
 def pad_shapes(pcbnew, fp, step):
-    """[(pad, number, kind, side, points)]: pad its index, number "" for a peg or hole; kind "smd" with side "F" or
-    "B" for an SMD pad's copper, "tht" (side None) for a through-hole pad's copper on each outer layer (a padstack
-    may differ by layer) and for every hole, as its rotated slot or circle. Points along each outline, at most step
-    nm apart."""
+    """[(pad, number, kind, side, points)]: pad its index, number "" for a peg or hole; kind "smd" or "tht" with
+    side "F" or "B" for a pad's copper on that outer layer (a through-hole padstack may differ by layer), and "tht"
+    with side None for every hole, as its rotated slot or circle. Points along each outline, at most step nm
+    apart."""
     out = []
     for i, p in enumerate(fp.Pads()):
         num = p.GetNumber()
@@ -142,7 +142,7 @@ def pad_shapes(pcbnew, fp, step):
                 o = poly.Outline(j)
                 pts += _outline(pcbnew, [o.CPoint(k) for k in range(o.PointCount())], step)
             if pts:
-                out.append((i, num, "tht" if tht else "smd", None if tht else side, pts))
+                out.append((i, num, "tht" if tht else "smd", side, pts))
         if p.HasHole():
             h = p.GetEffectiveHoleShape()
             a, b, r = h.GetSeg().A, h.GetSeg().B, h.GetWidth() / 2
@@ -205,10 +205,14 @@ def findings(pcbnew, fp):
     for p in cy.values():
         both.Append(p)
     worst, names, holes = 0.0, set(), set()
+    own = "B" if fp.IsFlipped() else "F"
     for i, name, kind, side, pts in pads:
-        # an SMD pad against its own side's courtyard; one on a side with none (the thermal land on the back of
-        # KiCad's ThermalVias packages) against the other side's, as through-hole pads and holes
-        d = _outside(cy[side] if kind == "smd" and side in cy else both, pts)
+        # copper against its own side's courtyard: an SMD pad's, and a through-hole pad's on the part's own side.
+        # An SMD pad on a side with none (the thermal land on the back of KiCad's ThermalVias packages) against the
+        # other side's; through-hole copper on the far side and holes against both, since a courtyard there may be
+        # only a standoff's ring that needn't cover the pins
+        own_side = side in cy and (kind == "smd" or side == own)
+        d = _outside(cy[side] if own_side else both, pts)
         if _mm(d) > PAD_TOL:
             worst = max(worst, d)
             (names.add(name) if name else holes.add(i))

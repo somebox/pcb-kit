@@ -247,6 +247,26 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.findings(pcbnew, fp), ["pad 1 outside it by up to 0.40 mm"])
         self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 3.50 mm on F.CrtYd")
 
+    def test_a_back_keep_out_hides_no_front_copper(self):
+        pcbnew = self.pcbnew
+        fp = self.header()
+        self.rect(fp, pcbnew.F_CrtYd, -3.5, -1.35, 4.35, 1.35)  # misses pad 1's front copper by 0.3 mm
+        self.rect(fp, pcbnew.B_CrtYd, -6, -3, 6, 3)  # a keep-out on the solder side, covering everything
+        self.assertRegex("; ".join(cy.findings(pcbnew, fp)),
+                         r"^pad 1 outside it by up to 0\.3\d mm; silk outline outside it by up to 0\.6\d mm$")
+
+    def test_a_standoff_ring_needn_t_cover_the_pins(self):
+        pcbnew = self.pcbnew
+        fp = self.header()
+        self.rect(fp, pcbnew.F_CrtYd, -4.35, -1.35, 4.35, 1.35)
+        ring = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_CIRCLE)  # round one pin only, on the back
+        ring.SetCenter(self.mm(0, 3))
+        ring.SetEnd(self.mm(1.5, 3))
+        ring.SetLayer(pcbnew.B_CrtYd)
+        ring.SetWidth(pcbnew.FromMM(0.05))
+        fp.Add(ring)
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_a_rotated_slot_is_a_capsule_along_its_length(self):
         pcbnew = self.pcbnew
         fp = self.footprint([])

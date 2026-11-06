@@ -113,8 +113,10 @@ def shape_points(pcbnew, s, step):
         return out
     if t == pcbnew.SHAPE_T_BEZIER:
         p = [s.GetStart(), s.GetBezierC1(), s.GetBezierC2(), s.GetEnd()]
-        hull = sum(math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(p, p[1:]))
-        n = max(8, int(math.ceil(hull / step)))
+        # the curve moves at most 3x its longest control-polygon edge per unit t, so this many even steps in t
+        # keep the points at most step apart along it
+        edge = max(math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(p, p[1:]))
+        n = max(8, int(math.ceil(3 * edge / step)))
         w = lambda u: ((1 - u) ** 3, 3 * u * (1 - u) ** 2, 3 * u * u * (1 - u), u ** 3)
         return [pcbnew.VECTOR2I(int(round(sum(c * q.x for c, q in zip(w(k / n), p)))),
                                 int(round(sum(c * q.y for c, q in zip(w(k / n), p))))) for k in range(n + 1)]

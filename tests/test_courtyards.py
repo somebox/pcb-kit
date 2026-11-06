@@ -209,9 +209,17 @@ class Courtyards(unittest.TestCase):
         b.SetBezierC1(self.mm(3, 5))
         b.SetBezierC2(self.mm(6, -5))
         b.SetEnd(self.mm(9, 0))
-        _, y0, _, y1 = self.extent(cy.shape_points(pcbnew, b, pcbnew.FromMM(cy.STEP)))
+        pts = cy.shape_points(pcbnew, b, pcbnew.FromMM(cy.STEP))
+        _, y0, _, y1 = self.extent(pts)
         self.assertAlmostEqual(y1, 5 * math.sqrt(3) / 6, places=2)  # 1.44 mm, not the control points' 5
         self.assertAlmostEqual(y0, -5 * math.sqrt(3) / 6, places=2)
+        b.SetStart(self.mm(0, 0))  # fast at the start, still at the end: 0.15 mm apart if counted by its length
+        b.SetBezierC1(self.mm(10, 0))
+        b.SetBezierC2(self.mm(10, 0))
+        b.SetEnd(self.mm(10, 0))
+        for curve in (pts, cy.shape_points(pcbnew, b, pcbnew.FromMM(cy.STEP))):
+            gaps = [math.hypot(q.x - p.x, q.y - p.y) for p, q in zip(curve, curve[1:])]
+            self.assertLessEqual(max(gaps), pcbnew.FromMM(cy.STEP))  # evenly in t, never further apart than that
 
     def test_a_through_hole_pads_back_copper_counts(self):
         pcbnew = self.pcbnew

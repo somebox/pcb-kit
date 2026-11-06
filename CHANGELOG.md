@@ -8,6 +8,32 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit courtyards`: courtyards that don't describe their part.** DRC's placement checks trust each footprint's
+  courtyard, so one that misses its pads or body lets a part be placed on it and DRC passes. On espcandle-pcb's base
+  board, as imported from EasyEDA, the first layout put a FET, a capacitor and the buck IC under the EXT connector,
+  whose courtyard sat 1 mm inside its body. It reports a footprint with no courtyard or an open one, a courtyard only
+  on the other side from all its pads (a through-hole part's only on the side away from the one it is mounted on,
+  where DRC would let a part go under it), pads or holes outside it, and the body outside it: the fab outline, or the
+  silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
+  points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
+  rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
+  own frame round pads, holes and body plus `--margin` (0.25 mm, as KiCad's own libraries round 0603s, SOTs and
+  QFNs), one on each side the footprint has pads on, and saves the board or the `.pretty` library it was given. A
+  sound courtyard on the other side stays when it is a keep-out beside the part's own (a standoff, a screw head);
+  a part's only courtyard, on the other side, goes (EasyEDA draws a back-mounted header's on the top).
+  `--easyeda PCB.json` first draws each part's body on F.Fab or B.Fab from the EasyEDA export it was imported from
+  (layer 99, the component shape, which KiCad's importer drops), placed by fitting its pads onto the footprint's, so
+  a part moved or turned since still gets its own (mirrored if it changed sides; with `--fix --ref`, only those parts); the check and the redraw then go by the body, not EasyEDA's silk,
+  which stands well off it. On espcandle-pcb's base that takes an 0603's redrawn courtyard from 3.29 x 1.94 mm to
+  2.70 x 1.42 mm and an 0402's from 2.40 x 1.50 to 1.94 x 1.06. `pcbkit check` gains a "courtyards" section with the
+  same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
+  test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
+  module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and
+  spotlight boards drawn from KiCad's libraries. Of KiCad 10's own 15,464 footprints it reports 142: connectors,
+  card sockets and angled switches whose fab drawing shows a part over the board edge (73), card-edge connectors
+  (25), keyboard switches' stabiliser holes (6), 17 courtyards that don't close (lines 0.05 mm short of their arcs,
+  missing sides), pads just outside on slide potentiometers, terminal blocks and antennas, and a CuK slide switch
+  drawn on the front whose only courtyard is on B.CrtYd. Tests in `tests/test_courtyards.py`.
 - **`pcbkit reroute`, a negotiated router, experimental.** It takes a placed board whose power copper and ground are
   drawn and lays its signals again: small parts moved where that helps, every signal net routed together, test pads
   placed after the routing, repairs, and the old routing and the new one compared. It never writes your board. On six
@@ -170,6 +196,12 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   a net, such as a GND test pad, becomes a board-only footprint out of the BOM and placement files and is listed; only
   a PCB part with nets and no symbol still stops the run. Both boards now import without `--force`. Fixtures in
   `tests/test_import_easyeda.py`.
+- **`pcbkit import-easyeda` redraws the courtyards KiCad's importer gets wrong**, as `pcbkit courtyards --fix`
+  does, before the footprints go into the library, and lists them. A footprint the library already has with the
+  same pads, put there by an earlier import, gets its courtyard redrawn in the library too (the rest of it stays as
+  it is), so updating the board from the library doesn't bring the old one back. `--keep-courtyards` only lists
+  them. Each part's body is drawn on F.Fab/B.Fab from EasyEDA's component shapes first, on the board and in a
+  library footprint an earlier import left without one, so the courtyards go round the body rather than the silk.
 
 ## [0.3.0] - 2026-10-18
 

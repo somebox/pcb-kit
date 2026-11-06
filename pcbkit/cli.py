@@ -1,6 +1,6 @@
 """pcbkit command line. `pcbkit <command> --help` for each one.
 
-Checks:    drc, erc, nets, check, cleanup
+Checks:    drc, erc, nets, check, courtyards, cleanup
 Release:   release, production, previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
@@ -17,6 +17,7 @@ COMMANDS = {
     "erc": ("pcbkit.checks.erc", "ERC summary through kicad-cli"),
     "nets": ("pcbkit.checks.netlist", "net sizes and members from a schematic"),
     "check": ("pcbkit.checks.route_check", "floating copper, stubs, loops, thin power feeds (needs pcbnew)"),
+    "courtyards": ("pcbkit.checks.courtyards", "courtyards that miss pads or the body, or sit on the other side (--fix redraws)"),
     "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered (--dangling: dead-end) segments, merge runs"),
     "release": ("pcbkit.release.release", "version, stamp and fab every changed board (pcbkit.toml), then production"),
     "production": ("pcbkit.production", "the production page: versions, orders, stock (--check)"),

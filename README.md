@@ -149,7 +149,10 @@ actually refers to before anything gets edited:
 ### Check a board
 
 `pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit check` finds what
-DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power pads fed only through thin track.
+DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power pads fed only through thin track,
+and courtyards that don't describe their part. DRC's placement checks trust each footprint's courtyard, so one that
+misses pads or the body lets a part be placed on it; `pcbkit courtyards` lists those on a board or in a footprint
+library and with `--fix` redraws them round the pads and body.
 `pcbkit cleanup` removes duplicate and zero-length segments by editing the file text, because pcbnew's own
 `Remove()` corrupts its bindings mid-run; `--dangling` also peels a router's dead ends, one leaf at a time, so no
 net is ever split. Before an order, KiCadRoutingTools' checkers give a second opinion.
@@ -294,7 +297,8 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit drc BOARD [--refill] [--save] [--full]` | DRC through kicad-cli: counts by type, every error, unconnected items by net and footprint. `--save` refills and writes the board back, which is how the projects keep their boards filled. Exit 1 on errors or unconnected items |
 | `pcbkit erc SCH` | ERC summary, exit 1 on errors |
 | `pcbkit nets SCH [NET ...]` | net sizes and members; `pcbkit.checks.netlist.Netlist` is the base for a project's topology assertions |
-| `pcbkit check BOARD` | what DRC doesn't flag: floating copper, stubs with their full length, loops, pours reaching one pad, power pads fed only through thin track |
+| `pcbkit check BOARD` | what DRC doesn't flag: floating copper, stubs with their full length, loops, pours reaching one pad, power pads fed only through thin track, courtyards as `pcbkit courtyards` |
+| `pcbkit courtyards BOARD\|LIB.pretty [--fix] [--margin 0.25] [--ref REF]` | courtyards that don't describe the part: none or an open one, on the other side from the pads, pads outside it, the body (fab outline, or silk without one) outside it. `--fix` redraws each as a rectangle round pads and body plus the margin, on the pads' side, and saves |
 | `pcbkit cleanup BOARD [--dry-run] [--dangling]` | duplicate, zero-length and covered segments removed, collinear runs merged; `--dangling` also removes dead-end segments that no net needs; edits the file text by uuid |
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
@@ -309,7 +313,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
 | `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards (and a screw-head keep-out with `"head"`), keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
-| `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints merged into `lib/` (boards can share it), PCB nets renamed, importer fixes (paste margins, User.4 keep-outs, outline gaps, loose pads board-only), ERC/DRC/parity run |
+| `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints merged into `lib/` (boards can share it), PCB nets renamed, importer fixes (paste margins, User.4 keep-outs, outline gaps, loose pads board-only, courtyards that miss pads or the body redrawn; `--keep-courtyards` only lists them), ERC/DRC/parity run |
 
 Library use from a project script:
 

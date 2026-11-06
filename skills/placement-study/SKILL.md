@@ -73,6 +73,9 @@ def gates(ctx):
 
 - Plane nets left in swamp the score with long edges that the plane makes free.
 - Courtyard lines touching is fine; overlapping area is not. Through-hole pads block both sides.
+- The rules are only as good as the courtyards. Run `pcbkit courtyards BOARD` first on a board with imported or
+  project-library footprints: an EasyEDA import's connector courtyard sat 1 mm inside its body, and the first layout
+  put a FET, a capacitor and the buck IC under it (ESP Candle base, 2026-11).
 - An invalid start (the board or `--start`) is repaired before the descent: each group that breaks a rule takes
   its best valid candidate. If one has none, the search stops and says which rule.
 - The search is coordinate descent: it can stop in a local minimum. Start it from a few hand-made placements

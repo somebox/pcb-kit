@@ -1,7 +1,7 @@
 """Turn EasyEDA Std exports (schematic + PCB JSON) into a linked KiCad project.
 
   pcbkit import-easyeda SCH.json PCB.json OUT_DIR --name BOARD [--lib LIBDIR] [--lib-name NICK]
-                        [--title T] [--rev R] [--date D] [--company C] [--force]
+                        [--title T] [--rev R] [--date D] [--company C] [--force] [--keep-courtyards]
 
 KiCad imports EasyEDA PCBs from the command line, but schematics only in the GUI, and a GUI import leaves the
 symbols unlinked from the footprints. This converts the schematic itself, keeping the EasyEDA layout:
@@ -21,7 +21,11 @@ symbols unlinked from the footprints. This converts the schematic itself, keepin
     as it is; one that differs takes the next free name_2, name_3;
   * what KiCad's PCB importer gets wrong is corrected: -100 mm paste margins, every designator shown, duplicate
     vias, EasyEDA layer names, zone fill minimums, the copper-pour keep-outs on User.4 it makes of EasyEDA's pin
-    outlines, Edge.Cuts ends a few microns apart; the zones are refilled and the board saved filled.
+    outlines, Edge.Cuts ends a few microns apart; the zones are refilled and the board saved filled;
+  * courtyards that miss a part's pads or body, or sit on the other side from its pads (KiCad's importer often
+    leaves them turned against the pads, a sliver, or round the pins and not the body), are redrawn round the pads
+    and the silk body + 0.25 mm, on the board and in the library (--keep-courtyards: listed only; `pcbkit
+    courtyards` checks and redraws them later).
 Loose pads and holes on the PCB (no symbol) become board-only footprints, out of the BOM and placement files; one
 with a net (a GND test pad) is listed. A schematic part with no footprint on the PCB is listed as schematic-only and
 gets an empty Footprint field. Sheet files are named after the EasyEDA sheets, without EasyEDA's " copy"
@@ -1150,11 +1154,13 @@ def set_footprint_fields(out_dir, links, names, nick):
         path.write_text(text)
 
 
-def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
+def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, keep_courtyards=False):
     """Link the imported board to the schematic and correct what the importer leaves. shown: {ref: (reference
-    shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to."""
+    shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to.
+    Courtyards that miss the pads or the body are redrawn (listed only, with keep_courtyards)."""
     ensure_pcbnew()
     import pcbnew
+    from .checks import courtyards as cy
     b = pcbnew.LoadBoard(str(pcb_path))
     problems, board_only, loose_nets, fp_refs, paste_fixed = [], [], [], set(), 0
     signatures, placements, fp_names, lib_sigs = {}, defaultdict(list), {}, {}
@@ -1265,6 +1271,14 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
     for z in b.Zones():
         z.SetMinThickness(pcbnew.FromMM(0.15))
         z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.2))
+    # the courtyards KiCad's importer leaves are often turned against the pads, a sliver, or round the pins and
+    # not the body. Redrawn before the save, so the library exports get them too.
+    bad_courtyards = []
+    for fp in sorted(b.GetFootprints(), key=ref_order):
+        if fp.GetReference() in fp_refs and cy.findings(pcbnew, fp):
+            bad_courtyards.append(fp.GetReference())
+            if not keep_courtyards:
+                cy.redraw(pcbnew, fp)
     gaps = close_outline(pcbnew, b)
     tb = b.GetTitleBlock()
     tb.SetTitle(meta["title"])
@@ -1280,7 +1294,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty):
     keepouts = strip_user_keepouts(pcb_path)
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
                 problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
-                fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements))
+                fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
+                courtyards=bad_courtyards, courtyards_kept=keep_courtyards)
 
 
 # ---------------------------------------------------------------- project
@@ -1300,7 +1315,8 @@ def write_project(kdir, project, root, subs, nick, lib_rel):
         '(options "")(descr "Project footprints"))\n)\n')
 
 
-def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=None, force=False, pin_fixes=()):
+def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=None, force=False, pin_fixes=(),
+            keep_courtyards=False):
     ensure_pcbnew()  # first: it runs the command again under KiCad's Python, which must not find a half-merged library
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1323,7 +1339,7 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
-    fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty)
+    fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty, keep_courtyards)
     if fixes["fp_names"]:
         set_footprint_fields(out_dir, links, fixes["fp_names"], nick)
     subprocess.run([KICAD_PYTHON, "-c", "import sys; from pcbkit.import_easyeda import export_footprints; "
@@ -1367,6 +1383,12 @@ def report_lines(fixes, sym_stats, links, sym_lib):
                    "(EasyEDA's pin outlines; DRC items_not_allowed)")
     for gap, x, y in fixes["gaps"]:
         out.append(f"outline: closed a {gap:.4f} mm gap between Edge.Cuts ends at ({x:.2f}, {y:.2f})")
+    if fixes["courtyards"]:
+        refs = ", ".join(fixes["courtyards"])
+        out.append(f"courtyards that missed pads or the body, or sat on the other side, kept as imported: {refs} "
+                   "(`pcbkit courtyards BOARD --fix` redraws them)" if fixes["courtyards_kept"] else
+                   "courtyards redrawn round pads and body + 0.25 mm (the imported ones missed pads or the "
+                   f"body, or sat on the other side): {refs}")
     if fixes["loose_nets"]:
         out.append("loose pads with a net, made board-only (no symbol, not in the BOM or placement files): "
                    + ", ".join(fixes["loose_nets"]))
@@ -1389,6 +1411,8 @@ def main(argv=None):
     ap.add_argument("--lib-name", help="library nickname (default: the lib directory's parent folder name)")
     ap.add_argument("--title"); ap.add_argument("--rev", default=""); ap.add_argument("--date", default=""); ap.add_argument("--company", default="")
     ap.add_argument("--force", action="store_true", help="write the project even with connectivity differences")
+    ap.add_argument("--keep-courtyards", action="store_true",
+                    help="leave the imported courtyards as they are; only list the ones that miss pads or the body")
     ap.add_argument("--pin", action="append", default=[], metavar="REF:NAME=NUM",
                     help="renumber a symbol pin by its name, for EasyEDA symbol typos (repeatable)")
     a = ap.parse_args(argv)
@@ -1399,7 +1423,7 @@ def main(argv=None):
             ap.error(f"--pin wants REF:NAME=NUM, got {s}")
         fixes.append(m.groups())
     meta = {k: v for k, v in (("title", a.title), ("rev", a.rev), ("date", a.date), ("company", a.company)) if v}
-    convert(a.schematic, a.pcb, a.out_dir, a.name, a.lib, a.lib_name, meta, a.force, fixes)
+    convert(a.schematic, a.pcb, a.out_dir, a.name, a.lib, a.lib_name, meta, a.force, fixes, a.keep_courtyards)
 
 
 if __name__ == "__main__":

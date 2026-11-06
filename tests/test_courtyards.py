@@ -357,6 +357,29 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, B.CrtYd kept")
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_a_sound_front_survives_a_back_repair_under_the_checks_rules(self):
+        pcbnew = self.pcbnew
+        fp = self.header()  # through-hole, its own side the front
+        land = list(fp.Pads())[3]  # pad 4's back copper larger than its front: inside B.CrtYd, not F.CrtYd
+        land.Padstack().SetMode(pcbnew.PADSTACK.MODE_FRONT_INNER_BACK)
+        land.SetShape(pcbnew.B_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+        land.SetSize(pcbnew.B_Cu, self.mm(4.0, 4.0))
+        back = pcbnew.PAD(fp)  # and an SMD pad on the back, outside every courtyard
+        back.SetNumber("5")
+        back.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.B_Cu)
+        back.SetLayerSet(layers)
+        back.SetSize(pcbnew.B_Cu, self.mm(1.0, 1.0))
+        back.SetPosition(self.mm(0, 4))
+        fp.Add(back)
+        self.rect(fp, pcbnew.F_CrtYd, -4.6, -1.6, 4.6, 1.6)  # sound for the front, with room to spare
+        self.rect(fp, pcbnew.B_CrtYd, -5.5, -2.5, 5.5, 2.5)  # holds the back land, not pad 5
+        self.assertRegex("; ".join(cy.findings(pcbnew, fp)), r"^pad 5 outside it by up to 2\.\d\d mm$")
+        self.assertEqual(cy.redraw(pcbnew, fp), "9.30 x 7.00 mm on B.CrtYd, F.CrtYd kept")
+        self.assertEqual(len([g for g in self.courtyard_shapes(fp) if g.GetLayer() == pcbnew.F_CrtYd]), 4)
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_only_the_faulty_side_is_redrawn(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])

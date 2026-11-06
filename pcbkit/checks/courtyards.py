@@ -265,14 +265,26 @@ def redraw(pcbnew, fp, margin=MARGIN):
             and _outside(c.GetCourtyard(layer[t]), body[t]) <= tol]
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
     rects = []
-    for s in sides:
-        own_pads = [q for _, _, k, side, ps in pads if k == "tht" or side == s for q in ps]
-        own_body = [q for t in "FB" if t == s or (t not in sides and t not in kept) for q in body[t]]
-        if s in closed and _outside(c.GetCourtyard(layer[s]), own_pads) <= pcbnew.FromMM(PAD_TOL) \
-                and _outside(c.GetCourtyard(layer[s]), own_body) <= tol:
-            kept.append(s)  # sound: the fault was on the other side
-            continue
-        xs, ys = zip(*(to_local(q) for q in own_pads + own_body))
+    pad_tol = pcbnew.FromMM(PAD_TOL)
+    body_of = lambda s: [q for t in "FB" if t == s or (t not in sides and t not in kept) for q in body[t]]
+    # a side's courtyard is sound by the rules findings() uses: what is held to that side alone (its SMD pads,
+    # and through-hole copper on the part's own side) and its body
+    held = lambda s: [q for _, _, k, side, ps in pads if side == s and (k == "smd" or s == own) for q in ps]
+    sound = [s for s in sides if s in closed and _outside(c.GetCourtyard(layer[s]), held(s)) <= pad_tol
+             and _outside(c.GetCourtyard(layer[s]), body_of(s)) <= tol]
+    redrawn = [s for s in sides if s not in sound]
+    if not redrawn:  # what may sit in either courtyard (far-side copper, holes) must fit the ones kept
+        union = pcbnew.SHAPE_POLY_SET()
+        for t in sound + kept:
+            union.Append(c.GetCourtyard(layer[t]))
+        either = [q for _, _, k, side, ps in pads if not (side in sound and (k == "smd" or side == own)) for q in ps]
+        if _outside(union, either) > pad_tol:
+            redrawn = [own] if own in sides else sides[:1]
+    kept += [s for s in sound if s not in redrawn]
+    for s in redrawn:
+        # a redrawn side takes all the through-hole copper and holes, its own SMD pads and its body
+        pts = [q for _, _, k, side, ps in pads if k == "tht" or side == s for q in ps] + body_of(s)
+        xs, ys = zip(*(to_local(q) for q in pts))
         e = 2  # nm: board points are rounded after rotation, so back in the frame they sit a hair off the grid
         x0 = math.floor((min(xs) - m + e) / g) * g
         x1 = math.ceil((max(xs) + m - e) / g) * g

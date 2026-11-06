@@ -311,6 +311,14 @@ class Courtyards(unittest.TestCase):
         self.assertEqual([(g.GetShape(), g.GetRadius()) for g in back], [(pcbnew.SHAPE_T_CIRCLE, pcbnew.FromMM(6))])
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_an_smd_parts_keep_out_beside_its_own_courtyard_stays(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)])
+        self.rect(fp, pcbnew.F_CrtYd, -0.5, -0.5, 0.5, 0.5)  # too small: pads outside
+        self.rect(fp, pcbnew.B_CrtYd, -4, -4, 4, 4)  # a keep-out on the back, beside it
+        self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, B.CrtYd kept")
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])

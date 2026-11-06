@@ -22,8 +22,10 @@ fab drawing shows a part over the board edge, and card-edge connectors; none on 
 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body
 (fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), one on each side it has SMD pads
-on and on its own side for through-hole parts (a through-hole part's sound courtyard on its other side, a
-standoff's or a screw head's keep-out, stays), and saves the board or the library footprints. Every outline is
+on and on its own side for through-hole parts. A sound courtyard on a side it draws nothing for stays when it
+is a keep-out beside the part's own (a standoff, a screw head; any through-hole part's, or an SMD part's that also
+had one on its pads' side); an SMD part's only courtyard, on the side without pads, goes. It saves the board or
+the library footprints. Every outline is
 checked at points 0.05 mm apart, so an edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit check` lists
 the same findings; `pcbkit import-easyeda` redraws them on import.
 """
@@ -230,9 +232,10 @@ def findings(pcbnew, fp):
 def redraw(pcbnew, fp, margin=MARGIN):
     """Replace a footprint's courtyards with a rectangle per side it has pads on, round that side's pads, its
     through-hole pads and holes, and the body drawn on that side and on any side that gets no courtyard of its own
-    (a back-side test pad's outline drawn on the front), plus margin (mm). A through-hole part's courtyard on a
-    side it has no rectangle for is kept when it is closed and holds that side's body: a deliberate keep-out (a
-    standoff, a screw head, the solder side). An SMD part's there is the misplaced one and goes. Returns a
+    (a back-side test pad's outline drawn on the front), plus margin (mm). A courtyard on a side it draws no
+    rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own: the
+    part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard on a side with
+    pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
     description of the new courtyards."""
     if not margin >= 0:  # a negative one turns a small part's rectangle inside out
         raise ValueError(f"courtyard margin must be 0 mm or more, got {margin}")
@@ -248,7 +251,9 @@ def redraw(pcbnew, fp, margin=MARGIN):
     sides = sorted(smd | ({own} if tht or not smd else set()), key="FB".index)
     layer = {"F": pcbnew.F_CrtYd, "B": pcbnew.B_CrtYd}
     tol = pcbnew.FromMM(FAB_TOL if kind == "fab" else SILK_TOL)
-    kept = [t for t in "FB" if tht and t not in sides and c.GetCourtyard(layer[t]).OutlineCount()
+    closed = {t for t in "FB" if c.GetCourtyard(layer[t]).OutlineCount()}
+    beside = tht or bool(closed & set(sides))  # a keep-out beside the part's own courtyard, not instead of it
+    kept = [t for t in "FB" if beside and t not in sides and t in closed
             and _outside(c.GetCourtyard(layer[t]), body[t]) <= tol]
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
     rects = []

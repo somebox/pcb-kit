@@ -151,6 +151,15 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.findings(pcbnew, fp), [])
         self.assertEqual(len(self.courtyard_shapes(fp)), 1)
 
+    def test_a_negative_margin_is_refused(self):
+        fp = self.footprint([(0, 0)])
+        self.rect(fp, self.pcbnew.F_CrtYd, -0.2, -0.2, 0.2, 0.2)
+        with self.assertRaises(ValueError):
+            cy.redraw(self.pcbnew, fp, margin=-1.0)
+        self.assertEqual(len(self.courtyard_shapes(fp)), 4)  # left as it was
+        with self.assertRaises(SystemExit):
+            cy.main(["board.kicad_pcb", "--fix", "--margin", "-1"])
+
     def test_redraw_puts_a_back_pads_courtyard_on_the_back(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(0, 0)], side="B")

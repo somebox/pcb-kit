@@ -234,6 +234,8 @@ def redraw(pcbnew, fp, margin=MARGIN):
     side it has no rectangle for is kept when it is closed and holds that side's body: a deliberate keep-out (a
     standoff, a screw head, the solder side). An SMD part's there is the misplaced one and goes. Returns a
     description of the new courtyards."""
+    if not margin >= 0:  # a negative one turns a small part's rectangle inside out
+        raise ValueError(f"courtyard margin must be 0 mm or more, got {margin}")
     c = fp
     c.BuildCourtyardCaches()
     to_local, to_board = _frame(pcbnew, fp)
@@ -278,6 +280,17 @@ def redraw(pcbnew, fp, margin=MARGIN):
                      + [f"{t}.CrtYd kept" for t in kept])
 
 
+def _margin(text):
+    """--margin: a number of mm, 0 or more."""
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text}")
+    if not v >= 0:
+        raise argparse.ArgumentTypeError(f"must be 0 mm or more, got {text}")
+    return v
+
+
 def board_findings(pcbnew, board):
     """[(reference, footprint name, findings)] for the footprints of a loaded board that have any."""
     rows = []
@@ -292,7 +305,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", help="a .kicad_pcb, or a .pretty footprint library")
     ap.add_argument("--fix", action="store_true", help="redraw the reported courtyards and save")
-    ap.add_argument("--margin", type=float, default=MARGIN, help="mm round pads and body when redrawing (0.25)")
+    ap.add_argument("--margin", type=_margin, default=MARGIN, help="mm round pads and body when redrawing (0.25)")
     ap.add_argument("--ref", action="append", default=[], metavar="REF",
                     help="with --fix on a board: only these footprints (repeatable)")
     a = ap.parse_args(argv)

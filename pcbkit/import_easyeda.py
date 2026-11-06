@@ -1285,12 +1285,14 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
         z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.2))
     # the courtyards KiCad's importer leaves are often turned against the pads, a sliver, or round the pins and
     # not the body. Redrawn before the save, so the library exports get them too.
-    bad_courtyards = []
+    bad_courtyards, removed_courtyards = [], defaultdict(list)
     for fp in sorted(b.GetFootprints(), key=ref_order):
         if fp.GetReference() in fp_refs and cy.findings(pcbnew, fp):
             bad_courtyards.append(fp.GetReference())
             if not keep_courtyards:
-                cy.redraw(pcbnew, fp)
+                for part in cy.redraw(pcbnew, fp).split(", "):
+                    if part.endswith(" removed"):
+                        removed_courtyards[part.split()[0]].append(fp.GetReference())
     gaps = close_outline(pcbnew, b)
     tb = b.GetTitleBlock()
     tb.SetTitle(meta["title"])
@@ -1307,7 +1309,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
                 problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
                 fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
-                courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_courtyards=lib_courtyards)
+                courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_courtyards=lib_courtyards,
+                courtyards_removed=dict(removed_courtyards))
 
 
 # ---------------------------------------------------------------- project
@@ -1402,6 +1405,9 @@ def report_lines(fixes, sym_stats, links, sym_lib):
                    "(`pcbkit courtyards BOARD --fix` redraws them)" if fixes["courtyards_kept"] else
                    "courtyards redrawn round pads and body + 0.25 mm (the imported ones missed pads or the "
                    f"body, or sat on the other side): {refs}")
+    for layer, refs in sorted(fixes["courtyards_removed"].items()):
+        out.append(f"{layer} removed from parts whose only courtyard it was, on the side without their pads: "
+                   + ", ".join(refs))
     if fixes["lib_courtyards"]:
         names = ", ".join(fixes["lib_courtyards"])
         out.append(f"library: courtyards that miss pads or the body in footprints already in {sym_lib.stem}.pretty, "

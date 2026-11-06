@@ -237,7 +237,7 @@ def redraw(pcbnew, fp, margin=MARGIN):
     rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own: the
     part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard on a side with
     pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
-    description of the new courtyards."""
+    description of the new courtyards, naming any closed one it kept or removed."""
     if not margin >= 0:  # a negative one turns a small part's rectangle inside out
         raise ValueError(f"courtyard margin must be 0 mm or more, got {margin}")
     c = fp
@@ -286,8 +286,10 @@ def redraw(pcbnew, fp, margin=MARGIN):
         shape.SetWidth(pcbnew.FromMM(WIDTH))
         shape.SetFilled(False)
         fp.Add(shape)
+    removed = [t for t in "FB" if t in closed and t not in kept and t not in sides]  # said, not done quietly
     return ", ".join([f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {s}.CrtYd" for s, x0, y0, x1, y1 in rects]
-                     + [f"{t}.CrtYd kept" for t in sorted(kept, key="FB".index)])
+                     + [f"{t}.CrtYd kept" for t in sorted(kept, key="FB".index)]
+                     + [f"{t}.CrtYd removed" for t in removed])
 
 
 def _margin(text):

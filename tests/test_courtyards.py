@@ -170,7 +170,7 @@ class Courtyards(unittest.TestCase):
         pcbnew = self.pcbnew
         fp = self.footprint([(0, 0)], side="B")
         self.rect(fp, pcbnew.F_CrtYd, -0.27, -0.27, 0.27, 0.27)
-        self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 1.50 mm on B.CrtYd")
+        self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 1.50 mm on B.CrtYd, F.CrtYd removed")
         self.assertEqual([g.GetLayer() for g in self.courtyard_shapes(fp)], [pcbnew.B_CrtYd])
         self.assertEqual(cy.findings(pcbnew, fp), [])
 

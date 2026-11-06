@@ -211,9 +211,8 @@ def findings(pcbnew, fp):
         if holes:
             what.append(f"{holes} unnumbered hole{'s' if holes > 1 else ''}")
         out.append(f"{' and '.join(what)} outside it by up to {_mm(worst):.2f} mm")
-    kind, body = body_points(pcbnew, c, step)
-    pts = body["F"] + body["B"]
-    d = _mm(_outside(both, pts)) if pts else 0.0
+    kind, body = body_points(pcbnew, c, step)  # each side's against its own courtyard, as the pads
+    d = _mm(max((_outside(cy.get(s, both), body[s]) for s in "FB" if body[s]), default=0.0))
     if d > (FAB_TOL if kind == "fab" else SILK_TOL):
         out.append(f"{kind} outline outside it by up to {d:.2f} mm")
     return out
@@ -221,8 +220,9 @@ def findings(pcbnew, fp):
 
 def redraw(pcbnew, fp, margin=MARGIN):
     """Replace a footprint's courtyards with a rectangle per side it has pads on, round that side's pads, its
-    through-hole pads and holes, and the body drawn on that side (on its own side, the whole body if none is),
-    plus margin (mm). Returns a description of the new courtyards."""
+    through-hole pads and holes, and the body drawn on that side and on any side that gets no courtyard of its own
+    (a back-side test pad's outline drawn on the front), plus margin (mm). Returns a description of the new
+    courtyards."""
     c = local_copy(pcbnew, fp)
     step = pcbnew.FromMM(STEP)
     pads = pad_shapes(pcbnew, c, step)
@@ -234,7 +234,7 @@ def redraw(pcbnew, fp, margin=MARGIN):
     rects = []
     for s in sides:
         pts = [q for _, _, kind, side, ps in pads if kind == "tht" or side == s for q in ps]
-        pts += body[s] or (body["F"] + body["B"] if s == own else [])
+        pts += [q for t in "FB" if t == s or t not in sides for q in body[t]]
         x0 = math.floor((min(q.x for q in pts) - m) / g) * g
         x1 = math.ceil((max(q.x for q in pts) + m) / g) * g
         y0 = math.floor((min(q.y for q in pts) - m) / g) * g

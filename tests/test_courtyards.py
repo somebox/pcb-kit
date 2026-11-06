@@ -262,6 +262,23 @@ class Courtyards(unittest.TestCase):
         self.rect(fp, pcbnew.F_CrtYd, -1.75, -0.75, 1.75, 0.75)
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_each_sides_body_against_its_own_courtyard(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-0.5, 0), (0.5, 0)], size=(0.5, 0.5))
+        self.rect(fp, pcbnew.F_Fab, -2, -2, 2, 2)
+        self.rect(fp, pcbnew.F_CrtYd, -1, -1, 1, 1)
+        self.rect(fp, pcbnew.B_CrtYd, -3, -3, 3, 3)  # the back's would cover the front body
+        self.assertRegex("; ".join(cy.findings(pcbnew, fp)), r"^fab outline outside it by up to 1\.4\d mm$")
+
+    def test_a_back_pads_front_body_goes_in_its_redrawn_courtyard(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(0, 0)], side="B")
+        self.rect(fp, pcbnew.F_Fab, -2, -2, 2, 2)
+        self.rect(fp, pcbnew.B_CrtYd, -0.27, -0.27, 0.27, 0.27)
+        self.assertTrue(cy.findings(pcbnew, fp))
+        self.assertEqual(cy.redraw(pcbnew, fp), "4.50 x 4.50 mm on B.CrtYd")
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])

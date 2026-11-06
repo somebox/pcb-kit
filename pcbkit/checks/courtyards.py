@@ -232,7 +232,8 @@ def findings(pcbnew, fp):
 def redraw(pcbnew, fp, margin=MARGIN):
     """Replace a footprint's courtyards with a rectangle per side it has pads on, round that side's pads, its
     through-hole pads and holes, and the body drawn on that side and on any side that gets no courtyard of its own
-    (a back-side test pad's outline drawn on the front), plus margin (mm). A courtyard on a side it draws no
+    (a back-side test pad's outline drawn on the front), plus margin (mm). A side whose courtyard already holds all
+    that keeps it, larger clearance and all: only the faulty side is redrawn. A courtyard on a side it draws no
     rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own: the
     part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard on a side with
     pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
@@ -258,9 +259,13 @@ def redraw(pcbnew, fp, margin=MARGIN):
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
     rects = []
     for s in sides:
-        pts = [q for _, _, k, side, ps in pads if k == "tht" or side == s for q in ps]
-        pts += [q for t in "FB" if t == s or (t not in sides and t not in kept) for q in body[t]]
-        xs, ys = zip(*(to_local(q) for q in pts))
+        own_pads = [q for _, _, k, side, ps in pads if k == "tht" or side == s for q in ps]
+        own_body = [q for t in "FB" if t == s or (t not in sides and t not in kept) for q in body[t]]
+        if s in closed and _outside(c.GetCourtyard(layer[s]), own_pads) <= pcbnew.FromMM(PAD_TOL) \
+                and _outside(c.GetCourtyard(layer[s]), own_body) <= tol:
+            kept.append(s)  # sound: the fault was on the other side
+            continue
+        xs, ys = zip(*(to_local(q) for q in own_pads + own_body))
         e = 2  # nm: board points are rounded after rotation, so back in the frame they sit a hair off the grid
         x0 = math.floor((min(xs) - m + e) / g) * g
         x1 = math.ceil((max(xs) + m - e) / g) * g
@@ -282,7 +287,7 @@ def redraw(pcbnew, fp, margin=MARGIN):
         shape.SetFilled(False)
         fp.Add(shape)
     return ", ".join([f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {s}.CrtYd" for s, x0, y0, x1, y1 in rects]
-                     + [f"{t}.CrtYd kept" for t in kept])
+                     + [f"{t}.CrtYd kept" for t in sorted(kept, key="FB".index)])
 
 
 def _margin(text):

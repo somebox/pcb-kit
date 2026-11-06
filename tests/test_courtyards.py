@@ -112,16 +112,22 @@ class Courtyards(unittest.TestCase):
 
     def test_a_silk_dot_off_the_body_is_a_mark(self):
         pcbnew = self.pcbnew
-        fp = self.footprint([(-1, 0), (1, 0)])
-        self.rect(fp, pcbnew.F_SilkS, -1.8, -0.8, 1.8, 0.8)
-        self.rect(fp, pcbnew.F_CrtYd, -2.05, -1.05, 2.05, 1.05)
-        dot = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_CIRCLE)  # ESP32-S3-MINI-1's pin-1 dot, 0.5 mm off its outline
-        dot.SetCenter(self.mm(-3.0, 0))
-        dot.SetEnd(self.mm(-2.85, 0))
-        dot.SetLayer(pcbnew.F_SilkS)
-        fp.Add(dot)
-        self.assertEqual(cy.findings(pcbnew, fp), [])
-        self.assertEqual(cy.redraw(pcbnew, fp), "4.10 x 2.10 mm on F.CrtYd")  # the outline + 0.25, not the dot
+
+        def part(courtyard):
+            fp = self.footprint([(-1, 0), (1, 0)])
+            self.rect(fp, pcbnew.F_SilkS, -1.8, -0.8, 1.8, 0.8)
+            self.rect(fp, pcbnew.F_CrtYd, *courtyard)
+            dot = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_CIRCLE)  # ESP32-S3-MINI-1's pin-1 dot, 0.5 mm off its outline
+            dot.SetCenter(self.mm(-3.0, 0))
+            dot.SetEnd(self.mm(-2.85, 0))
+            dot.SetLayer(pcbnew.F_SilkS)
+            fp.Add(dot)
+            return fp
+        self.assertEqual(cy.findings(pcbnew, part((-2.05, -1.05, 2.05, 1.05))), [])  # the dot is no finding
+        small = part((-1.0, -0.4, 1.0, 0.4))
+        self.assertTrue(cy.findings(pcbnew, small))
+        self.assertEqual(cy.redraw(pcbnew, small), "4.10 x 2.10 mm on F.CrtYd")  # the outline + 0.25, not the dot
+        self.assertEqual(cy.findings(pcbnew, small), [])
 
     def test_a_back_pad_with_its_courtyard_on_the_front(self):
         fp = self.footprint([(0, 0)], side="B")
@@ -253,9 +259,10 @@ class Courtyards(unittest.TestCase):
         p.SetSize(pcbnew.F_Cu, self.mm(4.0, 1.0))
         p.SetOrientationDegrees(90)  # its length along y
         fp.Add(p)
-        self.rect(fp, pcbnew.F_CrtYd, -0.75, -2.25, 0.75, 2.25)
-        self.assertEqual(cy.findings(pcbnew, fp), [])
+        self.rect(fp, pcbnew.F_CrtYd, -2.25, -0.75, 2.25, 0.75)  # drawn across it: right for the unrotated slot
+        self.assertRegex("; ".join(cy.findings(pcbnew, fp)), r"^1 unnumbered hole outside it by up to 1\.2\d mm$")
         self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 4.50 mm on F.CrtYd")
+        self.assertEqual(cy.findings(pcbnew, fp), [])
 
     def test_a_pad_bridging_a_notch_in_the_courtyard(self):
         pcbnew = self.pcbnew
@@ -319,6 +326,25 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, B.CrtYd kept")
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_only_the_faulty_side_is_redrawn(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)])
+        back = pcbnew.PAD(fp)
+        back.SetNumber("3")
+        back.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.B_Cu)
+        back.SetLayerSet(layers)
+        back.SetSize(pcbnew.B_Cu, self.mm(1.0, 1.0))
+        back.SetPosition(self.mm(0, 3))
+        fp.Add(back)
+        self.rect(fp, pcbnew.F_CrtYd, -3, -2, 3, 2)  # sound, with room to spare on purpose
+        self.rect(fp, pcbnew.B_CrtYd, -0.2, 2.8, 0.2, 3.2)  # too small
+        self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 1.50 mm on B.CrtYd, F.CrtYd kept")
+        front = [g for g in self.courtyard_shapes(fp) if g.GetLayer() == pcbnew.F_CrtYd]
+        self.assertEqual(len(front), 4)  # the four lines as drawn
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])
@@ -333,8 +359,9 @@ class Courtyards(unittest.TestCase):
         fp.Add(back)
         self.rect(fp, pcbnew.F_CrtYd, -1.75, -0.75, 1.75, 0.75)
         self.assertEqual(cy.findings(pcbnew, fp), ["pad 3 outside it by up to 2.75 mm"])  # no B.CrtYd: against F's
-        self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, 1.50 x 1.50 mm on B.CrtYd")
-        self.assertEqual(sorted(g.GetLayer() for g in self.courtyard_shapes(fp)), sorted([pcbnew.F_CrtYd, pcbnew.B_CrtYd]))
+        self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 1.50 mm on B.CrtYd, F.CrtYd kept")  # F was sound
+        layers = [g.GetLayer() for g in self.courtyard_shapes(fp)]
+        self.assertEqual((layers.count(pcbnew.F_CrtYd), layers.count(pcbnew.B_CrtYd)), (4, 1))
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
 

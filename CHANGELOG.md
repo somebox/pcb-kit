@@ -22,7 +22,7 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   a part's only courtyard, on the other side, goes (EasyEDA draws a back-mounted header's on the top).
   `--easyeda PCB.json` first draws each part's body on F.Fab or B.Fab from the EasyEDA export it was imported from
   (layer 99, the component shape, which KiCad's importer drops), placed by fitting its pads onto the footprint's, so
-  a part moved or turned since still gets its own; the check and the redraw then go by the body, not EasyEDA's silk,
+  a part moved or turned since still gets its own (mirrored if it changed sides; with `--fix --ref`, only those parts); the check and the redraw then go by the body, not EasyEDA's silk,
   which stands well off it. On espcandle-pcb's base that takes an 0603's redrawn courtyard from 3.29 x 1.94 mm to
   2.70 x 1.42 mm and an 0402's from 2.40 x 1.50 to 1.94 x 1.06. `pcbkit check` gains a "courtyards" section with the
   same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and

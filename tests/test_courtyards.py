@@ -456,19 +456,21 @@ class EasyedaBodies(Board):
 
     def test_the_component_shape_layer_is_read_by_reference(self):
         from pcbkit.import_easyeda import easyeda_bodies
-        lib = ("LIB~100~200~package`C0603`#@$TEXT~P~95~190~0.6~0~0~3~~4.5~C7~M 1 1#@$"
+        lib = ("LIB~100~200~package`C0603`~0~~gge0~1~u~0~0~~yes~~#@$TEXT~P~95~190~0.6~0~0~3~~4.5~C7~M 1 1#@$"
                "PAD~RECT~90~200~3~3~1~GND~1~0~~0~gge1#@$PAD~RECT~110~200~3~3~1~VCC~2~0~~0~gge2#@$"
                "PAD~RECT~100~210~1~1~1~~~0~~0~gge3#@$"  # a peg: no number
                "SOLIDREGION~99~~M 85 196 L 115 196 L 115 204 L 85 204 Z ~solid~gge4~~~~0")
         bare = "LIB~0~0~package`TP`#@$TEXT~P~0~0~0.6~0~0~3~~4.5~TP1~M 1 1#@$PAD~ELLIPSE~0~0~4~4~2~~1~0~~0~gge5"
+        under = lib.replace("~gge0~1~", "~gge7~2~").replace("~C7~", "~C8~")  # the same part on the bottom
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump({"shape": [lib, bare, "TRACK~1~1~~0 0 1 1~gge6~0"]}, f)
+            json.dump({"shape": [lib, bare, under, "TRACK~1~1~~0 0 1 1~gge6~0"]}, f)
         try:
             got = easyeda_bodies(f.name)
         finally:
             os.unlink(f.name)
-        self.assertEqual(list(got), ["C7"])  # TP1 draws no body
-        pads, outlines = got["C7"]
+        self.assertEqual(sorted(got), ["C7", "C8"])  # TP1 draws no body
+        self.assertEqual((got["C7"][2], got["C8"][2]), (False, True))
+        pads, outlines, _ = got["C7"]
         self.assertEqual(sorted(pads), ["1", "2"])
         self.assertNear([pads["1"], pads["2"]], [(22.86, 50.8), (27.94, 50.8)])
         self.assertNear(outlines[0], [(21.59, 49.784), (29.21, 49.784), (29.21, 51.816), (21.59, 51.816)])
@@ -498,6 +500,40 @@ class EasyedaBodies(Board):
         layer, got = self.fab_points(fp)
         self.assertEqual(layer, pcbnew.B_Fab)
         self.assertNear(got, [(20 - x, 10 + y) for x, y in self.BODY])
+
+    def test_a_two_pad_part_turned_over_since_gets_its_body_on_the_right_side_of_its_pads(self):
+        from pcbkit.import_easyeda import draw_bodies
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)], size=(0.6, 0.6))  # pads in a line fit mirrored or not
+        fp.SetPosition(self.mm(20, 10))
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)  # on the back now, on the top in the export
+        body = [(-1.5, -0.5), (1.5, -0.5), (1.5, 2.0), (-1.5, 2.0)]  # off to one side of the pads
+        found = {"U1": ({"1": (-1, 0), "2": (1, 0)}, [body], False)}
+        self.assertEqual(draw_bodies(pcbnew, [fp], found), ["U1"])
+        layer, got = self.fab_points(fp)
+        self.assertEqual(layer, pcbnew.B_Fab)
+        self.assertNear(got, [(20 - x, 10 + y) for x, y in body])  # unmirrored, it would land at 10 - y
+
+    def test_a_targeted_fix_draws_bodies_only_on_the_parts_asked_for(self):
+        pcbnew = self.pcbnew
+        for ref, dx in (("U1", 0), ("U2", 10)):
+            fp = self.footprint([(x + dx, y) for x, y in self.PADS], size=(0.6, 0.6))
+            fp.SetReference(ref)
+            self.rect(fp, pcbnew.F_CrtYd, dx - 2, -1, dx + 2, 2)  # sound: nothing to redraw
+        lib = lambda ref, dx: (f"LIB~0~0~package`X`~0~~g{ref}~1#@$TEXT~P~0~0~0.6~0~0~3~~4.5~{ref}~M 1 1#@$"
+                               + "#@$".join(f"PAD~RECT~{(x + dx) / 0.254}~{y / 0.254}~1~1~1~~{i}~0~~0~p{ref}{i}"
+                                            for i, (x, y) in enumerate(self.PADS, 1))
+                               + "#@$SOLIDREGION~99~~M " + " L ".join(f"{(x + dx) / 0.254} {y / 0.254}"
+                                                                      for x, y in self.BODY) + " Z ~solid~b~~~~0")
+        with tempfile.TemporaryDirectory() as t:
+            board, export = os.path.join(t, "b.kicad_pcb"), os.path.join(t, "pcb.json")
+            pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, board, self.board)
+            with open(export, "w") as f:
+                json.dump({"shape": [lib("U1", 0), lib("U2", 10)]}, f)
+            cy.main([board, "--fix", "--easyeda", export, "--ref", "U1"])
+            fab = {fp.GetReference(): [g for g in fp.GraphicalItems() if g.GetLayer() == pcbnew.F_Fab]
+                   for fp in pcbnew.LoadBoard(board).GetFootprints()}
+        self.assertEqual((len(fab["U1"]), len(fab["U2"])), (1, 0))
 
     def test_no_body_where_the_pads_differ_or_a_fab_drawing_is_there(self):
         from pcbkit.import_easyeda import add_body

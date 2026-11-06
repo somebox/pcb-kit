@@ -33,7 +33,7 @@ edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit
 B.Fab from EasyEDA's component-shape layer, which KiCad's importer drops: the footprints come with silk only, drawn
 well off the body (an 0603's 0.3 mm beyond its pads), so a courtyard round the silk is larger than the part. Each
 outline is placed by fitting its pads onto the footprint's, so a part moved or turned since the import still gets
-its own; a part that already has a fab drawing, or whose pads no longer match, is left as it is. The check and the
+its own (mirrored if it changed sides since: pads in a line fit either way); a part that already has a fab drawing, or whose pads no longer match, is left as it is. The check and the
 redraw then go by the body. With --fix the outlines are saved too; `pcbkit import-easyeda` draws them on import.
 """
 import argparse
@@ -351,7 +351,7 @@ def main(argv=None):
                     help="with --fix on a board: only these footprints (repeatable)")
     ap.add_argument("--easyeda", metavar="PCB.json",
                     help="the EasyEDA Std PCB export the board was imported from: draw each part's body on F.Fab "
-                         "or B.Fab from it first (saved with --fix)")
+                         "or B.Fab from it first (saved with --fix; with --fix --ref, only on those parts)")
     a = ap.parse_args(argv)
     ensure_pcbnew()
     import pcbnew
@@ -366,10 +366,10 @@ def main(argv=None):
     else:
         board = pcbnew.LoadBoard(str(path))
         if a.easyeda:
-            from ..import_easyeda import add_body, easyeda_bodies
-            shapes = easyeda_bodies(a.easyeda)
-            bodies = sorted((fp.GetReference() for fp in board.GetFootprints() if fp.GetReference() in shapes
-                             and add_body(pcbnew, fp, *shapes[fp.GetReference()])), key=_natural)
+            from ..import_easyeda import draw_bodies, easyeda_bodies
+            # a targeted repair saves only the footprints asked for
+            only = [fp for fp in board.GetFootprints() if not (a.fix and a.ref) or fp.GetReference() in a.ref]
+            bodies = sorted(draw_bodies(pcbnew, only, easyeda_bodies(a.easyeda)), key=_natural)
             print(f"bodies from {Path(a.easyeda).name} drawn on fab: {len(bodies)}"
                   + (f" ({', '.join(bodies)})" if bodies else ""))
         rows = [(fp.GetReference(), str(fp.GetFPID().GetLibItemName()), findings(pcbnew, fp), fp)

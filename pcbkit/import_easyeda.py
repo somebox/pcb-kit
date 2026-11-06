@@ -1108,10 +1108,10 @@ def _region_outlines(path):
 
 
 def easyeda_bodies(pcb_json):
-    """{reference: (pads, outlines)} for the parts of an EasyEDA Std PCB export that draw their body on layer 99,
-    EasyEDA's component shape: pads {number: (x, y)} (numbers that occur once), outlines [[(x, y), ...]], in mm in
-    EasyEDA's board frame. KiCad's importer drops that layer, so its footprints show the body only in silk, which
-    EasyEDA draws well off it."""
+    """{reference: (pads, outlines, back)} for the parts of an EasyEDA Std PCB export that draw their body on layer
+    99, EasyEDA's component shape: pads {number: (x, y)} (numbers that occur once), outlines [[(x, y), ...]], in mm
+    in EasyEDA's board frame, and whether the part sits on the bottom there (the LIB's layer, 2). KiCad's importer
+    drops that layer, so its footprints show the body only in silk, which EasyEDA draws well off it."""
     out = {}
     with open(pcb_json) as f:
         shapes = json.load(f)["shape"]
@@ -1119,6 +1119,8 @@ def easyeda_bodies(pcb_json):
         if not x.startswith("LIB~"):
             continue
         ref, pads, outlines = None, defaultdict(list), []
+        head = x.split("#@$")[0].split("~")
+        back = len(head) > 7 and head[7] == "2"
         for k in (g.split("~") for g in x.split("#@$")[1:]):
             if k[0] == "TEXT" and len(k) > 10 and k[1] == "P":
                 ref = k[10]
@@ -1127,8 +1129,16 @@ def easyeda_bodies(pcb_json):
             elif k[0] == "SOLIDREGION" and len(k) > 3 and k[1] == "99":
                 outlines += _region_outlines(k[3])
         if ref and outlines:
-            out[ref] = ({num: at[0] for num, at in pads.items() if len(at) == 1}, outlines)
+            out[ref] = ({num: at[0] for num, at in pads.items() if len(at) == 1}, outlines, back)
     return out
+
+
+def draw_bodies(pcbnew, footprints, bodies):
+    """Draw easyeda_bodies() on the footprints with those references (add_body), mirrored when a part is on the
+    other side now than in the export. Returns the references drawn."""
+    return [fp.GetReference() for fp in footprints if fp.GetReference() in bodies
+            and add_body(pcbnew, fp, *bodies[fp.GetReference()][:2],
+                         mirrored=bodies[fp.GetReference()][2] != fp.IsFlipped())]
 
 
 def footprint_pads(pcbnew, fp):
@@ -1140,16 +1150,17 @@ def footprint_pads(pcbnew, fp):
     return {num: a[0] for num, a in at.items() if len(a) == 1}
 
 
-def fit_pads(src, dst, mirrored=False, tol=0.02):
-    """The rigid map (turned, shifted, mirrored if it must be) that takes pad centres src {number: (x, y)} onto dst,
-    as a function of a point; None unless two pads or more, not all in one place, land within tol mm. Unmirrored is
-    tried first, or mirrored first when mirrored is set: two pads alone fit either way."""
+def fit_pads(src, dst, mirrored=None, tol=0.02):
+    """The rigid map (turned and shifted, and mirrored if mirrored is true) that takes pad centres src {number:
+    (x, y)} onto dst, as a function of a point; None unless two pads or more, not all in one place, land within tol
+    mm. Pads in a line fit mirrored or not alike, so the side a part changed to says which: mirrored None (side not
+    known) tries unmirrored first."""
     keys = sorted(set(src) & set(dst))
     if len(keys) < 2 or max(math.dist(src[keys[0]], src[k]) for k in keys) < 0.1:
         return None
     d = [dst[k] for k in keys]
     dx, dy = sum(p[0] for p in d) / len(d), sum(p[1] for p in d) / len(d)
-    for m in ((-1, 1) if mirrored else (1, -1)):
+    for m in ((1, -1) if mirrored is None else (-1,) if mirrored else (1,)):
         s = [(m * src[k][0], src[k][1]) for k in keys]
         sx, sy = sum(p[0] for p in s) / len(s), sum(p[1] for p in s) / len(s)
         a = math.atan2(sum((p[0] - sx) * (q[1] - dy) - (p[1] - sy) * (q[0] - dx) for p, q in zip(s, d)),
@@ -1164,10 +1175,11 @@ def fit_pads(src, dst, mirrored=False, tol=0.02):
     return None
 
 
-def add_body(pcbnew, fp, pads, outlines, mirrored=False):
+def add_body(pcbnew, fp, pads, outlines, mirrored=None):
     """Draw a body's outlines on the footprint's fab layer (B.Fab if it is on the back), placed by fitting pads onto
-    the footprint's own: pads {number: (x, y)} and outlines [[(x, y), ...]] in mm, in any one frame. Nothing is
-    drawn, and False returned, if the footprint already has a fab drawing or the pads don't fit."""
+    the footprint's own: pads {number: (x, y)} and outlines [[(x, y), ...]] in mm, in any one frame; mirrored when
+    that frame is the footprint's other side (fit_pads). Nothing is drawn, and False returned, if the footprint
+    already has a fab drawing or the pads don't fit."""
     if any(isinstance(g, pcbnew.PCB_SHAPE) and g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab)
            for g in fp.GraphicalItems()):
         return False
@@ -1411,9 +1423,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
         z.SetMinThickness(pcbnew.FromMM(0.15))
         z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.2))
     # KiCad's importer drops EasyEDA's component shapes (layer 99), leaving the body only in silk drawn well off it
-    drawn = [fp.GetReference() for fp in sorted(b.GetFootprints(), key=ref_order)
-             if fp.GetReference() in fp_refs and fp.GetReference() in (bodies or {})
-             and add_body(pcbnew, fp, *bodies[fp.GetReference()])]
+    drawn = draw_bodies(pcbnew, [fp for fp in sorted(b.GetFootprints(), key=ref_order)
+                                 if fp.GetReference() in fp_refs], bodies or {})
     # the courtyards KiCad's importer leaves are often turned against the pads, a sliver, or round the pins and
     # not the body. Redrawn before the save, so the library exports get them too.
     bad_courtyards, removed_courtyards = [], defaultdict(list)

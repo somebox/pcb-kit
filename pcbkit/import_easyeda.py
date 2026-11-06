@@ -1152,11 +1152,12 @@ def footprint_pads(pcbnew, fp):
 
 def fit_pads(src, dst, mirrored=None, tol=0.02):
     """The rigid map (turned and shifted, and mirrored if mirrored is true) that takes pad centres src {number:
-    (x, y)} onto dst, as a function of a point; None unless two pads or more, not all in one place, land within tol
-    mm. Pads in a line fit mirrored or not alike, so the side a part changed to says which: mirrored None (side not
-    known) tries unmirrored first."""
-    keys = sorted(set(src) & set(dst))
-    if len(keys) < 2 or max(math.dist(src[keys[0]], src[k]) for k in keys) < 0.1:
+    (x, y)} onto dst, as a function of a point; None unless both have the same pads, two or more and not all in one
+    place, and every one lands within tol mm: a footprint changed since (another land pattern that shares a pad or
+    two) gets no body. Pads in a line fit mirrored or not alike, so the side a part changed to says which: mirrored
+    None (side not known) tries unmirrored first."""
+    keys = sorted(src)
+    if set(src) != set(dst) or len(keys) < 2 or max(math.dist(src[keys[0]], src[k]) for k in keys) < 0.1:
         return None
     d = [dst[k] for k in keys]
     dx, dy = sum(p[0] for p in d) / len(d), sum(p[1] for p in d) / len(d)

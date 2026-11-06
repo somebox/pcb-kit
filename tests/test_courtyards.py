@@ -550,6 +550,8 @@ class EasyedaBodies(Board):
         wider = {str(i): (x * 1.1, y) for i, (x, y) in enumerate(self.PADS, 1)}  # another land pattern
         self.assertFalse(add_body(pcbnew, fp, wider, [self.BODY]))
         self.assertFalse(add_body(pcbnew, fp, {"1": (0, 0)}, [self.BODY]))  # one pad fixes nothing
+        two = {str(i): p for i, p in enumerate(self.PADS[:2], 1)}  # pads 1 and 2 line up; the footprint has a third
+        self.assertFalse(add_body(pcbnew, fp, two, [self.BODY]))
         self.rect(fp, pcbnew.F_Fab, -1, -1, 1, 1)
         self.assertFalse(add_body(pcbnew, fp, {str(i): p for i, p in enumerate(self.PADS, 1)}, [self.BODY]))
 

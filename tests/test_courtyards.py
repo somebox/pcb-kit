@@ -326,6 +326,17 @@ class Courtyards(unittest.TestCase):
         self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, B.CrtYd kept")
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_an_open_front_courtyard_keeps_the_keep_out_behind_it(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)])
+        self.rect(fp, pcbnew.F_CrtYd, -1.75, -0.75, 1.75, 0.75)
+        fp.Remove(self.courtyard_shapes(fp)[0])  # its own, left open
+        self.rect(fp, pcbnew.B_CrtYd, -4, -4, 4, 4)  # a keep-out on the back
+        self.assertEqual(cy.findings(pcbnew, fp), ["F.CrtYd is not a closed outline",
+                                                   "courtyard on B.CrtYd, pads on F.Cu"])  # the only closed one
+        self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, B.CrtYd kept")
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_only_the_faulty_side_is_redrawn(self):
         pcbnew = self.pcbnew
         fp = self.footprint([(-1, 0), (1, 0)])

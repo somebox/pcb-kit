@@ -235,8 +235,8 @@ def redraw(pcbnew, fp, margin=MARGIN):
     (a back-side test pad's outline drawn on the front), plus margin (mm). A side whose courtyard already holds all
     that keeps it, larger clearance and all: only the faulty side is redrawn. A courtyard on a side it draws no
     rectangle for is kept when it is closed, holds that side's body, and is a keep-out beside the part's own: the
-    part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard on a side with
-    pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
+    part is through-hole (a standoff, a screw head, the solder side), or it also had a courtyard, closed or not,
+    on a side with pads. An SMD part's only courtyard, on the side without pads, is the misplaced one and goes. Returns a
     description of the new courtyards, naming any closed one it kept or removed."""
     if not margin >= 0:  # a negative one turns a small part's rectangle inside out
         raise ValueError(f"courtyard margin must be 0 mm or more, got {margin}")
@@ -253,7 +253,10 @@ def redraw(pcbnew, fp, margin=MARGIN):
     layer = {"F": pcbnew.F_CrtYd, "B": pcbnew.B_CrtYd}
     tol = pcbnew.FromMM(FAB_TOL if kind == "fab" else SILK_TOL)
     closed = {t for t in "FB" if c.GetCourtyard(layer[t]).OutlineCount()}
-    beside = tht or bool(closed & set(sides))  # a keep-out beside the part's own courtyard, not instead of it
+    drawn = {t for t in "FB" if any(isinstance(i, pcbnew.PCB_SHAPE) and i.GetLayer() == layer[t]
+                                    for i in c.GraphicalItems())}
+    # a keep-out beside the part's own courtyard (drawn on a side with pads, even if open), not instead of it
+    beside = tht or bool(drawn & set(sides))
     kept = [t for t in "FB" if beside and t not in sides and t in closed
             and _outside(c.GetCourtyard(layer[t]), body[t]) <= tol]
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)

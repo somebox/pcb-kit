@@ -13,9 +13,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   board, as imported from EasyEDA, the first layout put a FET, a capacitor and the buck IC under the EXT connector,
   whose courtyard sat 1 mm inside its body. It reports a footprint with no courtyard or an open one, a courtyard only
   on the other side from all its pads, pads or holes outside it, and the body outside it: the fab outline, or the
-  silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). `--fix` redraws each as a
-  rectangle in the footprint's own frame round pads, holes and body plus `--margin` (0.25 mm), on its pads' side,
-  and saves the board or the `.pretty` library it was given. `pcbkit check` gains a "courtyards" section with the
+  silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
+  points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
+  rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
+  own frame round pads, holes and body plus `--margin` (0.25 mm), one on each side the footprint has pads on, and
+  saves the board or the `.pretty` library it was given. `pcbkit check` gains a "courtyards" section with the
   same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
   test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
   module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and
@@ -186,7 +188,10 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   a PCB part with nets and no symbol still stops the run. Both boards now import without `--force`. Fixtures in
   `tests/test_import_easyeda.py`.
 - **`pcbkit import-easyeda` redraws the courtyards KiCad's importer gets wrong**, as `pcbkit courtyards --fix`
-  does, before the footprints go into the library, and lists them. `--keep-courtyards` only lists them.
+  does, before the footprints go into the library, and lists them. A footprint the library already has with the
+  same pads, put there by an earlier import, gets its courtyard redrawn in the library too (the rest of it stays as
+  it is), so updating the board from the library doesn't bring the old one back. `--keep-courtyards` only lists
+  them.
 
 ## [0.3.0] - 2026-10-18
 

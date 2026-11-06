@@ -1004,11 +1004,20 @@ def drop_fields(path, pattern=r"JLC_3D[^\"]*"):
     Path(path).write_text("".join(out) + text[i:])
 
 
-def export_footprints(pcb_path, items, libdir):
-    """Copy footprints from a saved board into the library, unrotated and on top. Runs in its own process:
-    after a footprint save, the pcbnew bindings start returning untyped objects."""
+def export_footprints(pcb_path, items, libdir, repairs=()):
+    """Copy footprints from a saved board into the library, unrotated and on top, after redrawing the courtyards
+    of the library footprints named in repairs (the rest of each stays as it is). Runs in its own process: after a
+    footprint save, the pcbnew bindings start returning untyped objects, so the repairs are drawn before any save."""
     import pcbnew
+    from .checks import courtyards as cy
     io = pcbnew.PCB_IO_MGR.FindPlugin(pcbnew.PCB_IO_MGR.KICAD_SEXP)
+    repaired = []
+    for name in repairs:
+        fp = pcbnew.FootprintLoad(str(libdir), name)
+        cy.redraw(pcbnew, fp)
+        repaired.append(fp)
+    for fp in repaired:
+        io.FootprintSave(str(libdir), fp)
     b = pcbnew.LoadBoard(pcb_path)
     fps = {f.GetReference(): f for f in b.GetFootprints()}
     Path(libdir).mkdir(parents=True, exist_ok=True)
@@ -1163,7 +1172,7 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     from .checks import courtyards as cy
     b = pcbnew.LoadBoard(str(pcb_path))
     problems, board_only, loose_nets, fp_refs, paste_fixed = [], [], [], set(), 0
-    signatures, placements, fp_names, lib_sigs = {}, defaultdict(list), {}, {}
+    signatures, placements, fp_names, lib_sigs, lib_bad = {}, defaultdict(list), {}, {}, set()
 
     def lib_signature(name):
         """The pads of the library's footprint of that name: None if there is none, False if it won't load."""
@@ -1175,6 +1184,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
                 except Exception:  # an IO_ERROR from a file this KiCad can't read
                     lib_fp = None
                 lib_sigs[name] = footprint_signature(pcbnew, lib_fp) if lib_fp else False
+                if lib_fp and cy.findings(pcbnew, lib_fp):  # put there by an import before courtyards were checked
+                    lib_bad.add(name)
         return lib_sigs[name]
 
     for fp in sorted(b.GetFootprints(), key=ref_order):
@@ -1226,6 +1237,7 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     schematic_only = sorted(set(links) - fp_refs, key=lambda r: [int(t) if i % 2 else t for i, t in enumerate(re.split(r"(\d+)", r))])
     # a footprint the library has with the same pads stays as it is: another board may have put it there
     exports = [(min(p)[1], name) for name, p in placements.items() if lib_sigs.get(name) is None]
+    lib_courtyards = sorted(name for name in placements if lib_sigs.get(name) and name in lib_bad)
 
     old_to_new, new_to_old, pads, unpinned = defaultdict(set), defaultdict(set), [], []
     for fp in sorted(b.GetFootprints(), key=ref_order):
@@ -1295,7 +1307,7 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
                 problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
                 fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
-                courtyards=bad_courtyards, courtyards_kept=keep_courtyards)
+                courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_courtyards=lib_courtyards)
 
 
 # ---------------------------------------------------------------- project
@@ -1342,9 +1354,10 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty, keep_courtyards)
     if fixes["fp_names"]:
         set_footprint_fields(out_dir, links, fixes["fp_names"], nick)
-    subprocess.run([KICAD_PYTHON, "-c", "import sys; from pcbkit.import_easyeda import export_footprints; "
-                    "export_footprints(sys.argv[1], __import__('json').loads(sys.argv[2]), sys.argv[3])",
-                    str(pcb_path), json.dumps(fixes["exports"]), str(pretty)],
+    repairs = [] if keep_courtyards else fixes["lib_courtyards"]
+    subprocess.run([KICAD_PYTHON, "-c", "import sys, json; from pcbkit.import_easyeda import export_footprints; "
+                    "export_footprints(sys.argv[1], json.loads(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4]))",
+                    str(pcb_path), json.dumps(fixes["exports"]), str(pretty), json.dumps(repairs)],
                    check=True, capture_output=True, env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
     count = lambda k: sum(len(s[k]) for s in sch["sheets"])
     sheets = f"{len(subs)} sheets, " if subs else ""
@@ -1389,6 +1402,13 @@ def report_lines(fixes, sym_stats, links, sym_lib):
                    "(`pcbkit courtyards BOARD --fix` redraws them)" if fixes["courtyards_kept"] else
                    "courtyards redrawn round pads and body + 0.25 mm (the imported ones missed pads or the "
                    f"body, or sat on the other side): {refs}")
+    if fixes["lib_courtyards"]:
+        names = ", ".join(fixes["lib_courtyards"])
+        out.append(f"library: courtyards that miss pads or the body in footprints already in {sym_lib.stem}.pretty, "
+                   f"kept: {names} (`pcbkit courtyards {sym_lib.stem}.pretty --fix` redraws them)"
+                   if fixes["courtyards_kept"] else
+                   f"library: courtyards redrawn in footprints already in {sym_lib.stem}.pretty (the rest of each "
+                   f"kept): {names}")
     if fixes["loose_nets"]:
         out.append("loose pads with a net, made board-only (no symbol, not in the BOM or placement files): "
                    + ", ".join(fixes["loose_nets"]))

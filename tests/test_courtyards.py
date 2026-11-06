@@ -6,6 +6,7 @@ Each case draws a footprint in pcbnew the way KiCad's EasyEDA importer left one 
 a header's courtyard turned against its pins, a connector's drawn inside its silk body, a back-side test pad's on
 F.CrtYd; and the way KiCad's own libraries draw them, which must pass.
 """
+import math
 import os
 import sys
 import tempfile
@@ -174,6 +175,110 @@ class Courtyards(unittest.TestCase):
             (back,) = list(b.GetFootprints())
             self.assertEqual(cy.findings(pcbnew, back), [])
             self.assertEqual(cy.board_findings(pcbnew, b), [])
+
+    def poly(self, fp, layer, pts):
+        """A closed outline as one polygon, pts in mm."""
+        pcbnew = self.pcbnew
+        s = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_POLY)
+        s.SetPolyPoints(pcbnew.VECTOR_VECTOR2I([self.mm(x, y) for x, y in pts]))
+        s.SetLayer(layer)
+        s.SetWidth(pcbnew.FromMM(0.05))
+        fp.Add(s)
+        return s
+
+    def extent(self, pts):
+        T = self.pcbnew.ToMM
+        return (T(min(p.x for p in pts)), T(min(p.y for p in pts)), T(max(p.x for p in pts)), T(max(p.y for p in pts)))
+
+    def test_an_arc_reaches_its_extremes(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(0, 0)])
+        arc = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_ARC)  # radius 20 from 11.25 deg through 180 deg
+        at = lambda deg: self.mm(20 * math.cos(math.radians(deg)), 20 * math.sin(math.radians(deg)))
+        arc.SetArcGeometry(at(11.25), at(101.25), at(191.25))
+        x0, y0, x1, y1 = self.extent(cy.shape_points(pcbnew, arc, pcbnew.FromMM(cy.STEP)))
+        self.assertAlmostEqual(x0, -20, places=4)  # 180 deg, between samples
+        self.assertAlmostEqual(y1, 20, places=4)   # 90 deg
+        self.assertAlmostEqual(y0, 20 * math.sin(math.radians(-11.25)), places=4)
+
+    def test_a_bezier_is_sampled_on_the_curve(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(0, 0)])
+        b = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_BEZIER)
+        b.SetStart(self.mm(0, 0))
+        b.SetBezierC1(self.mm(3, 5))
+        b.SetBezierC2(self.mm(6, -5))
+        b.SetEnd(self.mm(9, 0))
+        _, y0, _, y1 = self.extent(cy.shape_points(pcbnew, b, pcbnew.FromMM(cy.STEP)))
+        self.assertAlmostEqual(y1, 5 * math.sqrt(3) / 6, places=2)  # 1.44 mm, not the control points' 5
+        self.assertAlmostEqual(y0, -5 * math.sqrt(3) / 6, places=2)
+
+    def test_a_through_hole_pads_back_copper_counts(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(0, 0)], kind="pth", size=(1.6, 1.6))
+        (p,) = list(fp.Pads())
+        p.Padstack().SetMode(pcbnew.PADSTACK.MODE_FRONT_INNER_BACK)
+        p.SetShape(pcbnew.B_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+        p.SetSize(pcbnew.B_Cu, self.mm(3.0, 3.0))
+        self.rect(fp, pcbnew.F_CrtYd, -1.1, -1.1, 1.1, 1.1)  # round the front copper only
+        self.assertEqual(cy.findings(pcbnew, fp), ["pad 1 outside it by up to 0.40 mm"])
+        self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 3.50 mm on F.CrtYd")
+
+    def test_a_rotated_slot_is_a_capsule_along_its_length(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([])
+        p = pcbnew.PAD(fp)
+        p.SetAttribute(pcbnew.PAD_ATTRIB_NPTH)
+        p.SetLayerSet(pcbnew.PAD.UnplatedHoleMask())
+        p.SetDrillShape(pcbnew.PAD_DRILL_SHAPE_OBLONG)
+        p.SetDrillSize(self.mm(4.0, 1.0))
+        p.SetShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_OVAL)
+        p.SetSize(pcbnew.F_Cu, self.mm(4.0, 1.0))
+        p.SetOrientationDegrees(90)  # its length along y
+        fp.Add(p)
+        self.rect(fp, pcbnew.F_CrtYd, -0.75, -2.25, 0.75, 2.25)
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+        self.assertEqual(cy.redraw(pcbnew, fp), "1.50 x 4.50 mm on F.CrtYd")
+
+    def test_a_pad_bridging_a_notch_in_the_courtyard(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(0, 0)], size=(3.0, 1.0))
+        # its four corners are inside; a notch 1 mm wide cuts into it from above, to the pad's middle
+        self.poly(fp, pcbnew.F_CrtYd, [(-2, -1), (-0.5, -1), (-0.5, 0), (0.5, 0), (0.5, -1), (2, -1), (2, 1), (-2, 1)])
+        # KiCad builds the courtyard 0.005 mm off the drawn line: 0.505 mm
+        self.assertRegex("; ".join(cy.findings(pcbnew, fp)), r"^pad 1 outside it by up to 0\.5[01] mm$")
+
+    def test_a_back_land_under_the_front_courtyard_passes(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)])
+        land = pcbnew.PAD(fp)  # the thermal land on the back of KiCad's ThermalVias packages: no B.CrtYd there
+        land.SetNumber("3")
+        land.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.B_Cu)
+        land.SetLayerSet(layers)
+        land.SetSize(pcbnew.B_Cu, self.mm(1.0, 0.8))
+        fp.Add(land)
+        self.rect(fp, pcbnew.F_CrtYd, -1.75, -0.75, 1.75, 0.75)
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
+    def test_pads_on_both_sides_keep_a_courtyard_on_each(self):
+        pcbnew = self.pcbnew
+        fp = self.footprint([(-1, 0), (1, 0)])
+        back = pcbnew.PAD(fp)
+        back.SetNumber("3")
+        back.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+        layers = pcbnew.LSET()
+        layers.AddLayer(pcbnew.B_Cu)
+        back.SetLayerSet(layers)
+        back.SetSize(pcbnew.B_Cu, self.mm(1.0, 1.0))
+        back.SetPosition(self.mm(0, 3))
+        fp.Add(back)
+        self.rect(fp, pcbnew.F_CrtYd, -1.75, -0.75, 1.75, 0.75)
+        self.assertEqual(cy.findings(pcbnew, fp), ["pad 3 outside it by up to 2.75 mm"])  # no B.CrtYd: against F's
+        self.assertEqual(cy.redraw(pcbnew, fp), "3.50 x 1.50 mm on F.CrtYd, 1.50 x 1.50 mm on B.CrtYd")
+        self.assertEqual(sorted(g.GetLayer() for g in self.courtyard_shapes(fp)), sorted([pcbnew.F_CrtYd, pcbnew.B_CrtYd]))
+        self.assertEqual(cy.findings(pcbnew, fp), [])
 
 
 if __name__ == "__main__":

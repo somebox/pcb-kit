@@ -9,7 +9,8 @@ leaves such courtyards (31 of the 44 parts on espcandle-pcb's base, 2026-11): tu
 0.2 mm wide, a connector's 1 mm inside its body, a module's round its pads but not its antenna, a back-side test
 pad's on F.CrtYd. This reports, per footprint:
   - no courtyard, or one that isn't a closed outline (footprints with pads that aren't board-only or net ties);
-  - a courtyard only on the other side from all its pads;
+  - a courtyard only on the other side from all its pads (an SMD pad on a side with no courtyard of its own, as
+    the thermal land on the back of KiCad's ThermalVias packages, is checked against the other side's);
   - pads (and holes) outside the courtyard by more than 0.02 mm;
   - the body outside the courtyard: the fab outline by more than 0.05 mm or, for a footprint with no fab outline
     (EasyEDA's draw the body only in silk), the silk by more than 0.5 mm, not counting dots (circles under 1 mm
@@ -20,8 +21,9 @@ keep-out. Of KiCad 10's own 15,464 footprints it reports 142 (2026-11), most of 
 fab drawing shows a part over the board edge, and card-edge connectors; none on boards drawn from them so far.
 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body
-(fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), on the side of its pads (the
-footprint's own side for through-hole parts), and saves the board or the library footprints. `pcbkit check` lists
+(fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), one on each side it has SMD pads
+on and on its own side for through-hole parts, and saves the board or the library footprints. Every outline is
+checked at points 0.05 mm apart, so an edge across a notch in the courtyard counts, and arcs at their extremes. `pcbkit check` lists
 the same findings; `pcbkit import-easyeda` redraws them on import.
 """
 import argparse
@@ -37,6 +39,7 @@ SILK_TOL = 0.5   # silk without fab: lines stand a little off the body, marks fu
 DOT = 0.5        # mm radius: a silk circle smaller than this is a mark (pin 1, polarity), not the body
 MARGIN = 0.25
 WIDTH = 0.05     # courtyard line width, as KiCad's libraries
+STEP = 0.05      # mm between the points checked along an outline
 
 
 def _mm(nm):
@@ -53,70 +56,110 @@ def local_copy(pcbnew, fp):
     return c
 
 
-def shape_points(pcbnew, s):
-    """Points along a graphic's centre line: corners and ends, and circles and arcs sampled."""
-    t, V = s.GetShape(), pcbnew.VECTOR2I
+def _along(pcbnew, a, b, step):
+    """Points from a towards b (b left out), at most step nm apart."""
+    n = max(1, int(math.ceil(math.hypot(b.x - a.x, b.y - a.y) / step)))
+    return [pcbnew.VECTOR2I(int(round(a.x + (b.x - a.x) * k / n)), int(round(a.y + (b.y - a.y) * k / n)))
+            for k in range(n)]
+
+
+def _outline(pcbnew, pts, step, closed=True):
+    """A polyline's points with more along each edge, at most step apart: an edge that crosses a notch in the
+    courtyard, both its ends inside, still has points outside."""
+    if not pts:
+        return []
+    edges = list(zip(pts, pts[1:] + pts[:1])) if closed else list(zip(pts, pts[1:]))
+    out = [q for a, b in edges for q in _along(pcbnew, a, b, step)]
+    return out if closed else out + [pts[-1]]
+
+
+def _arc(pcbnew, c, r, a0, da, step):
+    """Points along an arc from angle a0 through da (radians, KiCad's frame), at most step apart, with its
+    extremes in x and y."""
+    n = max(4, int(math.ceil(abs(da) * r / step)))
+    angles = [a0 + da * k / n for k in range(n + 1)]
+    lo, hi = min(a0, a0 + da), max(a0, a0 + da)
+    k = math.ceil(lo / (math.pi / 2))
+    while k * math.pi / 2 <= hi:
+        angles.append(k * math.pi / 2)
+        k += 1
+    return [pcbnew.VECTOR2I(int(round(c.x + r * math.cos(t))), int(round(c.y + r * math.sin(t)))) for t in angles]
+
+
+def shape_points(pcbnew, s, step):
+    """Points along a graphic's centre line, at most step nm apart: arcs and circles with their extremes in x and
+    y, a Bezier curve sampled on the curve (its control points are not on it)."""
+    t = s.GetShape()
     if t == pcbnew.SHAPE_T_SEGMENT:
-        return [s.GetStart(), s.GetEnd()]
+        return _outline(pcbnew, [s.GetStart(), s.GetEnd()], step, closed=False)
     if t == pcbnew.SHAPE_T_RECTANGLE:
-        return list(s.GetRectCorners())
+        return _outline(pcbnew, list(s.GetRectCorners()), step)
     if t == pcbnew.SHAPE_T_CIRCLE:
-        c, r = s.GetCenter(), s.GetRadius()
-        return [V(int(c.x + r * math.cos(k * math.pi / 8)), int(c.y + r * math.sin(k * math.pi / 8))) for k in range(16)]
+        return _arc(pcbnew, s.GetCenter(), s.GetRadius(), 0.0, 2 * math.pi, step)
     if t == pcbnew.SHAPE_T_ARC:
-        c, r = s.GetCenter(), s.GetRadius()
-        a0, da = s.GetArcAngleStart().AsRadians(), s.GetArcAngle().AsRadians()
-        return [V(int(c.x + r * math.cos(a0 + da * k / 8)), int(c.y + r * math.sin(a0 + da * k / 8))) for k in range(9)]
+        return _arc(pcbnew, s.GetCenter(), s.GetRadius(), s.GetArcAngleStart().AsRadians(),
+                    s.GetArcAngle().AsRadians(), step)
     if t == pcbnew.SHAPE_T_POLY:
         ps, out = s.GetPolyShape(), []
         for i in range(ps.OutlineCount()):
             o = ps.Outline(i)
-            out += [o.CPoint(k) for k in range(o.PointCount())]
+            out += _outline(pcbnew, [o.CPoint(k) for k in range(o.PointCount())], step)
         return out
     if t == pcbnew.SHAPE_T_BEZIER:
-        return [s.GetStart(), s.GetBezierC1(), s.GetBezierC2(), s.GetEnd()]
+        p = [s.GetStart(), s.GetBezierC1(), s.GetBezierC2(), s.GetEnd()]
+        hull = sum(math.hypot(b.x - a.x, b.y - a.y) for a, b in zip(p, p[1:]))
+        n = max(8, int(math.ceil(hull / step)))
+        w = lambda u: ((1 - u) ** 3, 3 * u * (1 - u) ** 2, 3 * u * u * (1 - u), u ** 3)
+        return [pcbnew.VECTOR2I(int(round(sum(c * q.x for c, q in zip(w(k / n), p)))),
+                                int(round(sum(c * q.y for c, q in zip(w(k / n), p))))) for k in range(n + 1)]
     return []
 
 
-def pad_shapes(pcbnew, fp):
-    """[(number, side, points)] for each pad: number "" for a peg or hole; side "F" or "B" for an SMD pad, None for
-    a through-hole pad or hole; points round its copper on its outer layer, and round its hole."""
+def pad_shapes(pcbnew, fp, step):
+    """[(pad, number, kind, side, points)]: pad its index, number "" for a peg or hole; kind "smd" with side "F" or
+    "B" for an SMD pad's copper, "tht" (side None) for a through-hole pad's copper on each outer layer (a padstack
+    may differ by layer) and for every hole, as its rotated slot or circle. Points along each outline, at most step
+    nm apart."""
     out = []
-    for p in fp.Pads():
-        ls = p.GetLayerSet()
+    for i, p in enumerate(fp.Pads()):
+        num = p.GetNumber()
         tht = p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
-        layer = pcbnew.F_Cu if ls.Contains(pcbnew.F_Cu) else pcbnew.B_Cu if ls.Contains(pcbnew.B_Cu) else None
-        if layer is None and not p.HasHole():
-            continue  # paste or mask only
-        pts = []
-        if layer is not None:
-            poly = p.GetEffectivePolygon(layer, pcbnew.ERROR_INSIDE)
-            for i in range(poly.OutlineCount()):
-                o = poly.Outline(i)
-                pts += [o.CPoint(k) for k in range(o.PointCount())]
+        for layer, side in ((pcbnew.F_Cu, "F"), (pcbnew.B_Cu, "B")):
+            if not p.IsOnLayer(layer):
+                continue
+            poly, pts = p.GetEffectivePolygon(layer, pcbnew.ERROR_INSIDE), []
+            for j in range(poly.OutlineCount()):
+                o = poly.Outline(j)
+                pts += _outline(pcbnew, [o.CPoint(k) for k in range(o.PointCount())], step)
+            if pts:
+                out.append((i, num, "tht" if tht else "smd", None if tht else side, pts))
         if p.HasHole():
-            c, d = p.GetPosition(), p.GetDrillSize()
-            pts += [pcbnew.VECTOR2I(int(c.x + d.x / 2 * math.cos(k * math.pi / 4)), int(c.y + d.y / 2 * math.sin(k * math.pi / 4)))
-                    for k in range(8)]
-        side = None if tht or layer is None else "F" if layer == pcbnew.F_Cu else "B"
-        out.append((p.GetNumber(), side, pts))
+            h = p.GetEffectiveHoleShape()
+            a, b, r = h.GetSeg().A, h.GetSeg().B, h.GetWidth() / 2
+            pts = _arc(pcbnew, a, r, 0.0, 2 * math.pi, step) + _arc(pcbnew, b, r, 0.0, 2 * math.pi, step)
+            d = math.hypot(b.x - a.x, b.y - a.y)
+            if d > 0:  # a slot: its two long sides too
+                nx, ny = -(b.y - a.y) / d * r, (b.x - a.x) / d * r
+                V = lambda q, k: pcbnew.VECTOR2I(int(round(q.x + k * nx)), int(round(q.y + k * ny)))
+                for k in (1, -1):
+                    pts += _outline(pcbnew, [V(a, k), V(b, k)], step, closed=False)
+            out.append((i, num, "tht", None, pts))
     return out
 
 
-def body_points(pcbnew, fp):
-    """('fab' or 'silk', points): the fab outline when the footprint has one, else its silk graphics (not text, and
-    not dots: a circle under 1 mm across is a pin-1 or polarity mark, often drawn off the body)."""
-    fab, silk = [], []
-    for g in fp.GraphicalItems():
-        if not isinstance(g, pcbnew.PCB_SHAPE):
-            continue
-        if g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab):
-            fab += shape_points(pcbnew, g)
-        elif g.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS):
-            if g.GetShape() == pcbnew.SHAPE_T_CIRCLE and g.GetRadius() < pcbnew.FromMM(DOT):
-                continue
-            silk += shape_points(pcbnew, g)
-    return ("fab", fab) if fab else ("silk", silk)
+def body_points(pcbnew, fp, step):
+    """('fab' or 'silk', {"F": points, "B": points}): the fab outline when the footprint has one, else its silk
+    graphics (not text, and not dots: a circle under 1 mm across is a pin-1 or polarity mark, often drawn off the
+    body), by side."""
+    shapes = [g for g in fp.GraphicalItems() if isinstance(g, pcbnew.PCB_SHAPE)]
+    fab = [g for g in shapes if g.GetLayer() in (pcbnew.F_Fab, pcbnew.B_Fab)]
+    silk = [g for g in shapes if g.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS)
+            and not (g.GetShape() == pcbnew.SHAPE_T_CIRCLE and g.GetRadius() < pcbnew.FromMM(DOT))]
+    kind, chosen = ("fab", fab) if fab else ("silk", silk)
+    out = {"F": [], "B": []}
+    for g in chosen:
+        out["F" if g.GetLayer() in (pcbnew.F_Fab, pcbnew.F_SilkS) else "B"] += shape_points(pcbnew, g, step)
+    return kind, out
 
 
 def _natural(s):
@@ -133,7 +176,8 @@ def findings(pcbnew, fp):
     if fp.IsBoardOnly() or fp.IsNetTie():
         return []
     c = local_copy(pcbnew, fp)
-    pads = pad_shapes(pcbnew, c)
+    step = pcbnew.FromMM(STEP)
+    pads = pad_shapes(pcbnew, c, step)
     if not pads:
         return []
     drawn = {s for s, layer in (("F", pcbnew.F_CrtYd), ("B", pcbnew.B_CrtYd))
@@ -143,23 +187,23 @@ def findings(pcbnew, fp):
     out = [f"{s}.CrtYd is not a closed outline" for s in sorted(drawn - set(cy))]
     if not cy:
         return out or ["no courtyard"]
-    smd_sides = {side for _, side, _ in pads}
-    if None not in smd_sides and not smd_sides & set(cy):
-        out.append(f"courtyard on {'/'.join(sorted(cy))}.CrtYd, pads on {'/'.join(sorted(smd_sides))}.Cu")
+    smd = {side for _, _, kind, side, _ in pads if kind == "smd"}
+    if smd and not any(kind == "tht" for _, _, kind, _, _ in pads) and not smd & set(cy):
+        out.append(f"courtyard on {'/'.join(sorted(cy))}.CrtYd, pads on {'/'.join(sorted(smd))}.Cu")
     both = pcbnew.SHAPE_POLY_SET()
     for p in cy.values():
         both.Append(p)
-    worst, names, holes = 0.0, [], 0
-    for name, side, pts in pads:
-        d = _outside(cy.get(side, both) if side else both, pts)
+    worst, names, holes = 0.0, set(), set()
+    for i, name, kind, side, pts in pads:
+        # an SMD pad against its own side's courtyard; one on a side with none (the thermal land on the back of
+        # KiCad's ThermalVias packages) against the other side's, as through-hole pads and holes
+        d = _outside(cy[side] if kind == "smd" and side in cy else both, pts)
         if _mm(d) > PAD_TOL:
             worst = max(worst, d)
-            if name:
-                names.append(name)
-            else:
-                holes += 1
+            (names.add(name) if name else holes.add(i))
+    holes = len(holes)
     if names or holes:
-        names.sort(key=_natural)
+        names = sorted(names, key=_natural)
         what = []
         if names:
             what.append(f"pad{'s' if len(names) > 1 else ''} " + ", ".join(names[:6])
@@ -167,7 +211,8 @@ def findings(pcbnew, fp):
         if holes:
             what.append(f"{holes} unnumbered hole{'s' if holes > 1 else ''}")
         out.append(f"{' and '.join(what)} outside it by up to {_mm(worst):.2f} mm")
-    kind, pts = body_points(pcbnew, c)
+    kind, body = body_points(pcbnew, c, step)
+    pts = body["F"] + body["B"]
     d = _mm(_outside(both, pts)) if pts else 0.0
     if d > (FAB_TOL if kind == "fab" else SILK_TOL):
         out.append(f"{kind} outline outside it by up to {d:.2f} mm")
@@ -175,36 +220,42 @@ def findings(pcbnew, fp):
 
 
 def redraw(pcbnew, fp, margin=MARGIN):
-    """Replace a footprint's courtyard with a rectangle round its pads, holes and body plus margin (mm), on its
-    pads' side. Returns a description of the new courtyard."""
+    """Replace a footprint's courtyards with a rectangle per side it has pads on, round that side's pads, its
+    through-hole pads and holes, and the body drawn on that side (on its own side, the whole body if none is),
+    plus margin (mm). Returns a description of the new courtyards."""
     c = local_copy(pcbnew, fp)
-    pads = pad_shapes(pcbnew, c)
-    pts = [p for _, _, ps in pads for p in ps] + body_points(pcbnew, c)[1]
+    step = pcbnew.FromMM(STEP)
+    pads = pad_shapes(pcbnew, c, step)
+    _, body = body_points(pcbnew, c, step)
+    own = "B" if fp.IsFlipped() else "F"
+    smd = {side for _, _, kind, side, _ in pads if kind == "smd"}
+    sides = sorted(smd | ({own} if any(kind == "tht" for _, _, kind, _, _ in pads) or not smd else set()), key="FB".index)
     m, g = pcbnew.FromMM(margin), pcbnew.FromMM(0.01)
-    x0 = math.floor((min(p.x for p in pts) - m) / g) * g
-    x1 = math.ceil((max(p.x for p in pts) + m) / g) * g
-    y0 = math.floor((min(p.y for p in pts) - m) / g) * g
-    y1 = math.ceil((max(p.y for p in pts) + m) / g) * g
-    sides = {side for _, side, _ in pads}
-    if len(sides) == 1 and None not in sides:
-        side = sides.pop()
-    else:
-        side = "B" if fp.IsFlipped() else "F"
+    rects = []
+    for s in sides:
+        pts = [q for _, _, kind, side, ps in pads if kind == "tht" or side == s for q in ps]
+        pts += body[s] or (body["F"] + body["B"] if s == own else [])
+        x0 = math.floor((min(q.x for q in pts) - m) / g) * g
+        x1 = math.ceil((max(q.x for q in pts) + m) / g) * g
+        y0 = math.floor((min(q.y for q in pts) - m) / g) * g
+        y1 = math.ceil((max(q.y for q in pts) + m) / g) * g
+        rects.append((s, x0, y0, x1, y1))
     for item in [i for i in fp.GraphicalItems()
                  if isinstance(i, pcbnew.PCB_SHAPE) and i.GetLayer() in (pcbnew.F_CrtYd, pcbnew.B_CrtYd)]:
         fp.Remove(item)
     pos = fp.GetPosition()
-    s = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_POLY)
-    corners = pcbnew.VECTOR_VECTOR2I()
-    for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
-        corners.append(pcbnew.VECTOR2I(pos.x + x, pos.y + y))
-    s.SetPolyPoints(corners)
-    s.SetLayer(pcbnew.F_CrtYd if side == "F" else pcbnew.B_CrtYd)
-    s.SetWidth(pcbnew.FromMM(WIDTH))
-    s.SetFilled(False)
-    s.Rotate(pos, fp.GetOrientation())
-    fp.Add(s)
-    return f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {side}.CrtYd"
+    for s, x0, y0, x1, y1 in rects:
+        shape = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_POLY)
+        corners = pcbnew.VECTOR_VECTOR2I()
+        for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            corners.append(pcbnew.VECTOR2I(pos.x + x, pos.y + y))
+        shape.SetPolyPoints(corners)
+        shape.SetLayer(pcbnew.F_CrtYd if s == "F" else pcbnew.B_CrtYd)
+        shape.SetWidth(pcbnew.FromMM(WIDTH))
+        shape.SetFilled(False)
+        shape.Rotate(pos, fp.GetOrientation())
+        fp.Add(shape)
+    return ", ".join(f"{_mm(x1 - x0):.2f} x {_mm(y1 - y0):.2f} mm on {s}.CrtYd" for s, x0, y0, x1, y1 in rects)
 
 
 def board_findings(pcbnew, board):

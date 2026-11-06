@@ -403,6 +403,14 @@ class Courtyards(Board):
         self.assertEqual(len(front), 4)  # the four lines as drawn
         self.assertEqual(cy.findings(pcbnew, fp), [])
 
+    def test_a_through_hole_parts_only_courtyard_on_the_far_side_is_reported_though_it_covers_all(self):
+        pcbnew = self.pcbnew
+        fp = self.header()
+        self.rect(fp, pcbnew.B_CrtYd, -4.35, -1.35, 4.35, 1.35)  # right size, wrong side: nothing guards the front
+        self.assertEqual(cy.findings(pcbnew, fp), ["courtyard on B.CrtYd, through-hole part on F.Cu's side"])
+        self.assertEqual(cy.redraw(pcbnew, fp), "8.70 x 2.70 mm on F.CrtYd, B.CrtYd removed")
+        self.assertEqual(cy.findings(pcbnew, fp), [])
+
     def test_a_through_hole_parts_only_courtyard_on_the_other_side_goes(self):
         pcbnew = self.pcbnew
         fp = self.header()  # mounted on its own side; EasyEDA drew a back-mounted header's courtyard on the top

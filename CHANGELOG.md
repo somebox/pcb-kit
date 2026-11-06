@@ -12,7 +12,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   courtyard, so one that misses its pads or body lets a part be placed on it and DRC passes. On espcandle-pcb's base
   board, as imported from EasyEDA, the first layout put a FET, a capacitor and the buck IC under the EXT connector,
   whose courtyard sat 1 mm inside its body. It reports a footprint with no courtyard or an open one, a courtyard only
-  on the other side from all its pads, pads or holes outside it, and the body outside it: the fab outline, or the
+  on the other side from all its pads (a through-hole part's only on the side away from the one it is mounted on,
+  where DRC would let a part go under it), pads or holes outside it, and the body outside it: the fab outline, or the
   silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
   points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
   rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
@@ -28,10 +29,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
   test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
   module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and
-  spotlight boards drawn from KiCad's libraries. Of KiCad 10's own 15,464 footprints it reports 141: connectors,
+  spotlight boards drawn from KiCad's libraries. Of KiCad 10's own 15,464 footprints it reports 142: connectors,
   card sockets and angled switches whose fab drawing shows a part over the board edge (73), card-edge connectors
   (25), keyboard switches' stabiliser holes (6), 17 courtyards that don't close (lines 0.05 mm short of their arcs,
-  missing sides), and pads just outside on slide potentiometers, terminal blocks and antennas. Tests in `tests/test_courtyards.py`.
+  missing sides), pads just outside on slide potentiometers, terminal blocks and antennas, and a CuK slide switch
+  drawn on the front whose only courtyard is on B.CrtYd. Tests in `tests/test_courtyards.py`.
 - **`pcbkit reroute`, a negotiated router, experimental.** It takes a placed board whose power copper and ground are
   drawn and lays its signals again: small parts moved where that helps, every signal net routed together, test pads
   placed after the routing, repairs, and the old routing and the new one compared. It never writes your board. On six

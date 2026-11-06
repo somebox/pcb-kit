@@ -10,15 +10,17 @@ leaves such courtyards (31 of the 44 parts on espcandle-pcb's base, 2026-11): tu
 pad's on F.CrtYd. This reports, per footprint:
   - no courtyard, or one that isn't a closed outline (footprints with pads that aren't board-only or net ties);
   - a courtyard only on the other side from all its pads (an SMD pad on a side with no courtyard of its own, as
-    the thermal land on the back of KiCad's ThermalVias packages, is checked against the other side's);
+    the thermal land on the back of KiCad's ThermalVias packages, is checked against the other side's), or, for a
+    through-hole part, only on the side away from the one it is mounted on;
   - pads (and holes) outside the courtyard by more than 0.02 mm;
   - the body outside the courtyard: the fab outline by more than 0.05 mm or, for a footprint with no fab outline
     (EasyEDA's draw the body only in silk), the silk by more than 0.5 mm, not counting dots (circles under 1 mm
     across: pin-1 and polarity marks). KiCad's own libraries draw silk marks up to 0.8 mm outside the courtyard
     (SOT-23's pin-1 triangle, an electrolytic's +), so silk counts only without fab.
 A courtyard larger than the part is not reported: a mounting hole's covers the screw head, a module's its antenna
-keep-out. Of KiCad 10's own 15,464 footprints it reports 141 (2026-11), most of them connectors and switches whose
-fab drawing shows a part over the board edge, and card-edge connectors; none on boards drawn from them so far.
+keep-out. Of KiCad 10's own 15,464 footprints it reports 142 (2026-11), most of them connectors and switches whose
+fab drawing shows a part over the board edge, and card-edge connectors (and a slide switch drawn on the front with
+its only courtyard on B.CrtYd); none on boards drawn from them so far.
 
 --fix redraws each reported courtyard as a rectangle in the footprint's own frame around its pads, holes and body
 (fab outline, or silk without one) plus --margin (0.25 mm, IPC-7351's nominal), one on each side it has SMD pads
@@ -206,8 +208,12 @@ def findings(pcbnew, fp):
     if not cy:
         return out or ["no courtyard"]
     smd = {side for _, _, kind, side, _ in pads if kind == "smd"}
-    if smd and not any(kind == "tht" for _, _, kind, _, _ in pads) and not smd & set(cy):
+    tht = any(kind == "tht" for _, _, kind, _, _ in pads)
+    mount = "B" if fp.IsFlipped() else "F"
+    if smd and not tht and not smd & set(cy):
         out.append(f"courtyard on {'/'.join(sorted(cy))}.CrtYd, pads on {'/'.join(sorted(smd))}.Cu")
+    elif tht and mount not in cy:  # its body stands on that side: DRC would let a part go under it there
+        out.append(f"courtyard on {'/'.join(sorted(cy))}.CrtYd, through-hole part on {mount}.Cu's side")
     both = pcbnew.SHAPE_POLY_SET()
     for p in cy.values():
         both.Append(p)

@@ -11,6 +11,9 @@ Each stamp must change exactly what it means to: the masked text before and afte
 Fab output is compared by fab_fingerprint, a hash. When the hash differs, fab_gap compares the files themselves with a
 release's: zone fills (Gerber regions) whose vertices lie within ZONE_TOLERANCE of the release's are the same copper,
 since a KiCad that refills zones a little differently moves them by a nanometre or drops a vertex.
+
+The circuit (circuit(), circuit_fingerprint(), circuit_changes()) is the board's netlist and BOM as the PCB has them:
+what decides between a minor version (the circuit changed) and a patch (only the layout did).
 """
 import csv
 import datetime
@@ -212,6 +215,122 @@ def fab_fingerprint(out):
         elif f.endswith(".csv"):
             h.update(f.split("-")[0].encode() + b"\0" + "\n".join("\t".join(r) for r in _csv_rows(p)).encode())
     return h.hexdigest()
+
+
+BOM_FIELDS = ("LCSC", "MPN")            # with the footprint and value: what a part is, as the BOM orders it
+BOM_FLAGS = ("dnp", "exclude_from_bom")  # a part not fitted, or not bought with the board
+NET = re.compile(r'\(net (?:\d+ )?"((?:[^"\\]|\\.)*)"\)')     # KiCad 10 writes (net "name"), earlier (net 3 "name")
+
+
+def circuit(pcb):
+    """The board's netlist and BOM as its .kicad_pcb has them (KiCad's layout of the file, one item a line): parts,
+    one [reference, footprint name, value, LCSC, MPN, flags] row a footprint, in reference order, and nets,
+    {name: sorted [reference, pad] pins}. Board-only footprints (logos, a test pad drawn on the board) are neither
+    parts nor pins. A pad on no net, or on KiCad's unconnected-(...) net for a pin left open, is on none."""
+    with open(pcb, encoding="utf-8") as fh:
+        text = fh.read()
+    parts, nets = [], {}
+    for m in re.finditer(r'\n\t\(footprint "((?:[^"\\]|\\.)*)"', text):
+        block = text[m.end():text.find("\n\t)", m.end())]
+        children = block.split("\n\t\t(")
+        props, flags = {}, set()
+        for c in children:
+            p = re.match(r'property "((?:[^"\\]|\\.)*)" "((?:[^"\\]|\\.)*)"', c)
+            if p:
+                props.setdefault(p.group(1), p.group(2))
+            elif c.startswith("attr "):
+                flags |= set(c[5:c.index(")")].split())
+            elif re.match(r"(dnp|exclude_from_bom|board_only) yes\)", c):
+                flags.add(c.split()[0])
+        if "board_only" in flags:
+            continue
+        ref = props.get("Reference", "")
+        parts.append([ref, m.group(1).split(":")[-1], props.get("Value", "")]
+                     + [props.get(f, "").strip() for f in BOM_FIELDS] + [sorted(flags & set(BOM_FLAGS))])
+        for c in children:
+            pad = re.match(r'pad "((?:[^"\\]|\\.)*)"', c)
+            net = NET.search(c) if pad and pad.group(1) else None
+            if net and net.group(1) and not net.group(1).startswith("unconnected-("):
+                nets.setdefault(net.group(1), set()).add((ref, pad.group(1)))
+    return dict(parts=sorted(parts, key=lambda r: _natural(r[0])),
+                nets={n: sorted([list(p) for p in v], key=lambda p: (_natural(p[0]), _natural(p[1])))
+                      for n, v in sorted(nets.items())})
+
+
+def _natural(s):
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", s)]
+
+
+def _connections(c):
+    """The nets as sets of pins, without their names: a net renamed is the same circuit. A net of one pin connects
+    nothing."""
+    return [(n, frozenset(map(tuple, pins))) for n, pins in c["nets"].items() if len(pins) > 1]
+
+
+def circuit_fingerprint(c):
+    """A hash of circuit(): the parts and the connections between their pins, not the nets' names."""
+    nets = sorted(sorted(pins) for _, pins in _connections(c))
+    return hashlib.sha1(json.dumps({"parts": c["parts"], "nets": nets}, sort_keys=True).encode()).hexdigest()
+
+
+def _pins(ps, most=6):
+    ps = sorted(ps, key=lambda p: (_natural(p[0]), _natural(p[1])))
+    out = ", ".join(f"{r}.{n}" for r, n in ps[:most])
+    return out + (f", ... ({len(ps)} pins)" if len(ps) > most else "")
+
+
+def circuit_changes(old, new):
+    """What changed from one circuit() to another, in words: parts added, removed or changed ("R3 value 10k -> 4.7k"),
+    then the connections ("net VIN gains U2.5"), each net named as the new circuit names it. Empty when their
+    fingerprints are the same."""
+    out = []
+    a, b = ({r[0]: r for r in c["parts"]} for c in (old, new))
+    names = ("footprint", "value") + BOM_FIELDS
+    for ref in sorted(set(a) | set(b), key=_natural):
+        x, y = a.get(ref), b.get(ref)
+        if not x:
+            out.append(f"adds {ref} (" + ", ".join(v for v in [y[2], y[1]] + y[3:-1] if v) + ")")
+        elif not y:
+            out.append(f"removes {ref}")
+        else:
+            out += [f"{ref} {k} {u or '(none)'} -> {v or '(none)'}"
+                    for k, u, v in zip(names, x[1:-1], y[1:-1]) if u != v]
+            for f in BOM_FLAGS:
+                if (f in x[-1]) != (f in y[-1]):
+                    word = "DNP" if f == "dnp" else "out of the BOM"
+                    out.append(f"{ref} {word}" if f in y[-1] else f"{ref} no longer {word}")
+    was, now = _connections(old), _connections(new)
+    gone = [(n, s) for n, s in was if s not in {s for _, s in now}]
+    came = [(n, s) for n, s in now if s not in {s for _, s in was}]
+    # each net that changed is matched with the old net it shares most pins with (the same name first, on a tie)
+    pairs = sorted(((len(s & t), n == m, i, j) for i, (n, s) in enumerate(came) for j, (m, t) in enumerate(gone)
+                    if s & t), reverse=True)
+    matched, used = {}, set()
+    for _, _, i, j in pairs:
+        if i not in matched and j not in used:
+            matched[i] = j
+            used.add(j)
+    def moved(name, s, t):
+        what = [f"gains {_pins(s - t)}"] * bool(s - t) + [f"loses {_pins(t - s)}"] * bool(t - s)
+        return f"net {name} " + " and ".join(what)
+    for i, (n, s) in enumerate(came):
+        if i in matched:
+            m, t = gone[matched[i]]
+            out.append(moved(n if n == m else f"{m} (now {n})", s, t))
+        elif n in old["nets"]:                  # it had one pin, which connected nothing
+            out.append(moved(n, s, set(map(tuple, old["nets"][n]))))
+        else:
+            out.append(f"adds net {n} ({_pins(s)})")
+    for j, (m, t) in enumerate(gone):
+        if j in used:
+            continue
+        if m in new["nets"]:                    # down to one pin
+            out.append(moved(m, set(map(tuple, new["nets"][m])), t))
+        else:
+            out.append(f"removes net {m} ({_pins(t)})")
+    if not out and circuit_fingerprint(old) != circuit_fingerprint(new):
+        out.append("the netlist or BOM changed")
+    return out
 
 
 def _step(lines):

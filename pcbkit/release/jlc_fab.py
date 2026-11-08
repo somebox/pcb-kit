@@ -39,8 +39,10 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   per-part exceptions. Checked in JLC's placement preview
   (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
   the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
-  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
-  the preview is -90 on either side. The table's Checked column dates the rules seen right there; a rule without
+  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. On 2026-11-08,
+  KiCad's WSON-6-1EP_2x2mm needed 270 and SOT-583-8 180 (neither had a rule), and the 6.3x7.7 mm polymer capacitor
+  C46550459 0 (the CP_Elec rule's 180 put its + on the - pad); VSON-8, TDSON-8-1, SOT-23-6 (with C7843 and C55266),
+  SSOP and TSSOP were right. "Rotate Right" in the preview is -90 on either side. The table's Checked column dates the rules seen right there; a rule without
   a date has no check on record, and PLACEMENT-<name>.md marks the parts under it.
 Check rotations and polarity in JLC's placement preview before ordering, with PLACEMENT-<name>.md. Harvested from the
 sign's jlc_fab.py.

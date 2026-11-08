@@ -11,7 +11,9 @@ spokes count) into connected groups, and reports:
   - pours that reach only one pad of a net that has several (not stitched to the plane);
   - power pads fed only through thin track: on the power classes, pads that lose their connection when unlocked
     tracks narrower than the net class are removed. Scripted necks are locked, so they count as wide. The power
-    classes default to every net class whose track width is 0.5 mm or more.
+    classes default to every net class whose track width is 0.5 mm or more;
+  - courtyards that miss a footprint's pads or body, or sit on the other side (`pcbkit courtyards`, which can
+    redraw them).
 
 Run on a board whose zones are filled, e.g. after `pcbkit drc --save`. Reads net classes from the sibling
 .kicad_pro. Harvested from dodeca v1.3's route_check.py.
@@ -23,6 +25,7 @@ import math
 from pathlib import Path
 
 from ..kicad import ensure_pcbnew
+from . import courtyards
 
 TOL = 1000  # nm
 
@@ -248,10 +251,11 @@ def check(path, power_classes=None):
                 for g in gs[1:]:
                     report["power pads fed only by thin track"].append(
                         f"{netname} ({cls}, {want} mm): {', '.join(name(items[k]) for k in g if kind[k] == 'pad')}")
+    report["courtyards"] = [f"{ref} ({fp}): {'; '.join(f)}" for ref, fp, f in courtyards.board_findings(pcbnew, b)]
     return report
 
 
-SECTIONS = ("floating", "stubs", "loops", "pours reaching one pad", "power pads fed only by thin track")
+SECTIONS = ("floating", "stubs", "loops", "pours reaching one pad", "power pads fed only by thin track", "courtyards")
 
 
 def main(argv=None):

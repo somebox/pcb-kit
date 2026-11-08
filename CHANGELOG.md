@@ -8,6 +8,32 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit courtyards`: courtyards that don't describe their part.** DRC's placement checks trust each footprint's
+  courtyard, so one that misses its pads or body lets a part be placed on it and DRC passes. On espcandle-pcb's base
+  board, as imported from EasyEDA, the first layout put a FET, a capacitor and the buck IC under the EXT connector,
+  whose courtyard sat 1 mm inside its body. It reports a footprint with no courtyard or an open one, a courtyard only
+  on the other side from all its pads (a through-hole part's only on the side away from the one it is mounted on,
+  where DRC would let a part go under it), pads or holes outside it, and the body outside it: the fab outline, or the
+  silk for a footprint with no fab outline (dots under 1 mm across are marks, not body). Outlines are checked at
+  points 0.05 mm apart, so an edge across a notch counts; arcs at their extremes, curves on the curve, holes as their
+  rotated slots, a through-hole pad's copper on both sides. `--fix` redraws each as a rectangle in the footprint's
+  own frame round pads, holes and body plus `--margin` (0.25 mm, as KiCad's own libraries round 0603s, SOTs and
+  QFNs), one on each side the footprint has pads on, and saves the board or the `.pretty` library it was given. A
+  sound courtyard on the other side stays when it is a keep-out beside the part's own (a standoff, a screw head);
+  a part's only courtyard, on the other side, goes (EasyEDA draws a back-mounted header's on the top).
+  `--easyeda PCB.json` first draws each part's body on F.Fab or B.Fab from the EasyEDA export it was imported from
+  (layer 99, the component shape, which KiCad's importer drops), placed by fitting its pads onto the footprint's, so
+  a part moved or turned since still gets its own (mirrored if it changed sides; with `--fix --ref`, only those parts); the check and the redraw then go by the body, not EasyEDA's silk,
+  which stands well off it. On espcandle-pcb's base that takes an 0603's redrawn courtyard from 3.29 x 1.94 mm to
+  2.70 x 1.42 mm and an 0402's from 2.40 x 1.50 to 1.94 x 1.06. `pcbkit check` gains a "courtyards" section with the
+  same findings. It finds 31 of the 44 parts on that base board as imported (the headers, switches, connectors and
+  test pads fixed there by hand, and passives whose courtyard was a sliver or turned against the pads, and the ESP32
+  module's, which left out the antenna), and none on the siebenuhr, Orbitchron, esp32-s3-ha-node, sign and
+  spotlight boards drawn from KiCad's libraries. Of KiCad 10's own 15,464 footprints it reports 142: connectors,
+  card sockets and angled switches whose fab drawing shows a part over the board edge (73), card-edge connectors
+  (25), keyboard switches' stabiliser holes (6), 17 courtyards that don't close (lines 0.05 mm short of their arcs,
+  missing sides), pads just outside on slide potentiometers, terminal blocks and antennas, and a CuK slide switch
+  drawn on the front whose only courtyard is on B.CrtYd. Tests in `tests/test_courtyards.py`.
 - **`pcbkit reroute`, a negotiated router, experimental.** It takes a placed board whose power copper and ground are
   drawn and lays its signals again: small parts moved where that helps, every signal net routed together, test pads
   placed after the routing, repairs, and the old routing and the new one compared. It never writes your board. On six
@@ -136,6 +162,23 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   Standard, every unique part pays the same loading fee, Basic or Extended, so swapping an Extended part for a Basic
   one saves only the price difference. BOM.md gains an assembly estimate. A new rule says hand-soldering pays only
   when it takes a whole side off the order.
+- **`pcbkit import-easyeda` merges into the library instead of rewriting it**, so several boards can share one
+  `--lib`/`--lib-name`. It wrote `<nick>.kicad_sym` afresh on every run, and the second board's import took the first
+  board's symbols away. A symbol already in the library with the same name and pins is used as it is (also one saved
+  by KiCad's symbol editor, but not one derived from another or split into units), and so is a footprint with the same
+  name and pads (places, sizes, shapes, angles, holes, copper offsets from the hole, pad types and layers, paste and
+  mask margins, the copper outline of custom pads such as EasyEDA's polygon pads, and the back and inner-layer copper
+  of a pad whose padstack gives those layers other copper; the pads in any order, and a top or bottom placement at any
+  angle compares as the library footprint); one with the same name and other pins or pads makes the new one `name_2`
+  (the schematic's Footprint field follows); every other symbol and footprint stays. Importing a board again leaves
+  the library as it was, byte for byte, also one KiCad's symbol editor saved last: the library's text is kept and new
+  symbols go in among the old ones, in name order. Library footprints no longer carry the sheet file of the board they
+  were copied from, and one copied from a bottom-side through-hole part on a board of more than two copper layers
+  keeps copper on every layer (KiCad's flip had cut it to that board's inner layers). A schematic part with no
+  footprint on the PCB no longer stops the run: it is listed as schematic-only and gets an empty Footprint field (ERC
+  gave `footprint_link_issues` for a footprint no library had; DRC parity still lists it as `missing_footprint`).
+  Sheet files drop the " copy" EasyEDA gives a duplicated sheet and are named in lower case with `-` (`ESP32+USB copy`
+  is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer `esp32+usb_copy.kicad_sch`).
 
 ### Fixed
 - **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a
@@ -168,6 +211,22 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   radius). Stubs are found from track ends as before. On esp32-s3-ha-node's board the six floating VIN and +5V_BUCK
   groups are gone, which KiCad's DRC already saw as connected, and nothing else changed there or on the other corpus
   boards. The first fixture boards for `check` are in `tests/test_route_check.py`.
+- **`pcbkit import-easyeda` no longer leaves what took hand fixes on espcandle-pcb's two boards.** The copper-pour
+  keep-outs KiCad's importer makes on User.4 from EasyEDA's pin outlines (layer-100 cutouts in LCSC's SOT-23, SC-70
+  and SOD-123 footprints) are removed from the board and the library footprints: they were 11 and 16 DRC
+  `items_not_allowed` errors. Edge.Cuts ends less than 0.05 mm apart are joined (a 0.0127 mm gap failed DRC with
+  `invalid_outline`); only ends that meet no other end move, so short segments keep their length. Pads without a
+  number and NPTH pegs (a switch's, a USB-C socket's) are no longer "pad has no schematic pin", and a pad the symbol
+  lacks that is unconnected on the PCB too (USB-C shell pads) is listed instead of stopping the run. A loose pad with
+  a net, such as a GND test pad, becomes a board-only footprint out of the BOM and placement files and is listed; only
+  a PCB part with nets and no symbol still stops the run. Both boards now import without `--force`. Fixtures in
+  `tests/test_import_easyeda.py`.
+- **`pcbkit import-easyeda` redraws the courtyards KiCad's importer gets wrong**, as `pcbkit courtyards --fix`
+  does, before the footprints go into the library, and lists them. A footprint the library already has with the
+  same pads, put there by an earlier import, gets its courtyard redrawn in the library too (the rest of it stays as
+  it is), so updating the board from the library doesn't bring the old one back. `--keep-courtyards` only lists
+  them. Each part's body is drawn on F.Fab/B.Fab from EasyEDA's component shapes first, on the board and in a
+  library footprint an earlier import left without one, so the courtyards go round the body rather than the silk.
 
 ## [0.3.0] - 2026-10-18
 

@@ -123,8 +123,35 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   back adding up to both. `pcbkit release` takes the back pair for a board whose placed parts are all on the back
   (the same rows its `-both` pair had), and the fab fingerprint leaves the `-back` files out, so releases made
   before keep their fingerprints.
+- **Each release folder holds a frozen copy of the board's KiCad project**, in `v<label>/kicad/`: the .kicad_pro,
+  the root schematic and every sheet under it (subfolders kept), the .kicad_pcb as released, the .kicad_dru and the
+  library tables, but not the .kicad_prl, lock files, KiCad 10's Local History (`.history/`) or backups. KiCad
+  links a schematic to a board by file stem within one project, and the net classes and rules live in the
+  .kicad_pro, so a second board file beside one schematic doesn't open as that version; the copy does, beside the
+  working board or any other release. Footprints and symbols are embedded; the `${KIPRJMOD}/../../lib/...` paths in
+  the library tables and 3-D models (and a model's bare relative path) are rewritten to reach the same files from
+  the release folder's depth. MANIFEST.txt lists the copy's files and what it names and doesn't find (a missing
+  model, an absolute path, a variable not set here), and the release's output counts them. The fab fingerprint and
+  the comparison with a release's own files read only the fab files, so the copy changes neither. Checked in
+  `tests/test_release.py`: the copy opens with `pcbnew.LoadBoard` and `kicad-cli` draws both sheets of its
+  schematic. The project template's `.gitignore` gains `.history/`.
 
 ### Changed
+- **`pcbkit release` chooses the version from what changed: minor for the netlist or BOM, patch for the layout.**
+  It bumped the patch for any change unless given `--minor` or `--major`. It now reads each board's netlist and BOM
+  from the .kicad_pcb (every footprint but board-only ones, by reference: footprint, value, LCSC and MPN fields, DNP
+  and exclude-from-BOM flags; each pin's net) and keeps a fingerprint of them per version in releases.toml
+  (`circuit`, also in MANIFEST.txt). A board whose netlist or BOM differs from its last release's gets the next
+  minor version, even with the same fab output (an MPN that only PCBWay's BOM would show, a hand-soldered part's
+  value); one whose only difference is its fab output gets a patch. A net renamed, or a net of one pin, connects
+  nothing new and doesn't count. The output, `--dry-run`'s too, says which part and what changed, read against the
+  last release's `kicad/` copy (`minor after 1.0.0: R1 value 10k -> 4.7k; net VIN gains R2.2`), and the release's
+  note in releases.toml keeps it. `--patch` (new) and `--minor` override the choice; `--major` stays yours to give,
+  for a new header pinout, outline, mounting holes or GPIO map; `--version` now says what changed too. A last release
+  recorded without the fingerprint gets a patch, and the output says why; a board unchanged since such a release
+  gets it recorded on the next run ("recorded v1.3's netlist/BOM fingerprint"), since its circuit is the
+  release's. docs/CONVENTIONS.md has the rule, and that a first release, which adopts the title block's version,
+  needs `--version` when the circuit changed since that version was built.
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
   every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
   270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W

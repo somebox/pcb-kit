@@ -3,6 +3,7 @@ production/orders/*/upload/
 *-backups/
 *.kicad_prl
 *.lck
+.history/
 fp-info-cache
 __pycache__/
 .DS_Store

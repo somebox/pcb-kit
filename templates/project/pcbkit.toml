@@ -9,8 +9,13 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # exclude = []                         # PCB paths or board folders to leave out (globs)
 
 [release]
+# A changed board's next version: minor when its netlist or BOM changed (a part, a value, an LCSC or MPN field, a
+# connection), patch when only its layout did; --dry-run says which and what changed. --major for a new header
+# pinout, outline, mounting holes or GPIO map; --minor or --patch to override. A first release takes the title
+# block's version, or --version when the circuit changed since the board that version names was built.
 # enabled = true                       # false: no versions or stamping; pcbkit release only checks
-# dir = "releases/{key}"               # <dir>/v<label>/ per version, releases.toml beside them (committed)
+# dir = "releases/{key}"               # <dir>/v<label>/ per version: fab files, PDFs and the KiCad project (kicad/),
+#                                      # releases.toml beside them (committed)
 # label = "short"                      # v1.0, then v1.0.1 after a fix; "full": always v1.0.0
 # fab = ["jlcpcb", "pcbway"]           # whose assembly files to write; the Gerber zip serves both
 # placed = "not-excluded"              # what the assembler places; or a field, e.g. "field:Assembly=jlc"

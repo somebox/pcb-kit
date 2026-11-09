@@ -140,6 +140,19 @@ class Detail(unittest.TestCase):
         self.assertIn("3", texts)
         self.assertNotIn("4", texts)
 
+    def test_a_round_pad_whose_box_alone_reaches_the_window_is_left_out(self):
+        """A 2 mm round pad at (1, 1): its box covers the window's corner at (0.1, 0.1), its copper doesn't."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        p = self.pad(fp, "1", 1.0, 1.0, 2.0, 2.0, (pcbnew.F_Cu,), "VOUT")
+        p.SetShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CIRCLE)
+        colour = netview.make_colour({**netview.COLOURS, "VOUT": "#e8892b"})
+        view = netview.draw(pcbnew, self.board, "F.Cu", (-0.1, -0.1, 0.1, 0.1), colour, 100.0, True)
+        self.assertEqual(view["pads"], {})
+        self.assertFalse(any("font-weight=\"bold\"" in e for e in view["svg"]))
+
     def test_an_arc_track_is_drawn_as_its_outline(self):
         """No corpus board has arc tracks; a chord would cut across whatever the arc goes round."""
         pcbnew = self.pcbnew
@@ -222,6 +235,14 @@ class Detail(unittest.TestCase):
             netview.main([board, out, *(str(v) for v in WINDOW), "--layer", "F.Cu", "--note", "DRC clean."])
             with open(out, encoding="utf-8") as fh:
                 self.assertIn("DRC clean.", fh.read())
+
+    def test_cols_below_one_is_refused(self):
+        with self.assertRaises(SystemExit), open(os.devnull, "w") as quiet:
+            stderr, sys.stderr = sys.stderr, quiet
+            try:
+                netview.main(["b.kicad_pcb", "out.svg", "0", "0", "6", "6", "--title", "Option", "--cols", "-1"])
+            finally:
+                sys.stderr = stderr
 
 
 if __name__ == "__main__":

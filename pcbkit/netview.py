@@ -165,9 +165,11 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
         return (T(bb.GetRight()) > x0 - m and T(bb.GetLeft()) < x1 + m
                 and T(bb.GetBottom()) > y0 - m and T(bb.GetTop()) < y1 + m)
 
-    def shape(item, lyr, grow=0):
+    def shape(item, lyr, grow=0, within=None):
         ps = pcbnew.SHAPE_POLY_SET()
         item.TransformShapeToPolygon(ps, lyr, grow, F(0.002), pcbnew.ERROR_INSIDE)
+        if within is not None:
+            ps.BooleanIntersection(within)
         return _rings(ps, T)
 
     layer = b.GetLayerID(layer_name)
@@ -179,6 +181,10 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
     clip.NewOutline()
     for x, y in ((x0 - 1, y0 - 1), (x1 + 1, y0 - 1), (x1 + 1, y1 + 1), (x0 - 1, y1 + 1)):
         clip.Append(F(x), F(y))
+    window = pcbnew.SHAPE_POLY_SET()
+    window.NewOutline()
+    for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        window.Append(F(x), F(y))
     zones, tracks, pads, masks, pastes, vias, labels, courts, refs, edges = ([] for _ in range(10))
     nets, pad_nets, via_list, paste_polys, number_at = set(), {}, [], [], []
 
@@ -233,12 +239,12 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             net, polys = p.GetNetname(), shape(p, layer) if on_cu else []
             pc = p.GetPosition()
             px, py = T(pc.x), T(pc.y)
-            seen = None                 # the part of the pad's copper inside the window, as a box
-            if polys:
-                xs = [x for o, _ in polys for x, _ in o]
-                ys = [y for o, _ in polys for _, y in o]
-                seen = (max(min(xs), x0), max(min(ys), y0), min(max(xs), x1), min(max(ys), y1))
-                seen = seen if seen[0] < seen[2] and seen[1] < seen[3] else None
+            seen = None                 # a box round the part of the pad's copper inside the window
+            inner = shape(p, layer, within=window) if polys else []
+            if inner:
+                xs = [x for o, _ in inner for x, _ in o]
+                ys = [y for o, _ in inner for _, y in o]
+                seen = (min(xs), min(ys), max(xs), max(ys))
             if seen:
                 nets.add(net)
                 pad_nets.setdefault(net, {}).setdefault(fp.GetReference(), set()).add(p.GetNumber())
@@ -480,6 +486,13 @@ def _titled(spec):
     return path, title or os.path.relpath(path)
 
 
+def _count(text):
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{text}: must be 1 or more")
+    return n
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("board")
@@ -497,7 +510,7 @@ def main(argv=None):
     ap.add_argument("--title", help="the first board's title on a sheet")
     ap.add_argument("--metrics", default="", help="nets whose vias to count, comma-separated (full name or last "
                     "part; a last part shared by several nets gives a line per net)")
-    ap.add_argument("--cols", type=int, help="panels per row on a sheet")
+    ap.add_argument("--cols", type=_count, help="panels per row on a sheet")
     ap.add_argument("--note", default="", help="added to a sheet's footnote")
     ap.add_argument("--png", help="also convert to this PNG with rsvg-convert")
     a = ap.parse_args(argv)

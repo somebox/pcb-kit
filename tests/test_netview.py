@@ -42,6 +42,19 @@ class Numbers(unittest.TestCase):
                 fh.write('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
             self.assertTrue(netview._image_href(path).startswith("data:image/svg+xml;base64,"))
 
+    def test_a_window_without_area_is_refused(self):
+        """Reversed corners gave a negative wrap width (a loop without end), equal ones a division by zero."""
+        for window in (("3", "-3", "-3", "3"), ("0", "0", "0", "6"), ("0", "6", "6", "6")):
+            with self.assertRaises(SystemExit), open(os.devnull, "w") as quiet:
+                stderr, sys.stderr = sys.stderr, quiet
+                try:
+                    netview.main(["b.kicad_pcb", "out.svg", *window, "--title", "Option"])
+                finally:
+                    sys.stderr = stderr
+            with self.assertRaises(ValueError):
+                netview.sheet([("b.kicad_pcb", "Option")], "out.svg", *map(float, window))
+        self.assertEqual(netview._wrap("abc", -5), ["a", "b", "c"])
+
     def test_circle_against_a_polygon_with_a_hole(self):
         square = [(0, 0), (2, 0), (2, 2), (0, 2)]
         hole = [(0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)]

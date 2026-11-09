@@ -133,6 +133,12 @@ def _load(pcbnew, path, fill):
     return b
 
 
+def _check_window(x0, y0, x1, y1):
+    if not (x1 > x0 and y1 > y0):
+        raise ValueError(f"the window {x0} {y0} {x1} {y1} has no area: X0 Y0 is its top-left corner, X1 Y1 its "
+                         "bottom-right, in mm")
+
+
 def _scale(width, detail_or_sheet):
     return max(PLAIN_SCALE, PANEL_PX / width) if detail_or_sheet else PLAIN_SCALE
 
@@ -338,6 +344,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
 
 def render(board_path, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=False, fill=False):
     """One board's window as an SVG of its own."""
+    _check_window(x0, y0, x1, y1)
     ensure_pcbnew()
     import pcbnew
     colour = make_colour({**COLOURS, **(colours or {})})
@@ -351,7 +358,7 @@ def render(board_path, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, det
 
 
 def _wrap(text, chars):
-    lines, line = [], ""
+    chars, lines, line = max(1, chars), [], ""
     for word in text.split():
         while len(word) > chars:                        # a word longer than a line (a long net name) is cut
             if line:
@@ -385,6 +392,7 @@ def _pad_list(refs, limit=8):
 def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=False, fill=False, refs=(),
           ref_rotate=0, metrics=(), cols=None, note=""):
     """Several boards' windows side by side, after any reference images: boards and refs are [(path, title)]."""
+    _check_window(x0, y0, x1, y1)
     ensure_pcbnew()
     import pcbnew
     colour = make_colour({**COLOURS, **(colours or {})})
@@ -539,6 +547,10 @@ def main(argv=None):
     ap.add_argument("--note", default="", help="added to a sheet's footnote")
     ap.add_argument("--png", help="also convert to this PNG with rsvg-convert")
     a = ap.parse_args(argv)
+    try:
+        _check_window(a.x0, a.y0, a.x1, a.y1)
+    except ValueError as e:
+        ap.error(str(e))
     colours = {}
     if a.colours:
         with open(a.colours) as fh:

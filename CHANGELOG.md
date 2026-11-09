@@ -127,8 +127,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   the root schematic and every sheet under it (subfolders kept; a sheet from outside the board's folder in
   `kicad/outside/`), the .kicad_pcb as released, the .kicad_dru and the library tables, but not the .kicad_prl, lock
   files, KiCad 10's Local History (`.history/`) or backups. A sheet path that wouldn't reach the copy's own sheet (an
-  absolute one, one out of the folder) is rewritten to, so nothing in the copy's schematic is read from the working
-  project; sheets are looked for as KiCad does, beside the sheet that names them, then in the project's folder. KiCad
+  absolute one, one out of the folder, one through `${KIPRJMOD}`) is rewritten to, so nothing in the copy's
+  schematic is read from the working project; sheets are looked for as KiCad does, beside the sheet that names
+  them, then in the project's folder, with `${KIPRJMOD}` and other variables expanded. KiCad
   links a schematic to a board by file stem within one project, and the net classes and rules live in the
   .kicad_pro, so a second board file beside one schematic doesn't open as that version; the copy does, beside the
   working board or any other release. Footprints and symbols are embedded; the `${KIPRJMOD}/../../lib/...` paths in
@@ -142,7 +143,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ### Changed
 - **`pcbkit release` chooses the version from what changed: minor for the netlist or BOM, patch for the layout.**
   It bumped the patch for any change unless given `--minor` or `--major`. It now reads each board's netlist and BOM
-  from the .kicad_pcb (every footprint but board-only ones, by reference: footprint, value, LCSC and MPN fields, DNP
+  from the .kicad_pcb's S-expressions, so a board KiCad 6 or 7 saved, indented with spaces, reads the same (every
+  footprint but board-only ones, by reference: footprint, value, LCSC and MPN fields, DNP
   and exclude-from-BOM flags; each pin's net) and keeps a fingerprint of them per version in releases.toml
   (`circuit`, also in MANIFEST.txt). A board whose netlist or BOM differs from its last release's gets the next
   minor version, even with the same fab output (an MPN that only PCBWay's BOM would show, a hand-soldered part's
@@ -233,8 +235,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   of micrometres of the outline, so two of synth-blocks' boards whose copper hadn't changed no longer matched their
   releases' fab fingerprints. When the fingerprint differs, release now makes the files again from a copy stamped as
   the last release was, and compares them with that release's folder: zone fills (Gerber regions) may lie within
-  0.005 mm of the release's, KiCad's own maximum error for zone fills; everything else must be the same, as the
-  fingerprint sees it. A match is recorded as equivalent, its note saying how far the fills moved. Stored
+  0.005 mm of the release's, KiCad's own maximum error for zone fills, every point of their outlines and not only
+  points sampled along them (each differing edge is halved until a bound on its distance holds for all of it);
+  everything else must be the same, as the fingerprint sees it. A match is recorded as equivalent, its note saying how far the fills moved. Stored
   fingerprints keep their meaning, and a board whose release folder doesn't hold its files gets a new version, as
   before.
 - **`pcbkit check` no longer reports a via in the middle of a track as floating copper.** It joined a via to a track

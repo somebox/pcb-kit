@@ -97,6 +97,74 @@ class CircuitChanges(unittest.TestCase):
         self.assertEqual(V.circuit_fingerprint(self.old), V.circuit_fingerprint(new))
 
 
+KICAD7_PCB = """(kicad_pcb (version 20221018) (generator pcbnew)
+  (net 0 "")
+  (net 1 "VIN")
+  (net 2 "GND")
+  (footprint "demo:R_0603" (layer "F.Cu")
+    (property "LCSC" "C25804")
+    (attr smd)
+    (fp_text reference "R1" (at 0 -1.5) (layer "F.SilkS"))
+    (fp_text value "10k" (at 0 1.5) (layer "F.Fab"))
+    (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "VIN"))
+    (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "GND"))
+  )
+  (footprint "demo:C_0603" locked (layer "F.Cu")
+    (attr smd exclude_from_bom)
+    (fp_text reference "C1" (at 0 -1.5) (layer "F.SilkS"))
+    (fp_text value "100n" (at 0 1.5) (layer "F.Fab"))
+    (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "VIN"))
+    (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 0 ""))
+    (pad "" np_thru_hole circle (at 0 0) (size 1 1) (drill 1) (layers "*.Cu"))
+  )
+  (footprint "demo:Logo" (layer "F.Cu")
+    (attr board_only)
+    (fp_text reference "G1" (at 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
+  )
+)
+"""
+
+
+class BoardFile(unittest.TestCase):
+    """circuit() reads the board's S-expressions, not KiCad 10's tab-indented lines."""
+    def test_a_kicad_7_board_indented_with_spaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "old.kicad_pcb")
+            write(path, KICAD7_PCB)
+            c = V.circuit(path)
+        self.assertEqual(c["parts"], [part("C1", "100n", "C_0603", "", flags=["exclude_from_bom"]),
+                                      part("R1", lcsc="C25804")])
+        self.assertEqual(c["nets"], {"GND": [["R1", "2"]], "VIN": [["C1", "1"], ["R1", "1"]]})
+
+
+def region(*xy, d02=1):
+    """A Gerber with one region (a zone fill) through these points, its first d02 of them moves (D02)."""
+    pts = [f"X{x}Y{y}D0{2 if i < d02 else 1}*" for i, (x, y) in enumerate(xy)]
+    return ["%FSLAX46Y46*%", "%MOMM*%", "G36*"] + pts + ["G37*", "M02*"]
+
+
+class ZoneFills(unittest.TestCase):
+    """gerber_gap: how far a refilled zone's outline lies from the release's, bounded over every point of it."""
+    def test_a_dropped_vertex_on_a_straight_edge(self):
+        a = region((0, 0), (10000, 1), (20000, 0), (20000, 20000), (0, 0))
+        b = region((0, 0), (20000, 0), (20000, 20000), (0, 0))
+        self.assertAlmostEqual(V.gerber_gap(a, b), 0.000001)
+
+    def test_an_edge_moved_by_more_than_the_tolerance_between_sampled_points(self):
+        """Every vertex and every point 5 um apart along both outlines is within 5 um of the other; the outlines
+        themselves are 5.4 um apart in places, so this is a change."""
+        a = region((0, 0), (16590, 1990), (16927, 2386), (17848, -1386), (20000, 0), (20000, 20000), (0, 0))
+        b = region((0, 0), (17167, -4498), (20000, 0), (20000, 20000), (0, 0))
+        self.assertIsNone(V.gerber_gap(a, b))
+        self.assertIsNone(V.gerber_gap(b, a))
+
+    def test_a_long_edge_just_inside_the_tolerance(self):
+        a = region((0, 0), (1000000, 4900), (2000000, 0), (2000000, 20000), (0, 0))
+        b = region((0, 0), (2000000, 0), (2000000, 20000), (0, 0))
+        self.assertAlmostEqual(V.gerber_gap(a, b), 0.0049)
+
+
 class Rewrite(unittest.TestCase):
     """Paths relative to the project, as the copy in releases/<board>/v<label>/kicad/ must write them."""
     def test_paths_reach_the_same_files(self):
@@ -144,10 +212,12 @@ class Sheets(unittest.TestCase):
         write(os.path.join(self.board, "demo.kicad_pro"), "{}\n")
         root = [(uid(11), "sheets/power.kicad_sch", "2"),                       # relative, in the folder
                 (uid(12), os.path.join(self.board, "sheets", "abs.kicad_sch"), "3"),   # absolute, in the folder
-                (uid(13), "../shared/io.kicad_sch", "4")]                        # outside it, with a sheet of its own
+                (uid(13), "../shared/io.kicad_sch", "4"),                        # outside it, with a sheet of its own
+                (uid(15), "${KIPRJMOD}/sheets/kp.kicad_sch", "6")]               # through ${KIPRJMOD}
         write(os.path.join(self.board, "demo.kicad_sch"), schematic(uid(1), root))
         write(os.path.join(self.board, "sheets", "power.kicad_sch"), schematic(uid(2), at=f"/{uid(1)}/{uid(11)}"))
         write(os.path.join(self.board, "sheets", "abs.kicad_sch"), schematic(uid(3), at=f"/{uid(1)}/{uid(12)}"))
+        write(os.path.join(self.board, "sheets", "kp.kicad_sch"), schematic(uid(7), at=f"/{uid(1)}/{uid(15)}"))
         write(os.path.join(self.tmp.name, "p", "boards", "shared", "io.kicad_sch"),
               schematic(uid(4), [(uid(14), "leaf.kicad_sch", "5")], at=f"/{uid(1)}/{uid(13)}"))
         write(os.path.join(self.tmp.name, "p", "boards", "shared", "leaf.kicad_sch"),
@@ -157,20 +227,23 @@ class Sheets(unittest.TestCase):
         k = os.path.join(self.tmp.name, "kicad")
         written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
         self.assertEqual(sorted(written), ["demo.kicad_pro", "demo.kicad_sch", "outside/io.kicad_sch",
-                                           "outside/leaf.kicad_sch", "sheets/abs.kicad_sch", "sheets/power.kicad_sch"])
+                                           "outside/leaf.kicad_sch", "sheets/abs.kicad_sch", "sheets/kp.kicad_sch",
+                                           "sheets/power.kicad_sch"])
         self.assertEqual(lost, [])
         root = read(k, "demo.kicad_sch")
-        for name in ('"sheets/power.kicad_sch"', '"sheets/abs.kicad_sch"', '"outside/io.kicad_sch"'):
+        for name in ('"sheets/power.kicad_sch"', '"sheets/abs.kicad_sch"', '"outside/io.kicad_sch"',
+                     '"sheets/kp.kicad_sch"'):
             self.assertIn(f'(property "Sheetfile" {name}', root)
+        self.assertNotIn("KIPRJMOD", root)
         self.assertIn('(property "Sheetfile" "leaf.kicad_sch"', read(k, "outside", "io.kicad_sch"))
-        # with the working project gone, kicad-cli still draws all five sheets from the copy
+        # with the working project gone, kicad-cli still draws all six sheets from the copy
         os.rename(os.path.join(self.tmp.name, "p"), os.path.join(self.tmp.name, "gone"))
         pdf = os.path.join(self.tmp.name, "copy.pdf")
         r = subprocess.run([kicad.KICAD_CLI, "sch", "export", "pdf", "-o", pdf, os.path.join(k, "demo.kicad_sch")],
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(pdf, "rb") as fh:
-            self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 5)
+            self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 6)
 
     def test_a_missing_sheet_is_reported(self):
         os.remove(os.path.join(self.board, "sheets", "power.kicad_sch"))
@@ -432,6 +505,14 @@ class Release(unittest.TestCase):
             data = fh.read()
         self.assertTrue(data.startswith(b"%PDF"))
         self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", data)), 2)
+
+    def test_a_board_indented_with_spaces_is_the_same_circuit(self):
+        board = os.path.join(self.base, "boards", "demo", "demo.kicad_pcb")
+        spaced = os.path.join(self.tmp.name, "spaced.kicad_pcb")
+        write(spaced, re.sub(r"(?m)^\t+", lambda m: "  " * len(m.group(0)), read(board)))
+        self.assertNotIn("\t", read(spaced))
+        self.assertEqual(len(V.circuit(spaced)["parts"]), 3)
+        self.assertEqual(V.circuit(spaced), V.circuit(board))
 
     def test_the_fab_fingerprint_and_the_release_comparison_ignore_the_copy(self):
         vdir = os.path.join(self.base, "releases", "demo", "v1.0")

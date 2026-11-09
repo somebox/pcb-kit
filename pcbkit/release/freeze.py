@@ -29,12 +29,24 @@ def _read(path):
         return fh.read()
 
 
+def _expand(name, base):
+    """A Sheetfile with its leading variable expanded as KiCad does: ${KIPRJMOD} (or $(KIPRJMOD)) is the project's
+    folder, another variable its value here; one not set stays as written, and isn't found."""
+    name = name.replace("\\", "/")
+    m = VAR.match(name)
+    if not m:
+        return name
+    value = base if m.group(1) == "KIPRJMOD" else os.environ.get(m.group(1))
+    return name if value is None else value + "/" + name[m.end():].lstrip("/")
+
+
 def sheets(root_sch):
     """The root schematic and every sheet file under it, each once: {its path: where it goes in the copy, relative
     to the copy's folder}; {a sheet's place in the copy: {each Sheetfile it names: that sheet's place}}; and the
     sheet files not found, as (the sheet naming it, the name). KiCad looks for a sheet file in the folder of the
-    sheet that names it, then in the project's, as this does. A sheet outside the project's folder (a shared one, or
-    an absolute path) goes to the copy's outside/, so the copy holds every sheet it shows."""
+    sheet that names it, then in the project's, as this does, after expanding a leading ${KIPRJMOD} or other
+    variable. A sheet outside the project's folder (a shared one, or an absolute path) goes to the copy's outside/,
+    so the copy holds every sheet it shows."""
     base = os.path.dirname(os.path.abspath(root_sch))
     root = os.path.abspath(root_sch)
     place, names, missing, todo = {root: os.path.basename(root)}, {}, [], [root]
@@ -42,7 +54,7 @@ def sheets(root_sch):
         p = todo.pop(0)
         here = names[place[p]] = {}
         for name in SHEETFILE.findall(_read(p)):
-            q = next((x for x in (os.path.normpath(os.path.join(d, name.replace("\\", "/")))
+            q = next((x for x in (os.path.normpath(os.path.join(d, _expand(name, base)))
                                   for d in (os.path.dirname(p), base)) if os.path.isfile(x)), "")
             if not q:
                 missing.append((place[p], name))
@@ -61,8 +73,9 @@ def sheets(root_sch):
 
 
 def _sheetfiles(text, here, names, copied):
-    """A copied sheet's text with every Sheetfile that wouldn't find its sheet in the copy (an absolute path, or one
-    out of the project's folder) made relative to this sheet's folder in the copy."""
+    """A copied sheet's text with every Sheetfile that wouldn't find its sheet in the copy as written (an absolute
+    path, one out of the project's folder, or through ${KIPRJMOD} or another variable) made relative to this sheet's
+    folder in the copy."""
     folder = os.path.dirname(here)
 
     def found(name):
@@ -152,9 +165,10 @@ def freeze(pcb, dst):
         if rel.endswith(".kicad_dru"):
             shutil.copy2(p, out)
         else:
-            text = _rewrite(_read(p), src, dst, rel.endswith(".kicad_pcb"))   # ${KIPRJMOD} is the copy's folder
-            if rel in names:
+            text = _read(p)
+            if rel in names:                   # first, so that a sheet's ${KIPRJMOD} path reaches the copied sheet
                 text = _sheetfiles(text, rel, names[rel], copied)
+            text = _rewrite(text, src, dst, rel.endswith(".kicad_pcb"))   # ${KIPRJMOD} is the copy's folder
             with open(out, "w", encoding="utf-8") as fh:
                 fh.write(text)
         written.append(rel.replace(os.sep, "/"))

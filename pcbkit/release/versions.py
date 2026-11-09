@@ -9,8 +9,9 @@ Where a version is written on a board:
 Each stamp must change exactly what it means to: the masked text before and after must be identical.
 
 Fab output is compared by fab_fingerprint, a hash. When the hash differs, fab_gap compares the files themselves with a
-release's: zone fills (Gerber regions) whose vertices lie within ZONE_TOLERANCE of the release's are the same copper,
-since a KiCad that refills zones a little differently moves them by a nanometre or drops a vertex.
+release's: zone fills (Gerber regions) whose outlines lie within ZONE_TOLERANCE of the release's, every point of them,
+are the same copper, since a KiCad that refills zones a little differently moves a vertex by a nanometre or drops
+one.
 
 The circuit (circuit(), circuit_fingerprint(), circuit_changes()) is the board's netlist and BOM as the PCB has them:
 what decides between a minor version (the circuit changed) and a patch (only the layout did).
@@ -27,7 +28,7 @@ import os
 import re
 import zipfile
 
-from .. import tomlw
+from .. import sexp, tomlw
 
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 REV = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
@@ -219,39 +220,45 @@ def fab_fingerprint(out):
 
 BOM_FIELDS = ("LCSC", "MPN")            # with the footprint and value: what a part is, as the BOM orders it
 BOM_FLAGS = ("dnp", "exclude_from_bom")  # a part not fitted, or not bought with the board
-NET = re.compile(r'\(net (?:\d+ )?"((?:[^"\\]|\\.)*)"\)')     # KiCad 10 writes (net "name"), earlier (net 3 "name")
 
 
 def circuit(pcb):
-    """The board's netlist and BOM as its .kicad_pcb has them (KiCad's layout of the file, one item a line): parts,
-    one [reference, footprint name, value, LCSC, MPN, flags] row a footprint, in reference order, and nets,
-    {name: sorted [reference, pad] pins}. Board-only footprints (logos, a test pad drawn on the board) are neither
-    parts nor pins. A pad on no net, or on KiCad's unconnected-(...) net for a pin left open, is on none."""
+    """The board's netlist and BOM as its .kicad_pcb has them, read as S-expressions (however the file is laid out:
+    KiCad 8 and later indent with tabs, 6 and 7 with spaces): parts, one [reference, footprint name, value, LCSC,
+    MPN, flags] row a footprint, in reference order, and nets, {name: sorted [reference, pad] pins}. Board-only
+    footprints (logos, a test pad drawn on the board) are neither parts nor pins. A pad on no net, or on KiCad's
+    unconnected-(...) net for a pin left open, is on none. KiCad 6 and 7 keep the reference and value as fp_text,
+    and write a pad's net as (net 3 "name"), KiCad 10 as (net "name")."""
     with open(pcb, encoding="utf-8") as fh:
-        text = fh.read()
+        tree = sexp.parse(fh.read())
     parts, nets = [], {}
-    for m in re.finditer(r'\n\t\(footprint "((?:[^"\\]|\\.)*)"', text):
-        block = text[m.end():text.find("\n\t)", m.end())]
-        children = block.split("\n\t\t(")
-        props, flags = {}, set()
-        for c in children:
-            p = re.match(r'property "((?:[^"\\]|\\.)*)" "((?:[^"\\]|\\.)*)"', c)
-            if p:
-                props.setdefault(p.group(1), p.group(2))
-            elif c.startswith("attr "):
-                flags |= set(c[5:c.index(")")].split())
-            elif re.match(r"(dnp|exclude_from_bom|board_only) yes\)", c):
-                flags.add(c.split()[0])
+    for fp in tree[1:] if isinstance(tree, list) else []:
+        if not isinstance(fp, list) or len(fp) < 2 or fp[0] not in ("footprint", "module"):
+            continue
+        props, flags, pads = {}, set(), []
+        for c in fp[2:]:
+            if not isinstance(c, list) or len(c) < 2:
+                continue
+            if c[0] == "property" and len(c) > 2:
+                props.setdefault(str(c[1]), str(c[2]))
+            elif c[0] == "fp_text" and len(c) > 2 and c[1] in ("reference", "value"):
+                props.setdefault(str(c[1]).capitalize(), str(c[2]))
+            elif c[0] == "attr":
+                flags |= {str(x) for x in c[1:] if not isinstance(x, list)}
+            elif c[0] in ("dnp", "exclude_from_bom", "board_only") and c[1] == "yes":
+                flags.add(str(c[0]))
+            elif c[0] == "pad":
+                pads.append(c)
         if "board_only" in flags:
             continue
         ref = props.get("Reference", "")
-        parts.append([ref, m.group(1).split(":")[-1], props.get("Value", "")]
+        parts.append([ref, str(fp[1]).split(":")[-1], props.get("Value", "")]
                      + [props.get(f, "").strip() for f in BOM_FIELDS] + [sorted(flags & set(BOM_FLAGS))])
-        for c in children:
-            pad = re.match(r'pad "((?:[^"\\]|\\.)*)"', c)
-            net = NET.search(c) if pad and pad.group(1) else None
-            if net and net.group(1) and not net.group(1).startswith("unconnected-("):
-                nets.setdefault(net.group(1), set()).add((ref, pad.group(1)))
+        for pad in pads:
+            net = next((x for x in pad[2:] if isinstance(x, list) and len(x) > 1 and x[0] == "net"), None)
+            name = str(net[-1]) if net else ""
+            if str(pad[1]) and name and not name.startswith("unconnected-("):
+                nets.setdefault(name, set()).add((ref, str(pad[1])))
     return dict(parts=sorted(parts, key=lambda r: _natural(r[0])),
                 nets={n: sorted([list(p) for p in v], key=lambda p: (_natural(p[0]), _natural(p[1])))
                       for n, v in sorted(nets.items())})
@@ -366,33 +373,47 @@ def _regions(lines):
     return None if region is not None else (outside, regions)
 
 
-def _distance(p, line):
-    """From a point to a polyline."""
-    if len(line) == 1:
-        return math.hypot(p[0] - line[0][0], p[1] - line[0][1])
-    best = None
-    for (ax, ay), (bx, by) in zip(line, line[1:]):
-        dx, dy = bx - ax, by - ay
-        t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
-        d = math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
-        best = d if best is None or d < best else best
-    return best
+def _seg_distance(p, a, b):
+    """From a point to a segment."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+PIECES = 200000                        # a comparison that would need more pieces than this is no match
 
 
 def _polyline_gap(a, b, tol):
-    """How far apart two polylines are, or None beyond tol: the furthest that points along either, at most tol apart,
-    lie from the other (so that no point of either lies more than 1.5 tol from the other)."""
-    worst, tol = 0.0, max(tol, 1)
+    """How far apart two polylines are, or None beyond tol: a bound on how far any point of either lies from the
+    other, over every point of every segment, not only sampled ones. Each segment is halved until a bound holds for
+    the whole piece: the furthest of its two ends from any one segment of the other (along a straight piece the
+    distance to a segment is convex, so it is largest at an end), or the ends' distances and half the piece's length
+    (a point moved by d is at most d further from the other). None when a point lies beyond tol, or when a piece
+    one coordinate step long still can't be bounded within it."""
+    worst, tol, budget = 0.0, max(tol, 1), PIECES
     for line, other in ((a, b), (b, a)):
-        points = line[:1]
-        for (x0, y0), (x1, y1) in zip(line, line[1:]):
-            n = max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / tol)))
-            points += [(x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n) for i in range(1, n + 1)]
-        for p in points:
-            d = _distance(p, other)
-            if d > tol:
+        segs = list(zip(other, other[1:])) or [(other[0], other[0])]
+
+        def dists(p):
+            return [_seg_distance(p, s, e) for s, e in segs]
+        ends = list(zip(line, line[1:])) or [(line[0], line[0])]
+        todo = [(p, q, dists(p), dists(q)) for p, q in ends]
+        while todo:
+            p, q, dp, dq = todo.pop()
+            d0, d1 = min(dp), min(dq)
+            if d0 > tol or d1 > tol:
                 return None
-            worst = max(worst, d)
+            length = math.hypot(q[0] - p[0], q[1] - p[1])
+            bound = min(min(max(x, y) for x, y in zip(dp, dq)), (d0 + d1 + length) / 2)
+            if bound <= tol:
+                worst = max(worst, bound)
+                continue
+            budget -= 1
+            if length <= 1 or budget < 0:
+                return None
+            m = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+            dm = dists(m)
+            todo += [(p, m, dp, dm), (m, q, dm, dq)]
     return worst
 
 

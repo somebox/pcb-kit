@@ -149,8 +149,8 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
     """One board's window on one layer, as SVG elements in px with the window's top-left corner at the origin.
 
     Returns {"svg": [...], "vias": [(x, y, size, drill, net, in_paste, through)], "pads": {net: {ref: {numbers}}},
-    "nets": {nets with copper in the window}, "thickness": mm}; positions in mm. A pad counts for "pads" and "nets"
-    when any of its copper is inside the window."""
+    "nets": {nets with copper in the window}, "thickness": mm, "detail": whether mask and paste were drawn (an outer
+    layer only)}; positions in mm. A pad counts for "pads" and "nets" when any of its copper is inside the window."""
     T, F = pcbnew.ToMM, pcbnew.FromMM
     x0, y0, x1, y1 = win
     X = lambda v: (v - x0) * scale  # noqa: E731
@@ -333,7 +333,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
 
     svg = zones + tracks + pads + masks + pastes + vias + labels + courts + edges + refs
     return {"svg": svg, "vias": [tuple(v) for v in via_list], "pads": pad_nets, "nets": nets,
-            "thickness": T(b.GetDesignSettings().GetBoardThickness())}
+            "thickness": T(b.GetDesignSettings().GetBoardThickness()), "detail": detail}
 
 
 def render(board_path, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=False, fill=False):
@@ -353,6 +353,12 @@ def render(board_path, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, det
 def _wrap(text, chars):
     lines, line = [], ""
     for word in text.split():
+        while len(word) > chars:                        # a word longer than a line (a long net name) is cut
+            if line:
+                lines.append(line)
+                line = ""
+            lines.append(word[:chars])
+            word = word[chars:]
         if line and len(line) + 1 + len(word) > chars:
             lines.append(line)
             line = word
@@ -388,7 +394,7 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
     views = []
     for path, _title in boards:
         views.append(draw(pcbnew, _load(pcbnew, path, fill), layer_name, (x0, y0, x1, y1), colour, scale, detail))
-    paste = detail and layer_name in ("F.Cu", "B.Cu")
+    paste = any(v["detail"] for v in views)            # an outer layer, whatever the board calls it
 
     def numbers(view):
         inside = [v for v in view["vias"] if x0 < v[0] < x1 and y0 < v[1] < y1]
@@ -415,8 +421,10 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
         return lines
 
     panels = [("ref", path, title) for path, title in refs] + [("board", v, t) for v, (_p, t) in zip(views, boards)]
-    titles = [(t or "").replace("\\n", "\n").split("\n") for _k, _x, t in panels]
-    under = [numbers(x) if k == "board" else [] for k, x, _t in panels]
+    titles = [[w for line in (t or "").replace("\\n", "\n").split("\n") for w in (_wrap(line, int(PW / 8.0)) or [""])]
+              for _k, _x, t in panels]                # 15 px text, about 8 px a character: wrapped to the panel
+    under = [[w for line in (numbers(x) if k == "board" else []) for w in _wrap(line, int(PW / 7.4))]
+             for k, x, _t in panels]
     cols = cols or (len(panels) if len(panels) <= 2 else 2 if len(panels) <= 4 else 3)
     rows = -(-len(panels) // cols)
     title_h = 19 * max(len(t) for t in titles) + 8

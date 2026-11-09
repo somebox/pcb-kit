@@ -240,6 +240,42 @@ class Detail(unittest.TestCase):
         refs = sorted(f"C{i + 1}" for i in range(16))
         self.assertEqual(" ".join(line for _x, line in legend), "GND (" + "; ".join(f"{r} 2" for r in refs) + ")")
 
+    def test_long_titles_and_numbers_wrap_inside_their_panel(self):
+        """A long title, and two nets sharing VOUT under long hierarchical names, stay inside a one-panel sheet."""
+        long_a = "/power/stage_one/buck_boost_converter/output_filter/VOUT"
+        self.via(-2.2, 0.3, long_a)
+        self.via(2.2, 0.3, long_a.replace("one", "two"))
+        title = "Option 3, corners and the side vias TI's figure shows, moved 0.1 mm out from the strips: 9 vias"
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, title)], out, *WINDOW, layer_name="F.Cu", metrics=["VOUT"])
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        width = float(re.search(r'<svg [^>]*width="([\d.]+)"', text).group(1))
+        lines = re.findall(r'<text x="([\d.]+)" y="[\d.]+" font-size="(1[45])"[^>]*>([^<]*)</text>', text)
+        for x, size, line in lines:
+            self.assertLessEqual(float(x) + {"14": 7.4, "15": 8.0}[size] * len(line), width - 24, line)
+        prose = " ".join(line for _x, _s, line in lines)
+        self.assertIn(title, prose)
+        self.assertIn(long_a + ": 1 vias,", prose)
+
+    def test_sheet_on_a_renamed_outer_layer_counts_paste(self):
+        """A board may call F.Cu "Top"; the sheet still counts holes under paste and shows paste in the legend."""
+        self.board.SetLayerName(self.pcbnew.F_Cu, "Top")
+        self.part()
+        self.via(-1.5, 0.3, "VOUT")
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, "Option")], out, *WINDOW, layer_name="Top", detail=True, note="x")
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        self.assertIn("holes under paste: 1", text)
+        self.assertIn("solder paste", text)
+
     def test_sheet_says_each_boards_thickness(self):
         self.via(-2.2, 0.3, "VOUT")
         with tempfile.TemporaryDirectory() as d:

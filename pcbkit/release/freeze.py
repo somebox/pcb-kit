@@ -12,6 +12,7 @@ same file from the copy's folder. They point at the project's library as it is n
 3-D model, an absolute path, a variable not set here) is listed, and MANIFEST.txt says so; KiCad's own library
 variables (${KICAD10_3DMODEL_DIR}) are left to KiCad.
 """
+import itertools
 import os
 import re
 import shutil
@@ -64,7 +65,7 @@ def sheets(root_sch):
                 if rel.startswith(".."):
                     stem, ext = os.path.splitext(os.path.basename(q))
                     rel = next(r for r in (os.path.join("outside", stem + (f"-{i}" if i else "") + ext)
-                                           for i in range(len(place) + 1))
+                                           for i in itertools.count())
                                if r not in place.values() and not os.path.exists(os.path.join(base, r)))
                 place[q] = rel
                 todo.append(q)

@@ -259,8 +259,8 @@ def circuit(pcb):
             name = str(net[-1]) if net else ""
             if str(pad[1]) and name and not name.startswith("unconnected-("):
                 nets.setdefault(name, set()).add((ref, str(pad[1])))
-    return dict(parts=sorted(parts, key=lambda r: _natural(r[0])),
-                nets={n: sorted([list(p) for p in v], key=lambda p: (_natural(p[0]), _natural(p[1])))
+    return dict(parts=sorted(parts, key=lambda r: (_natural(r[0]), r)),        # R1 and R01 sort alike: then by all
+                nets={n: sorted([list(p) for p in v], key=lambda p: (_natural(p[0]), _natural(p[1]), p))
                       for n, v in sorted(nets.items())})
 
 
@@ -389,31 +389,37 @@ def _polyline_gap(a, b, tol):
     the whole piece: the furthest of its two ends from any one segment of the other (along a straight piece the
     distance to a segment is convex, so it is largest at an end), or the ends' distances and half the piece's length
     (a point moved by d is at most d further from the other). None when a point lies beyond tol, or when a piece
-    one coordinate step long still can't be bounded within it."""
+    one coordinate step long still can't be bounded within it. One segment at a time, its pieces depth first: the
+    distances held are those of the pieces still to do, a few dozen at most, and the first point beyond tol ends it."""
     worst, tol, budget = 0.0, max(tol, 1), PIECES
     for line, other in ((a, b), (b, a)):
         segs = list(zip(other, other[1:])) or [(other[0], other[0])]
 
         def dists(p):
             return [_seg_distance(p, s, e) for s, e in segs]
-        ends = list(zip(line, line[1:])) or [(line[0], line[0])]
-        todo = [(p, q, dists(p), dists(q)) for p, q in ends]
-        while todo:
-            p, q, dp, dq = todo.pop()
-            d0, d1 = min(dp), min(dq)
-            if d0 > tol or d1 > tol:
+        dq = None
+        for p, q in list(zip(line, line[1:])) or [(line[0], line[0])]:
+            dp = dq or dists(p)                # the last segment's end is this one's start
+            if min(dp) > tol:
                 return None
-            length = math.hypot(q[0] - p[0], q[1] - p[1])
-            bound = min(min(max(x, y) for x, y in zip(dp, dq)), (d0 + d1 + length) / 2)
-            if bound <= tol:
-                worst = max(worst, bound)
-                continue
-            budget -= 1
-            if length <= 1 or budget < 0:
-                return None
-            m = ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
-            dm = dists(m)
-            todo += [(p, m, dp, dm), (m, q, dm, dq)]
+            dq = dists(q)
+            todo = [(p, q, dp, dq)]
+            while todo:
+                p0, q0, d_p, d_q = todo.pop()
+                d0, d1 = min(d_p), min(d_q)
+                if d1 > tol:
+                    return None
+                length = math.hypot(q0[0] - p0[0], q0[1] - p0[1])
+                bound = min(min(max(x, y) for x, y in zip(d_p, d_q)), (d0 + d1 + length) / 2)
+                if bound <= tol:
+                    worst = max(worst, bound)
+                    continue
+                budget -= 1
+                if length <= 1 or budget < 0:
+                    return None
+                m = ((p0[0] + q0[0]) / 2, (p0[1] + q0[1]) / 2)
+                dm = dists(m)
+                todo += [(m, q0, dm, d_q), (p0, m, d_p, dm)]
     return worst
 
 

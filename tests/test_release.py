@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -137,6 +138,20 @@ class BoardFile(unittest.TestCase):
                                       part("R1", lcsc="C25804")])
         self.assertEqual(c["nets"], {"GND": [["R1", "2"]], "VIN": [["C1", "1"], ["R1", "1"]]})
 
+    def test_the_order_of_the_footprints_in_the_file_doesnt_count(self):
+        """R1 and R01 sort alike by their numbers; the circuit is the same whichever comes first in the file."""
+        def board(refs):
+            fps = "".join(f'  (footprint "demo:R_0603" (layer "F.Cu")\n    (property "Reference" "{r}")\n'
+                          f'    (property "Value" "{v}")\n    (pad "1" smd rect (net 1 "VIN"))\n  )\n'
+                          for r, v in refs)
+            return '(kicad_pcb (version 20221018)\n  (net 1 "VIN")\n' + fps + ")\n"
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "a.kicad_pcb"), os.path.join(d, "b.kicad_pcb")
+            write(a, board([("R1", "10k"), ("R01", "4.7k")]))
+            write(b, board([("R01", "4.7k"), ("R1", "10k")]))
+            self.assertEqual(V.circuit(a), V.circuit(b))
+            self.assertEqual(V.circuit_fingerprint(V.circuit(a)), V.circuit_fingerprint(V.circuit(b)))
+
 
 def region(*xy, d02=1):
     """A Gerber with one region (a zone fill) through these points, its first d02 of them moves (D02)."""
@@ -158,6 +173,20 @@ class ZoneFills(unittest.TestCase):
         b = region((0, 0), (17167, -4498), (20000, 0), (20000, 20000), (0, 0))
         self.assertIsNone(V.gerber_gap(a, b))
         self.assertIsNone(V.gerber_gap(b, a))
+
+    def test_outlines_far_apart_are_rejected_at_their_first_point(self):
+        """Two long outlines 1 mm apart: no distance matrix of one against the other is made first."""
+        a = [(i * 1000, 0) for i in range(3000)]
+        b = [(i * 1000, 1000000) for i in range(3000)]
+        calls = [0]
+        real = V._seg_distance
+
+        def counted(*args):
+            calls[0] += 1
+            return real(*args)
+        with mock.patch.object(V, "_seg_distance", counted):
+            self.assertIsNone(V._polyline_gap(a, b, 5000))
+        self.assertLessEqual(calls[0], len(b))
 
     def test_a_long_edge_just_inside_the_tolerance(self):
         a = region((0, 0), (1000000, 4900), (2000000, 0), (2000000, 20000), (0, 0))
@@ -244,6 +273,17 @@ class Sheets(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(pdf, "rb") as fh:
             self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 6)
+
+    def test_outside_names_the_project_has_are_skipped(self):
+        """The board folder's own outside/io*.kicad_sch, unreferenced, aren't overwritten in the copy's names."""
+        os.makedirs(os.path.join(self.board, "outside"))
+        for n in ("io", "io-1", "io-2", "io-3", "io-4"):
+            write(os.path.join(self.board, "outside", n + ".kicad_sch"), schematic(uid(9), at="/"))
+        k = os.path.join(self.tmp.name, "kicad")
+        written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
+        self.assertIn("outside/io-5.kicad_sch", written)
+        self.assertIn('(property "Sheetfile" "outside/io-5.kicad_sch"', read(k, "demo.kicad_sch"))
+        self.assertEqual(lost, [])
 
     def test_a_missing_sheet_is_reported(self):
         os.remove(os.path.join(self.board, "sheets", "power.kicad_sch"))

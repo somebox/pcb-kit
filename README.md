@@ -146,6 +146,18 @@ actually refers to before anything gets edited:
 
 <img src="docs/images/copper-check.png" width="320" alt="Rasterised copper layer with two flagged items marked in blue and green">
 
+### Compare layout options side by side
+
+When there are a few ways to lay something out, build each as a copy of the board and draw them together.
+`pcbkit netview --compare` puts the same window of each board on one sheet, after the datasheet's own figure: each
+net in one colour across every panel, paste hatched, mask openings dashed, any via hole that lands in paste ringed
+red, and the numbers that decide it under each panel. On siebenuhr's controller v3 it showed five open via holes
+inside the strip pads of a TPS55288 buck-boost, under the paste. The option chosen moves every via off the pads, to
+the part's corners and beside the strips where TI's figure and EVM put them, and keeps the VOUT via copper within
+3 %:
+
+<img src="docs/images/via-options-tps55288.webp" width="720" alt="Four panels of the TPS55288's pads: TI's layout figure with vias beside the strip pads, the board before with five via holes ringed red inside the strips, and two options with vias moved to the corners and beside the strips, numbers under each">
+
 ### Check a board
 
 `pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit check` finds what
@@ -308,7 +320,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
 | `pcbkit parts [TEXT] [--low N]` | the proven-parts catalog (library/PARTS.md) with current stock and price; flags low stock |
-| `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--png]` | a region of one layer coloured by net, for reviewing power stages |
+| `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--detail] [--compare BOARD=TITLE] [--png]` | a region of one layer coloured by net, for reviewing power stages; `--detail` adds mask, paste and via holes in paste, `--compare` puts several boards side by side |
 | `pcbkit place-score BOARD [--study S.py] [--planes GND,..] [--search] [--write P.json] [--svg OUT.svg] [--png]` | ratsnest score of a placement (side-aware crossings, length, zones, free pin/gate choices); with a study, coordinate descent over groups of parts; the ratsnest picture |
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |

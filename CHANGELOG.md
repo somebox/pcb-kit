@@ -8,6 +8,18 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit netview --detail` and `--compare`: layout options side by side.** `--detail` draws an outer layer the
+  way assembly sees it: each pad's mask opening dashed green, its paste hatched (paste apertures drawn as pads with
+  no copper too, as KiCad's QFN footprints have them), the numbers of the pads on coloured nets, and a red ring round
+  any via hole that lands in paste. `--compare BOARD=TITLE` puts the same window of more boards on one sheet, after
+  `--ref IMAGE=TITLE` images such as the datasheet's layout figure (`--ref-rotate` turns them to match the board):
+  each net in one colour across every panel, a title over each, the numbers under it, one legend and a footnote.
+  `--metrics NET,...` counts the vias in the window per net, with their barrels' copper cross-section and their
+  resistance in parallel through the board (18 um plating); `--note` adds to the footnote. `--colour NET=#rrggbb`
+  sets one net's colour, and `--fill` fills the zones in memory first. Drawn from the siebenuhr controller v3 study
+  of U5's vias (2026-11-09), whose matplotlib picture it reproduces with the same numbers
+  (`docs/images/via-options-tps55288.webp`). On the sign controller it finds all nine vias in U4's exposed pad in
+  its paste windows; on dodeca v1.3's BQ25890 the vias sit between them. Tests in `tests/test_netview.py`.
 - **`pcbkit courtyards`: courtyards that don't describe their part.** DRC's placement checks trust each footprint's
   courtyard, so one that misses its pads or body lets a part be placed on it and DRC passes. On espcandle-pcb's base
   board, as imported from EasyEDA, the first layout put a FET, a capacitor and the buck IC under the EXT connector,
@@ -181,6 +193,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   is the sheet "ESP32+USB" in `esp32-usb.kicad_sch`, no longer `esp32+usb_copy.kicad_sch`).
 
 ### Fixed
+- **`pcbkit netview` shows vias inside a pad**, drawing them over the pads instead of under: dodeca v1.3's BQ25890
+  had five vias in its exposed pad that the view hid. It finds footprints by their outline rather than their origin,
+  so a mounting hole whose origin lies outside the window is drawn, clips zone fills to the window (a 15 mm view of
+  dodeca's control board went from 668 kB of SVG to 85 kB), draws arc tracks as arcs, and skips a zone that has
+  no fill on the layer.
 - **`pcbkit drc` and `pcbkit erc` no longer report an earlier run's result.** They read `kicad-cli`'s report from a
   fixed path in the temp folder, so a run on a board that doesn't exist, a file that won't load, or a `kicad-cli`
   killed mid-run printed the previous board's summary and could exit 0. The report is now removed before each run.

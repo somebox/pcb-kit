@@ -30,13 +30,6 @@ from . import courtyards
 TOL = 1000  # nm
 
 
-def seg_dist(p, a, b):
-    dx, dy = b.x - a.x, b.y - a.y
-    l2 = dx * dx + dy * dy
-    t = 0 if l2 == 0 else max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2))
-    return math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
-
-
 class UF:
     def __init__(self, n):
         self.p = list(range(n))
@@ -83,7 +76,7 @@ def build_net(pcbnew, tracks, vias, pads, islands):
         for e in (t.GetStart(), t.GetEnd()):
             hit = False
             for j, u in enumerate(tracks):
-                if j != i and u.GetLayer() == layer and seg_dist(e, u.GetStart(), u.GetEnd()) <= u.GetWidth() / 2 + TOL:
+                if j != i and u.GetLayer() == layer and u.HitTest(e, TOL):   # the arc itself, not its chord
                     contacts.append((i, j))
                     hit = True
             for v in vias:  # the contact itself is made below
@@ -98,8 +91,8 @@ def build_net(pcbnew, tracks, vias, pads, islands):
                     hit = True
             if not hit:
                 free_ends[i].append(e)
-        for j, v in enumerate(vias):  # anywhere along the track, not only at its ends: a via stitched into a straight run
-            if v.IsOnLayer(layer) and seg_dist(v.GetPosition(), t.GetStart(), t.GetEnd()) <= (t.GetWidth() + v.GetWidth(layer)) / 2 + TOL:
+        for j, v in enumerate(vias):  # anywhere along the track or arc, not only at its ends: a via stitched into a run
+            if v.IsOnLayer(layer) and t.HitTest(v.GetPosition(), v.GetWidth(layer) // 2 + TOL):
                 contacts.append((i, iv + j))
         for k in range(ii, ii + len(islands)):
             if overlaps(i, layer, k):

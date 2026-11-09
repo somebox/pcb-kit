@@ -235,7 +235,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   only where one of the track's ends lay on the via, so a via stitched into a straight run, as a scripted wide feed
   lays them on both layers, was floating, and so was any track hanging off it. A via now joins every track of its net
   on a layer it is on wherever its ring touches the track (centre within half the track width plus the via's
-  radius). Stubs are found from track ends as before. On esp32-s3-ha-node's board the six floating VIN and +5V_BUCK
+  radius), measured to an arc's curve rather than its chord, as is a track end on another track or arc. Stubs are
+  found from track ends as before. On esp32-s3-ha-node's board the six floating VIN and +5V_BUCK
   groups are gone, which KiCad's DRC already saw as connected, and nothing else changed there or on the other corpus
   boards. The first fixture boards for `check` are in `tests/test_route_check.py`.
 - **`pcbkit import-easyeda` no longer leaves what took hand fixes on espcandle-pcb's two boards.** The copper-pour

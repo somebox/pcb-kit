@@ -60,6 +60,17 @@ class FloatingCopper(unittest.TestCase):
         t.SetNet(self.net)
         self.board.Add(t)
 
+    def arc(self, layer, x0, y0, xm, ym, x1, y1, width=1.0):
+        pcbnew = self.pcbnew
+        a = pcbnew.PCB_ARC(self.board)
+        a.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(x0), pcbnew.FromMM(y0)))
+        a.SetMid(pcbnew.VECTOR2I(pcbnew.FromMM(xm), pcbnew.FromMM(ym)))
+        a.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
+        a.SetWidth(pcbnew.FromMM(width))
+        a.SetLayer(layer)
+        a.SetNet(self.net)
+        self.board.Add(a)
+
     def via(self, x, y, size=0.6):
         pcbnew = self.pcbnew
         v = pcbnew.PCB_VIA(self.board)
@@ -112,6 +123,30 @@ class FloatingCopper(unittest.TestCase):
         report = self.check()
         self.assertEqual(report.get("floating", []), [])
         self.assertEqual(report.get("stubs"), ["N1: dead end at (10.00, 4.00) on B.Cu, 1 segment(s) 4.0 mm"])
+
+    def test_vias_and_an_arc(self):
+        """A via on an arc's curve is joined to it; one at the middle of its chord, 5 mm from any copper, floats."""
+        F = self.pcbnew.F_Cu
+        self.pad(0, 0)
+        self.pad(10, 0)
+        self.arc(F, 0, 0, 5, -5, 10, 0)          # a half circle round (5, 0)
+        self.via(5, -5)
+        self.via(5, 0)
+        report = self.check()
+        self.assertEqual(report.get("floating"), ["N1: 1 via(s) at (5.00, 0.00)"])
+
+    def test_a_track_ending_on_an_arc(self):
+        """A track that ends on an arc's curve is joined to it; one that ends on its chord touches nothing."""
+        F = self.pcbnew.F_Cu
+        self.pad(0, 0)
+        self.pad(10, 0)
+        self.arc(F, 0, 0, 5, -5, 10, 0)
+        self.track(F, 5, -5, 5, -8)             # from the curve to a pad
+        self.pad(5, -8)
+        self.track(F, 5, 0, 5, 3)               # from the chord, touching nothing at (5, 0)
+        report = self.check()
+        self.assertEqual(report.get("floating"), ["N1: 1 track(s) 3.0 mm on ['F.Cu'] at (5.00, 0.00)"])
+        self.assertFalse([x for x in report.get("stubs", []) if "(5.00, -5.00)" in x], report.get("stubs"))
 
 
 if __name__ == "__main__":

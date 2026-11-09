@@ -281,14 +281,15 @@ class Models3D(unittest.TestCase):
         self.assertEqual((again[0], again[1], len(asked)), ({other: meshes[other]}, [], 2))  # the file is kept
         offline = ie.fetch_models({**models, "11112222333344445555666677778888": ("NEW", (1, 1))},
                                   self.dir / "3dmodels", None)
-        self.assertEqual((sorted(offline[0]), offline[1], list(offline[2])), (sorted(models), [], ["NEW"]))
+        self.assertEqual((sorted(offline[0]), offline[1], offline[2]), (sorted(models), [], {
+            "11112222333344445555666677778888": ("NEW", "not in 3dmodels and not fetched")}))
 
     def test_a_model_kept_under_a_later_name_is_found_offline(self):
         other = "fedcba9876543210fedcba9876543210"
         get = lambda uuid: (_ for _ in ()).throw(OSError("timed out")) if uuid == UUID else OBJ.encode()
         meshes, _, failed = ie.fetch_models({UUID: ("BOX-SMD", (2.0, 0.5)), other: ("BOX-SMD", (2.0, 0.5))},
                                             self.dir / "3dmodels", get)
-        self.assertEqual((meshes[other][0], list(failed)), ("BOX-SMD_2.wrl", ["BOX-SMD"]))  # BOX-SMD.wrl is UUID's
+        self.assertEqual((meshes[other][0], failed), ("BOX-SMD_2.wrl", {UUID: ("BOX-SMD", "timed out")}))
         again = ie.fetch_models({other: ("BOX-SMD", (2.0, 0.5))}, self.dir / "3dmodels", None)
         self.assertEqual(again, ({other: meshes[other]}, [], {}))
         # a new model of that title takes neither name, whichever case the file system keeps
@@ -310,7 +311,7 @@ class Models3D(unittest.TestCase):
         new = "11112222333344445555666677778888"
         wanted = {UUID: ("BOX-SMD", (2.0, 0.5)), cut: ("CUT", (2.0, 0.5)), new: ("OTHER", (2.0, 0.5))}
         meshes, _, failed = ie.fetch_models(wanted, models, None)
-        self.assertEqual((meshes, sorted(failed)), ({UUID: ("BOX-SMD.WRL", BOX, 1.0)}, ["CUT", "OTHER"]))
+        self.assertEqual((meshes, sorted(failed)), ({UUID: ("BOX-SMD.WRL", BOX, 1.0)}, sorted([cut, new])))
         meshes, fetched, failed = ie.fetch_models(wanted, models, lambda uuid: OBJ.encode())
         self.assertEqual((meshes[cut][0], meshes[new][0], failed), ("CUT_2.wrl", "OTHER_2.wrl", {}))
         self.assertEqual((models / "OTHER.WRL").read_text(), "#VRML V2.0 utf8\n")
@@ -321,14 +322,38 @@ class Models3D(unittest.TestCase):
             if uuid == UUID:
                 raise OSError("HTTP Error 404: Not Found")
             return b"<html>not a mesh</html>"
-        meshes, fetched, failed = ie.fetch_models(
-            {UUID: ("GONE", (1, 1)), "fedcba9876543210fedcba9876543210": ("PAGE", (1, 1)),
-             "../../etc": ("ODD", (1, 1))}, self.dir / "3dmodels", get)
+        page = "fedcba9876543210fedcba9876543210"
+        meshes, fetched, failed = ie.fetch_models(  # two of them with one title, each failing its own way
+            {UUID: ("BOX-SMD", (1, 1)), page: ("BOX-SMD", (1, 1)), "../../etc": ("ODD", (1, 1))},
+            self.dir / "3dmodels", get)
         self.assertEqual((meshes, fetched), ({}, []))
-        self.assertEqual(failed["GONE"], "HTTP Error 404: Not Found")
-        self.assertEqual(failed["PAGE"], "no mesh in the OBJ")
-        self.assertIn("not EasyEDA's", failed["ODD"])  # never put in a URL
+        self.assertEqual(failed[UUID], ("BOX-SMD", "HTTP Error 404: Not Found"))
+        self.assertEqual(failed[page], ("BOX-SMD", "no mesh in the OBJ"))
+        self.assertIn("not EasyEDA's", failed["../../etc"][1])  # never put in a URL
         self.assertFalse((self.dir / "3dmodels").exists())
+        # the report gives each footprint its own model's reason
+        lines = ie.model_lines(dict(fetch=True, missing=failed, waiting=[("D1", UUID), ("D2", page), ("D3", UUID)]),
+                               "lib")
+        self.assertEqual(lines, ["3-D models not fetched; their footprints keep KiCad's ${KIPRJMOD}/EASYEDA_MODELS "
+                                 "path, which has no file: BOX-SMD (D1, D3): HTTP Error 404: Not Found; BOX-SMD (D2): "
+                                 "no mesh in the OBJ"])
+        offline = ie.model_lines(dict(fetch=False, missing=failed, waiting=[("D1", UUID), ("D2", page)]), "lib")
+        self.assertEqual(offline, ["3-D models not in the library and not fetched (--no-fetch); their footprints keep "
+                                   "KiCad's ${KIPRJMOD}/EASYEDA_MODELS path, which has no file: BOX-SMD (D1, D2)"])
+
+    def test_an_outline_that_cant_be_read_is_said_by_reference_and_title(self):
+        node = {"nodeName": "g", "attrs": {"c_width": "8", "c_height": "2", "z": "0", "uuid": UUID,
+                                           "c_etype": "outline3D", "title": "ROUND"},
+                "childNodes": [{"nodeName": "path", "attrs": {"d": "M 0 0 A 1 1 0 0 1 2 0 Z"}}]}
+        lib = ("LIB~0~0~package`ROUND`~0~~gge0~1~#@$TEXT~P~0~0~0.6~0~0~3~~4.5~X1~M 1 1#@$"
+               "SVGNODE~" + json.dumps(node))
+        path = self.dir / "pcb.json"
+        path.write_text(json.dumps({"shape": [lib]}))
+        ie.NOTES.clear()
+        self.addCleanup(ie.NOTES.clear)
+        self.assertEqual(ie.easyeda_models(path), {})
+        self.assertEqual(list(ie.NOTES), ["X1: the outline of 3-D model ROUND is drawn with curves or relative moves, "
+                                          "not read; the model stays at KiCad's path"])
 
     def assertPlaced(self, got, offset, rot, scale=1.0, notes=(), turn_xy=(0, 0)):
         self.assertIsNotNone(got)
@@ -731,15 +756,17 @@ class Boards(unittest.TestCase):
         model(stock, "${KICAD10_3DMODEL_DIR}/C.3dshapes/C.step")
         other = self.footprint("U3", [("1", "smd", None), ("2", "smd", None), ("3", "smd", None)])
         model(other)  # another land pattern than the export's
-        plans, notes, unfit = ie.model_plans(
+        plans, notes, unfit, waiting = ie.model_plans(
             pcbnew, [fp, stock, other], {"U1": placed_part(back=True), "C1": placed_part(), "U3": placed_part()},
             {UUID: ("BOX-SMD.wrl", BOX, 1.0)}, "${KIPRJMOD}/../../lib/3dmodels/")
-        self.assertEqual((sorted(plans), notes, unfit), (["U1"], [], [("U3", "BOX-SMD")]))
+        self.assertEqual((sorted(plans), notes, unfit, waiting), (["U1"], [], [("U3", "BOX-SMD")], []))
         path, offset, rot, scale = plans["U1"]
         self.assertEqual((path, rot, scale), ("${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl", (0, 0, 0), 1.0))
         for a, b in zip(offset, (-0.3, -0.1, -1.1)):
             self.assertAlmostEqual(a, b, places=4)
-        self.assertEqual(ie.model_plans(pcbnew, [fp], {"U1": placed_part(back=True)}, {}, ""), ({}, [], []))
+        # no mesh for it: waiting, and only the footprints that have KiCad's path (not C1)
+        self.assertEqual(ie.model_plans(pcbnew, [fp, stock], {"U1": placed_part(back=True), "C1": placed_part()}, {},
+                                        ""), ({}, [], [], [("U1", UUID)]))
 
     def test_a_wired_part_without_a_symbol_is_a_problem(self):
         fp = self.footprint("U7", [("1", "smd", "GND"), ("2", "smd", None)])

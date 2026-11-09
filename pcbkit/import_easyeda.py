@@ -1303,14 +1303,18 @@ def easyeda_models(pcb_json):
             a = node.get("attrs", {}) if isinstance(node, dict) else {}
             if a.get("c_etype") != "outline3D":
                 continue
+            title = a.get("title") or a.get("uuid")
             try:
                 outline = [(x * U, y * U) for x, y in _svg_points(node)]
             except ValueError as e:
-                note(f"3-D model outline not read, its model left as KiCad's importer put it: {e}")
+                note(f"{ref}: the outline of 3-D model {title} not read ({e}); the model stays at KiCad's path")
                 continue
+            if a.get("uuid") and not outline:
+                note(f"{ref}: the outline of 3-D model {title} is drawn with curves or relative moves, not read; the "
+                     "model stays at KiCad's path")
             if a.get("uuid") and outline:
                 size = (float(a.get("c_width") or 0) * U, float(a.get("c_height") or 0) * U)
-                out[ref] = (pads, back, dict(title=a.get("title") or a["uuid"], uuid=a["uuid"],
+                out[ref] = (pads, back, dict(title=title, uuid=a["uuid"],
                                              z=float(a.get("z") or 0) * U, outline=outline, size=size))
     return out
 
@@ -1426,10 +1430,10 @@ def download_obj(uuid):
 
 def fetch_models(models, dest, get=download_obj):
     """The meshes of models {uuid: (title, size)}, as VRML files in dest (LIBDIR/3dmodels): ({uuid: (file name,
-    box, scale)}, [titles fetched], {title: why not}). A file in dest whose header names the model's id is used as
-    it is, whatever its name; the others are fetched with get(uuid) (OBJ bytes, gzipped or not) and converted to
-    <title>.wrl, scaled to the size given. get None fetches nothing: those models are left out. A title another
-    file has takes the next free name_2, name_3."""
+    box, scale)}, [titles fetched], {uuid: (title, why not)}). A file in dest whose header names the model's id is
+    used as it is, whatever its name; the others are fetched with get(uuid) (OBJ bytes, gzipped or not) and
+    converted to <title>.wrl, scaled to the size given. get None fetches nothing: those models are left out. A title
+    another file has takes the next free name_2, name_3."""
     meshes, fetched, failed, have, taken = {}, [], {}, {}, set()
     dest = Path(dest)
     for path in sorted(p for p in dest.iterdir() if p.suffix.lower() == ".wrl") if dest.is_dir() else ():
@@ -1447,7 +1451,7 @@ def fetch_models(models, dest, get=download_obj):
             path = dest / name
             taken.add(name.lower())
         if not head and get is None:
-            failed[title] = "not in " + dest.name + " and not fetched"
+            failed[uuid] = (title, "not in " + dest.name + " and not fetched")
         elif not head:
             try:
                 if not re.fullmatch(r"[0-9a-fA-F]{32}", uuid):
@@ -1456,7 +1460,7 @@ def fetch_models(models, dest, get=download_obj):
                 text = (gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data).decode("utf-8", "replace")
                 wrl = obj_to_wrl(text, title, uuid, size)
             except Exception as e:  # urllib's errors, a timeout, a page that isn't a mesh
-                failed[title] = str(e) or type(e).__name__
+                failed[uuid] = (title, str(e) or type(e).__name__)
                 continue
             dest.mkdir(parents=True, exist_ok=True)
             part = path.with_name(path.name + ".part")  # whole or not at all: a file cut short would be a model
@@ -1521,14 +1525,17 @@ def model_placement(pads, part, mesh, rotation):
 
 def model_plans(pcbnew, footprints, models, meshes, model_ref):
     """What repoint_models does to each footprint whose model KiCad's importer left at EASYEDA_MODELS: ({reference:
-    (model path, offset, rotation, scale)}, [(reference, title, note)], [(reference, title)] that don't fit). models
-    from easyeda_models, meshes from fetch_models, model_ref the path a footprint names a model file by
-    (${KIPRJMOD}/../../lib/3dmodels/)."""
-    plans, notes, unfit = {}, [], []
+    (model path, offset, rotation, scale)}, [(reference, title, note)], [(reference, title)] that don't fit,
+    [(reference, uuid)] whose model has no mesh). models from easyeda_models, meshes from fetch_models, model_ref
+    the path a footprint names a model file by (${KIPRJMOD}/../../lib/3dmodels/)."""
+    plans, notes, unfit, waiting = {}, [], [], []
     for fp in footprints:
         ref = fp.GetReference()
         olds = [m for m in fp.Models() if KICAD_MODEL.fullmatch(m.m_Filename)]
-        if ref not in models or not olds or models[ref][2]["uuid"] not in meshes:
+        if ref not in models or not olds:
+            continue
+        if models[ref][2]["uuid"] not in meshes:
+            waiting.append((ref, models[ref][2]["uuid"]))
             continue
         title = models[ref][2]["title"]
         mesh, r = meshes[models[ref][2]["uuid"]], olds[0].m_Rotation
@@ -1538,7 +1545,7 @@ def model_plans(pcbnew, footprints, models, meshes, model_ref):
             continue
         plans[ref] = (model_ref + mesh[0], *got[:3])
         notes += [(ref, title, x) for x in got[3]]
-    return plans, notes, unfit
+    return plans, notes, unfit, waiting
 
 
 def _set_xyz(block, head, values):
@@ -1819,8 +1826,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
                     if part.endswith(" removed"):
                         removed_courtyards[part.split()[0]].append(fp.GetReference())
     gaps = close_outline(pcbnew, b)
-    plans, model_notes, unfit = model_plans(pcbnew, sorted(b.GetFootprints(), key=ref_order), models or {},
-                                            meshes or {}, model_ref)
+    plans, model_notes, unfit, waiting = model_plans(pcbnew, sorted(b.GetFootprints(), key=ref_order), models or {},
+                                                     meshes or {}, model_ref)
     tb = b.GetTitleBlock()
     tb.SetTitle(meta["title"])
     tb.SetRevision(meta["rev"])
@@ -1839,7 +1846,7 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
                 fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
                 courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_kept=lib_kept,
                 courtyards_removed=dict(removed_courtyards), bodies=drawn,
-                models=dict(plans=plans, placed=placed, notes=model_notes, unfit=unfit))
+                models=dict(plans=plans, placed=placed, notes=model_notes, unfit=unfit, waiting=waiting))
 
 
 # ---------------------------------------------------------------- project
@@ -1902,8 +1909,7 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     fixes["lib"] = json.loads(r.stdout.strip().splitlines()[-1])
     # the library's own footprints, used as they are, get the model their board copy got if theirs is KiCad's too
     plans = fixes["models"]["plans"]
-    fixes["models"].update(fetched=fetched, missing=missing, fetch=fetch, dir=model_dir, refs={
-        ref: m["title"] for ref, (_, _, m) in models.items()}, lib_placed=[
+    fixes["models"].update(fetched=fetched, missing=missing, fetch=fetch, dir=model_dir, lib_placed=[
         name for ref, name in fixes["lib_kept"] if ref in plans and repoint_models(pretty / f"{name}.kicad_mod",
                                                                                    {None: plans[ref]})])
     count = lambda k: sum(len(s[k]) for s in sch["sheets"])
@@ -1980,13 +1986,7 @@ def report_lines(fixes, sym_stats, links, sym_lib):
 
 def model_lines(mo, lib):
     """report_lines' lines on the 3-D models: mo is update_board's "models", with what convert adds."""
-    out, refs = [], mo.get("refs", {})
-
-    def by_title(items):  # {title: [references]}, in the order given
-        got = defaultdict(list)
-        for ref in items:
-            got[refs.get(ref, "?")].append(ref)
-        return got
+    out = []
     if mo.get("placed"):
         out.append(f"3-D models: {len(mo['placed'])} footprints point at EasyEDA's meshes, as VRML in "
                    f"{mo['dir'].parent.name}/{mo['dir'].name}/ ({len(mo['fetched'])} fetched now), each centred on "
@@ -1996,13 +1996,15 @@ def model_lines(mo, lib):
         notes[(title, note)].append(ref)
     for (title, note), rs in notes.items():
         out.append(f"3-D model {title} ({', '.join(rs)}): {note}")
-    left = [r for r in refs if r not in mo.get("plans", {})]
-    missing = {t: rs for t, rs in by_title(left).items() if t in mo.get("missing", {})}
-    if missing:
-        why = ("not in the library and not fetched (--no-fetch)" if not mo.get("fetch") else
-               "not fetched: " + "; ".join(f"{t}: {mo['missing'][t]}" for t in missing))
-        out.append(f"3-D models {why}; their footprints keep KiCad's ${{KIPRJMOD}}/EASYEDA_MODELS path, which has no "
-                   "file: " + ", ".join(f"{t} ({', '.join(rs)})" for t, rs in missing.items()))
+    waiting = defaultdict(list)  # (title, why) -> references, each model's own reason
+    for ref, uuid in mo.get("waiting", []):
+        title, why = mo.get("missing", {}).get(uuid, (uuid, "no mesh"))
+        waiting[(title, why if mo.get("fetch") else "")].append(ref)
+    if waiting:
+        out.append(("3-D models not fetched" if mo.get("fetch") else "3-D models not in the library and not fetched "
+                    "(--no-fetch)") + "; their footprints keep KiCad's ${KIPRJMOD}/EASYEDA_MODELS path, which has no "
+                   "file: " + "; ".join(f"{t} ({', '.join(rs)})" + (f": {why}" if why else "")
+                                        for (t, why), rs in waiting.items()))
     if mo.get("unfit"):
         out.append("3-D models left where KiCad's importer put them, the export's pads don't fit the footprint's: "
                    + ", ".join(f"{r} ({t})" for r, t in mo["unfit"]))

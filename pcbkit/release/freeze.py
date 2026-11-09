@@ -13,6 +13,7 @@ same file from the copy's folder. They point at the project's library as it is n
 variables (${KICAD10_3DMODEL_DIR}) are left to KiCad.
 """
 import itertools
+import json
 import os
 import re
 import shutil
@@ -26,13 +27,26 @@ SHEETFILE = re.compile(r'\(property "Sheet ?file" "((?:[^"\\]|\\.)*)"')
 
 
 def _unq(s):
-    """A quoted string's text as written in a KiCad file (S-expression or the .kicad_pro's JSON): \\" and \\\\ undone."""
+    """A quoted string's text as written in a KiCad S-expression file: \\" and \\\\ undone."""
     return re.sub(r"\\(.)", r"\1", s)
 
 
 def _q(s):
-    """The text to write between quotes: \\ and " escaped, as both KiCad's S-expressions and JSON read them."""
+    """The text to write between an S-expression's quotes: \\ and " escaped."""
     return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _json_unq(s):
+    """A JSON string's text (the .kicad_pro's): \\u00e9 is é, not u00e9. None if it isn't valid JSON."""
+    try:
+        return json.loads('"' + s + '"')
+    except ValueError:
+        return None
+
+
+def _json_q(s):
+    """The text to write between a JSON string's quotes, UTF-8 as KiCad writes it."""
+    return json.dumps(s, ensure_ascii=False)[1:-1]
 
 
 def _read(path):
@@ -103,17 +117,20 @@ def _sheetfiles(text, here, names, copied):
     return SHEETFILE.sub(fix, text)
 
 
-def _rewrite(text, src, dst, model_paths):
+def _rewrite(text, src, dst, model_paths, as_json=False):
     """The text with every path relative to the project folder src made relative to dst, as ${KIPRJMOD}/...; with
     model_paths, a 3-D model's bare relative path too (KiCad looks for it in the project folder first). Strings are
-    unescaped before and escaped after, so a folder name with a quote in it stays one string."""
+    unescaped before and escaped after, so a folder name with a quote in it stays one string; as_json, the way JSON
+    escapes them (the .kicad_pro), else as KiCad's S-expressions do."""
+    unq, q = (_json_unq, _json_q) if as_json else (_unq, _q)
+
     def to_dst(rel):
-        return _q("${KIPRJMOD}/" + os.path.relpath(os.path.normpath(os.path.join(src, rel.lstrip("/\\"))),
-                                                   dst).replace(os.sep, "/"))
+        return q("${KIPRJMOD}/" + os.path.relpath(os.path.normpath(os.path.join(src, rel.lstrip("/\\"))),
+                                                  dst).replace(os.sep, "/"))
 
     def prj(m):
-        rel = _unq(m.group(1))
-        return '"' + to_dst(rel) + '"' if rel[:1] in ("/", "\\") else m.group(0)
+        rel = unq(m.group(1))
+        return '"' + to_dst(rel) + '"' if rel and rel[:1] in ("/", "\\") else m.group(0)
 
     def model(m):
         path = _unq(m.group(2))
@@ -188,7 +205,8 @@ def freeze(pcb, dst):
             text = _read(p)
             if rel in names:                   # first, so that a sheet's ${KIPRJMOD} path reaches the copied sheet
                 text = _sheetfiles(text, rel, names[rel], copied)
-            text = _rewrite(text, src, dst, rel.endswith(".kicad_pcb"))   # ${KIPRJMOD} is the copy's folder
+            text = _rewrite(text, src, dst, rel.endswith(".kicad_pcb"),      # ${KIPRJMOD} is the copy's folder
+                            as_json=rel.endswith(".kicad_pro"))
             with open(out, "w", encoding="utf-8") as fh:
                 fh.write(text)
         written.append(rel.replace(os.sep, "/"))

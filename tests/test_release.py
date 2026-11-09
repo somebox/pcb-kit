@@ -308,6 +308,17 @@ class Sheets(unittest.TestCase):
         with open(pdf, "rb") as fh:
             self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 5)    # q"t has no leaf sheet
 
+    def test_the_project_files_paths_are_json(self):
+        """The .kicad_pro is JSON: a path written as caf\\u00e9 is café, and comes back out as a string JSON reads."""
+        doc = 'docs/café "draft".pdf'
+        write(os.path.join(self.board, "demo.kicad_pro"),
+              json.dumps({"text_variables": {"DOC": "${KIPRJMOD}/" + doc}}, indent=2) + "\n")   # \\u00e9, \\"
+        k = os.path.join(self.tmp.name, "kicad")
+        freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
+        with open(os.path.join(k, "demo.kicad_pro"), encoding="utf-8") as fh:
+            got = json.load(fh)["text_variables"]["DOC"]
+        self.assertEqual(got, "${KIPRJMOD}/" + os.path.relpath(os.path.join(self.board, doc), k).replace(os.sep, "/"))
+
     def test_a_missing_sheet_is_reported(self):
         os.remove(os.path.join(self.board, "sheets", "power.kicad_sch"))
         written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), os.path.join(self.tmp.name, "k"))

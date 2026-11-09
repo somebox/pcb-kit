@@ -197,6 +197,32 @@ class Detail(unittest.TestCase):
                       f"{netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ, 1 blind/micro not counted", text)
         self.assertIn("GND: no through vias, 1 blind/micro not counted", text)
 
+    def test_nets_sharing_a_last_name_part_are_not_in_parallel(self):
+        """/a/VOUT and /b/VOUT are two nets: --metrics VOUT gives a line for each, at one via's resistance."""
+        self.via(-2.2, 0.3, "/a/VOUT")
+        self.via(2.2, 0.3, "/b/VOUT")
+        self.via(0, 2.2, "/a/GND")
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, "Option")], out, *WINDOW, layer_name="F.Cu", metrics=["VOUT", "GND", "/a/VOUT"])
+            with open(out, encoding="utf-8") as fh:
+                lines = re.findall(r">([^<>]*: [^<>]*)<", fh.read())
+        one = f"1 vias, wall {netview.wall_area(0.2):.3f} mm², {netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ"
+        self.assertEqual(lines, [f"/a/VOUT: {one}", f"/b/VOUT: {one}", f"GND: {one}", f"/a/VOUT: {one}"])
+
+    def test_a_note_alone_makes_a_sheet(self):
+        """--note asks for a footnote, which only a sheet has."""
+        self.part()
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "view.svg")
+            netview.main([board, out, *(str(v) for v in WINDOW), "--layer", "F.Cu", "--note", "DRC clean."])
+            with open(out, encoding="utf-8") as fh:
+                self.assertIn("DRC clean.", fh.read())
+
 
 if __name__ == "__main__":
     unittest.main()

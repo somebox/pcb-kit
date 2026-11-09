@@ -20,12 +20,13 @@ Comparing layout options: the same window of several boards side by side, in the
       --ref datasheet-fig.png="Datasheet layout" --metrics VOUT,GND --png OUT.png
 
 --ref images (a datasheet's layout figure, an EVM) come first, turned counter-clockwise by --ref-rotate; then the
-board, then each --compare board in order; "\\n" in a title starts a new line. With --compare, --ref, --title or
---metrics the output is a sheet: a title over each panel, its numbers under it, one legend and a footnote. The
-numbers count the vias whose centres are in the window: with --detail, holes under paste; for each --metrics net, its
-through vias, their barrels' copper cross-section (18 um plating outside the finished hole) and their resistance in
-parallel through the board. Blind and micro vias are counted apart and left out of the copper and resistance.
---note adds to the footnote (the DRC result of each option, say).
+board, then each --compare board in order; "\\n" in a title starts a new line. With --compare, --ref, --title,
+--metrics or --note the output is a sheet: a title over each panel, its numbers under it, one legend and a footnote.
+The numbers count the vias whose centres are in the window: with --detail, holes under paste; for each --metrics net,
+its through vias, their barrels' copper cross-section (18 um plating outside the finished hole) and their resistance
+in parallel through the board. Blind and micro vias are counted apart and left out of the copper and resistance. A
+--metrics name matches a net's full name, or else the last part of its name; nets that only share that last part
+get a line each. --note adds to the footnote (the DRC result of each option, say).
 """
 import argparse
 import base64
@@ -379,15 +380,24 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
         inside = [v for v in view["vias"] if x0 < v[0] < x1 and y0 < v[1] < y1]
         lines = [f"holes under paste: {sum(1 for v in inside if v[5])}"] if paste else []
         for key in metrics:
-            on_net = [v for v in inside if v[4] == key or v[4].split("/")[-1] == key]
-            vs = [v for v in on_net if v[6]]          # blind and micro vias span part of the board: not counted
-            other = f", {len(on_net) - len(vs)} blind/micro not counted" if len(vs) < len(on_net) else ""
-            if not vs:
-                lines.append(f"{key}: no {'through ' if other else ''}vias{other}")
-                continue
-            ohms = 1 / sum(1 / via_ohms(v[3], view["thickness"]) for v in vs)
-            lines.append(f"{key}: {len(vs)} vias, wall {sum(wall_area(v[3]) for v in vs):.3f} mm², "
-                         f"{ohms * 1000:.2f} mΩ{other}")
+            groups = {}
+            for v in inside:
+                if v[4] == key or v[4].split("/")[-1] == key:
+                    groups.setdefault(v[4], []).append(v)
+            if key in groups:                         # the full name asked for, not others ending in it
+                groups = {key: groups[key]}
+            if not groups:
+                lines.append(f"{key}: no vias")
+            for name, on_net in sorted(groups.items()):   # nets sharing a last name part are not in parallel
+                label = key if len(groups) == 1 else name
+                vs = [v for v in on_net if v[6]]      # blind and micro vias span part of the board: not counted
+                other = f", {len(on_net) - len(vs)} blind/micro not counted" if len(vs) < len(on_net) else ""
+                if not vs:
+                    lines.append(f"{label}: no through vias{other}")
+                    continue
+                ohms = 1 / sum(1 / via_ohms(v[3], view["thickness"]) for v in vs)
+                lines.append(f"{label}: {len(vs)} vias, wall {sum(wall_area(v[3]) for v in vs):.3f} mm², "
+                             f"{ohms * 1000:.2f} mΩ{other}")
         return lines
 
     panels = [("ref", path, title) for path, title in refs] + [("board", v, t) for v, (_p, t) in zip(views, boards)]
@@ -485,7 +495,8 @@ def main(argv=None):
     ap.add_argument("--ref", action="append", default=[], metavar="IMAGE[=TITLE]", help="a reference image; repeatable")
     ap.add_argument("--ref-rotate", type=int, default=0, choices=(0, 90, 180, 270), help="turn --ref images, CCW")
     ap.add_argument("--title", help="the first board's title on a sheet")
-    ap.add_argument("--metrics", default="", help="nets whose vias to count, comma-separated (last name part)")
+    ap.add_argument("--metrics", default="", help="nets whose vias to count, comma-separated (full name or last "
+                    "part; a last part shared by several nets gives a line per net)")
     ap.add_argument("--cols", type=int, help="panels per row on a sheet")
     ap.add_argument("--note", default="", help="added to a sheet's footnote")
     ap.add_argument("--png", help="also convert to this PNG with rsvg-convert")
@@ -498,7 +509,7 @@ def main(argv=None):
         net, _, value = spec.partition("=")
         colours[net] = value
     metrics = [m.strip() for m in a.metrics.split(",") if m.strip()]
-    if a.compare or a.ref or a.title or metrics:
+    if a.compare or a.ref or a.title or metrics or a.note:
         boards = [(a.board, a.title or os.path.relpath(a.board))] + [_titled(s) for s in a.compare]
         sheet(boards, a.out, a.x0, a.y0, a.x1, a.y1, a.layer, colours, a.detail, a.fill,
               [_titled(s) for s in a.ref], a.ref_rotate, metrics, a.cols, a.note)

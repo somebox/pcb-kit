@@ -297,6 +297,25 @@ class Models3D(unittest.TestCase):
                                 self.dir / "3dmodels", lambda uuid: OBJ.encode())
         self.assertEqual(third[0]["11112222333344445555666677778888"][0], "BOX-SMD_3.wrl")
 
+    def test_cached_files_any_case_of_extension_and_damaged_headers(self):
+        models = self.dir / "3dmodels"
+        models.mkdir()
+        good = ie.obj_to_wrl(OBJ, "BOX-SMD", UUID, (2.0, 0.5))
+        (models / "BOX-SMD.WRL").write_text(good)
+        (models / "OTHER.WRL").write_text("#VRML V2.0 utf8\n")  # not ours: its name stays taken, in any case
+        cut = "fedcba9876543210fedcba9876543210"
+        (models / "CUT.wrl").write_text(f"#VRML V2.0 utf8\n# CUT: EasyEDA model {cut}, converted\n"
+                                        "# box mm x -0.5 1.5 y\n")  # a write cut short
+        self.assertIsNone(ie.wrl_header((models / "CUT.wrl").read_text()))
+        new = "11112222333344445555666677778888"
+        wanted = {UUID: ("BOX-SMD", (2.0, 0.5)), cut: ("CUT", (2.0, 0.5)), new: ("OTHER", (2.0, 0.5))}
+        meshes, _, failed = ie.fetch_models(wanted, models, None)
+        self.assertEqual((meshes, sorted(failed)), ({UUID: ("BOX-SMD.WRL", BOX, 1.0)}, ["CUT", "OTHER"]))
+        meshes, fetched, failed = ie.fetch_models(wanted, models, lambda uuid: OBJ.encode())
+        self.assertEqual((meshes[cut][0], meshes[new][0], failed), ("CUT_2.wrl", "OTHER_2.wrl", {}))
+        self.assertEqual((models / "OTHER.WRL").read_text(), "#VRML V2.0 utf8\n")
+        self.assertEqual(sorted(p.name for p in models.iterdir() if p.name.endswith(".part")), [])
+
     def test_a_model_that_cant_be_fetched_is_listed_and_the_rest_go_on(self):
         def get(uuid):
             if uuid == UUID:
@@ -311,11 +330,11 @@ class Models3D(unittest.TestCase):
         self.assertIn("not EasyEDA's", failed["ODD"])  # never put in a URL
         self.assertFalse((self.dir / "3dmodels").exists())
 
-    def assertPlaced(self, got, offset, rot, scale=1.0, notes=()):
+    def assertPlaced(self, got, offset, rot, scale=1.0, notes=(), turn_xy=(0, 0)):
         self.assertIsNotNone(got)
         for a, b in zip(got[0], offset):
             self.assertAlmostEqual(a, b, places=4)
-        self.assertEqual(got[1], rot)
+        self.assertEqual(got[1], (*turn_xy, rot))
         self.assertAlmostEqual(got[2], scale, places=6)
         self.assertEqual(got[3], list(notes))
 
@@ -337,10 +356,10 @@ class Models3D(unittest.TestCase):
     def test_a_model_turned_about_x_or_y_is_placed_by_its_turned_box(self):
         # x 90: the box's depth stands up, KiCad turning it by -90 about x: y from 0.1 to 0.5, z from -0.25 to 0.25
         self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(outline=(2.0, 0.4)), MESH, (90, 0, 0)),
-                          (-0.3, -0.4, -0.75), 0.0)
+                          (-0.3, -0.4, -0.75), 0.0, turn_xy=(90, 0))
         # y 270, as EasyEDA's 14-segment displays have it: x from 0.1 to 0.5, z from -1.5 to 0.5
         self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(outline=(0.4, 0.5)), MESH, (0, 270, 0)),
-                          (-0.1, -0.1, 0.5), 0.0)
+                          (-0.1, -0.1, 0.5), 0.0, turn_xy=(0, 270))
         self.assertEqual([round(c, 9) + 0.0 for c in ie.turned((1, 2, 3), (90, 0, 0))], [1, 3, -2])  # y' = z, z' = -y
 
     def test_a_model_is_scaled_for_the_size_this_export_gives_it(self):
@@ -370,25 +389,26 @@ class Models3D(unittest.TestCase):
                                    ("C1", "${KICAD10_3DMODEL_DIR}/C.3dshapes/C.step", 0)))
         before = path.read_text()
         new = "${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl"
-        plans = {"U1": (new, (0.1, -0.3, -1.1), -90.0, 2.54), "C1": (new, (1, 1, 1), 0.0, 1.0)}
+        plans = {"U1": (new, (0.1, -0.3, -1.1), (-90, 0, -90), 2.54), "C1": (new, (1, 1, 1), (0, 0, 0), 1.0)}
         self.assertEqual(ie.repoint_models(path, plans), ["U1"])  # C1's model is KiCad's own, U2 has no plan
         after = path.read_text()
         u1 = after[after.index('"lib:U1"'):after.index('"lib:U2"')]
         self.assertIn(f'(model "{new}"\n\t\t\t(offset\n\t\t\t\t(xyz 0.1 -0.3 -1.1)', u1)
         self.assertIn("(xyz 2.54 2.54 2.54)", u1)
-        self.assertIn("(xyz -90 0 -90)", u1)  # x and y turns kept
+        self.assertIn("(xyz -90 0 -90)", u1)
         self.assertEqual(after[after.index('"lib:U2"'):], before[before.index('"lib:U2"'):])
         self.assertEqual(ie.repoint_models(path, plans), [])  # done: nothing left to re-point
 
     def test_a_footprint_files_model_is_repointed(self):
         path = self.dir / "BOX.kicad_mod"
+        # an earlier import's footprint whose model was tilted otherwise: it gets the board copy's model whole
         path.write_text('(footprint "BOX"\n\t(layer "F.Cu")\n\t(model "${KIPRJMOD}/EASYEDA_MODELS/BOX-SMD.step"\n'
-                        "\t\t(scale\n\t\t\t(xyz 1 1 1)\n\t\t)\n\t)\n)\n")
-        self.assertEqual(ie.repoint_models(path, {None: ("x.wrl", (0.25, 0, 0), 180.0, 1.0)}), [None])
+                        "\t\t(scale\n\t\t\t(xyz 1 1 1)\n\t\t)\n\t\t(rotate\n\t\t\t(xyz 45 0 0)\n\t\t)\n\t)\n)\n")
+        self.assertEqual(ie.repoint_models(path, {None: ("x.wrl", (0.25, 0, 0), (0, 0, 180), 1.0)}), [None])
         text = path.read_text()
         self.assertIn('(model "x.wrl"', text)
         self.assertIn("(offset (xyz 0.25 0 0))", text)  # added where the file had none
-        self.assertIn("(rotate (xyz 0 0 180))", text)
+        self.assertIn("(xyz 0 0 180)", text)
         self.assertEqual(text.count("("), text.count(")"))
 
     def test_no_fetch_is_passed_on(self):
@@ -716,7 +736,7 @@ class Boards(unittest.TestCase):
             {UUID: ("BOX-SMD.wrl", BOX, 1.0)}, "${KIPRJMOD}/../../lib/3dmodels/")
         self.assertEqual((sorted(plans), notes, unfit), (["U1"], [], [("U3", "BOX-SMD")]))
         path, offset, rot, scale = plans["U1"]
-        self.assertEqual((path, rot, scale), ("${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl", 0.0, 1.0))
+        self.assertEqual((path, rot, scale), ("${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl", (0, 0, 0), 1.0))
         for a, b in zip(offset, (-0.3, -0.1, -1.1)):
             self.assertAlmostEqual(a, b, places=4)
         self.assertEqual(ie.model_plans(pcbnew, [fp], {"U1": placed_part(back=True)}, {}, ""), ({}, [], []))

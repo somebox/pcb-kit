@@ -1380,24 +1380,30 @@ def obj_to_wrl(obj, title, uuid, size):
 
 def wrl_header(text):
     """(model id, box ((x0, x1), (y0, y1), (z0, z1)) mm, scale) from the header obj_to_wrl writes (the text, or its
-    first lines); None for a file without one."""
+    first lines); None for a file without one, or with one cut short (a write that was interrupted)."""
     uuid, box, k = None, None, 1.0
-    for line in text.splitlines():
-        if not line.startswith("#"):
-            break
-        m = re.search(r"EasyEDA model ([0-9a-fA-F]+)", line)
-        uuid = m.group(1) if m else uuid
-        if line.startswith("# box mm "):
-            v = line.split()[3:]
-            box = tuple((float(v[i + 1]), float(v[i + 2])) for i in (0, 3, 6))
-        elif line.startswith("# scaled "):
-            k = float(line.split()[2].rstrip(":"))
-    return (uuid, box, k) if uuid and box else None
+    try:
+        for line in text.splitlines():
+            if not line.startswith("#"):
+                break
+            m = re.search(r"EasyEDA model ([0-9a-fA-F]+)", line)
+            uuid = m.group(1) if m else uuid
+            if line.startswith("# box mm "):
+                v = line.split()[3:]
+                box = tuple((float(v[i + 1]), float(v[i + 2])) for i in (0, 3, 6))
+            elif line.startswith("# scaled "):
+                k = float(line.split()[2].rstrip(":"))
+    except (IndexError, ValueError):
+        return None
+    return (uuid, box, k) if uuid and box and k > 0 else None
 
 
 def _read_header(path):
-    with open(path, errors="replace") as f:
-        return wrl_header("".join(next(f, "") for _ in range(6)))
+    try:
+        with open(path, errors="replace") as f:
+            return wrl_header("".join(next(f, "") for _ in range(6)))
+    except OSError:
+        return None
 
 
 def download_obj(uuid):
@@ -1426,7 +1432,7 @@ def fetch_models(models, dest, get=download_obj):
     file has takes the next free name_2, name_3."""
     meshes, fetched, failed, have, taken = {}, [], {}, {}, set()
     dest = Path(dest)
-    for path in sorted(dest.glob("*.wrl")) if dest.is_dir() else ():
+    for path in sorted(p for p in dest.iterdir() if p.suffix.lower() == ".wrl") if dest.is_dir() else ():
         taken.add(path.name.lower())  # a name differing only in case is the same file on macOS
         head = _read_header(path)
         if head and head[0] not in have:
@@ -1453,7 +1459,9 @@ def fetch_models(models, dest, get=download_obj):
                 failed[title] = str(e) or type(e).__name__
                 continue
             dest.mkdir(parents=True, exist_ok=True)
-            path.write_text(wrl)
+            part = path.with_name(path.name + ".part")  # whole or not at all: a file cut short would be a model
+            part.write_text(wrl)
+            os.replace(part, path)
             head = wrl_header(wrl)
             fetched.append(title)
         if head:
@@ -1477,15 +1485,15 @@ def turned(p, rotation):
 
 
 def model_placement(pads, part, mesh, rotation):
-    """(offset (x, y, z) mm, z rotation, scale, notes) that put a part's model (easyeda_models) on a footprint whose
-    pads {number: (x, y)} are in its library frame (y down), or None if the part's pads don't fit them. The export's
-    pads are fitted onto the footprint's, which carries EasyEDA's outline of the model into the footprint's frame;
-    the model's box (mesh: fetch_models' file name, box in mm in its own frame, y up, and the scale the file has),
-    scaled and turned as KiCad will, is centred on the outline, and its bottom goes to the export's z. rotation is
-    what KiCad's importer gave the model (x, y, z): x and y stay, z is brought into -180..180. KiCad scales and turns
-    a model, then shifts it by the offset (y up). The scale is what the file still needs to match this export's
-    size (1 unless another export gave the same model another size). Notes say where the outline's size and the
-    model's differ."""
+    """(offset (x, y, z) mm, rotation (x, y, z), scale, notes) that put a part's model (easyeda_models) on a footprint
+    whose pads {number: (x, y)} are in its library frame (y down), or None if the part's pads don't fit them. The
+    export's pads are fitted onto the footprint's, which carries EasyEDA's outline of the model into the footprint's
+    frame; the model's box (mesh: fetch_models' file name, box in mm in its own frame, y up, and the scale the file
+    has), scaled and turned as KiCad will, is centred on the outline, and its bottom goes to the export's z. rotation
+    is what KiCad's importer gave the model (x, y, z): x and y stay, z is brought into -180..180. KiCad scales and
+    turns a model, then shifts it by the offset (y up). The scale is what the file still needs to match this
+    export's size (1 unless another export gave the same model another size). Notes say where the outline's size and
+    the model's differ."""
     src, back, model = part
     f = fit_pads(src, pads, mirrored=back)
     if not f:
@@ -1507,12 +1515,13 @@ def model_placement(pads, part, mesh, rotation):
         notes.append(f"mesh scaled {k:g} to the export's size")
     elif abs(x1 - x0 - ow) > 0.05 or abs(y1 - y0 - od) > 0.05:
         notes.append(f"EasyEDA's outline is {ow:.2f} x {od:.2f} mm, the model {x1 - x0:.2f} x {y1 - y0:.2f}")
-    return tuple(round(c, 4) + 0.0 for c in offset), round(phi, 3) + 0.0, round(scale, 6), notes
+    rotation = (rotation[0], rotation[1], phi)
+    return tuple(round(c, 4) + 0.0 for c in offset), tuple(round(c, 3) + 0.0 for c in rotation), round(scale, 6), notes
 
 
 def model_plans(pcbnew, footprints, models, meshes, model_ref):
     """What repoint_models does to each footprint whose model KiCad's importer left at EASYEDA_MODELS: ({reference:
-    (model path, offset, z rotation, scale)}, [(reference, title, note)], [(reference, title)] that don't fit). models
+    (model path, offset, rotation, scale)}, [(reference, title, note)], [(reference, title)] that don't fit). models
     from easyeda_models, meshes from fetch_models, model_ref the path a footprint names a model file by
     (${KIPRJMOD}/../../lib/3dmodels/)."""
     plans, notes, unfit = {}, [], []
@@ -1544,8 +1553,9 @@ def _set_xyz(block, head, values):
 
 def repoint_models(path, plans):
     """Point the models KiCad's importer left at ${KIPRJMOD}/EASYEDA_MODELS/ at the converted meshes, on the text of a
-    saved board or footprint file (pcbnew can't set a model's fields): plans {reference: (model path, offset, z
-    rotation, scale)}, a footprint file's under None. The model's x and y rotation stay. Returns the references
+    saved board or footprint file (pcbnew can't set a model's fields): plans {reference: (model path, offset,
+    rotation (x, y, z), scale)}, a footprint file's under None. All of the model's fields are set, so a library
+    footprint whose model an earlier import tilted otherwise gets the board copy's model whole. Returns the references
     re-pointed."""
     path = Path(path)
     text = path.read_text()
@@ -1569,7 +1579,7 @@ def repoint_models(path, plans):
             if m and KICAD_MODEL.fullmatch(unq(m.group(1))):
                 block = text[ms:me]
                 block = block[:m.start(1) - 1] + q(model) + block[m.end(1) + 1:]
-                block = _set_xyz(_set_xyz(block, "offset", offset), "rotate", (None, None, rot))
+                block = _set_xyz(_set_xyz(block, "offset", offset), "rotate", rot)
                 block = _set_xyz(block, "scale", (scale, scale, scale))
                 edits.append((ms, me, block))
                 if ref not in done:

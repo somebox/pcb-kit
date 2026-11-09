@@ -2,14 +2,18 @@
 
   python3 tests/test_import_easyeda.py     # re-runs itself under KiCad's Python when pcbnew is not importable
 
-The text cases (symbol library merge, keep-outs, sheet names, Footprint fields) run under any Python; the board
-cases (pad checks, loose pads, outline gaps) draw small boards in pcbnew.
+The text cases (symbol library merge, keep-outs, sheet names, Footprint fields, 3-D models) run under any Python;
+the board cases (pad checks, loose pads, outline gaps, a model on a turned and flipped footprint) draw small boards in
+pcbnew. Nothing goes to the network: the 3-D model cases fetch a small OBJ mesh from a function in this file.
 """
+import gzip
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -114,6 +118,242 @@ KICAD_SAVED_RES = """(symbol "RES"
 \t\t)
 \t\t(embedded_fonts no)
 \t)"""
+
+
+# A 3-D model as EasyEDA serves it: an OBJ mesh with its materials inline, a 2.0 x 0.5 x 0.4 mm box whose centre
+# is 0.5 mm off its origin in x, with its bottom 0.1 mm up. The last face counts its corners from the end.
+OBJ = """newmtl body
+Kd 0.1 0.2 0.3
+Ks 0.5 0.5 0.5
+d 0
+endmtl
+newmtl pins
+Kd 0.8 0.8 0.8
+d 0.5
+endmtl
+v -0.5 -0.25 0.1
+v 1.5 -0.25 0.1
+v 1.5 0.25 0.1
+v -0.5 0.25 0.1
+v -0.5 -0.25 0.5
+v 1.5 -0.25 0.5
+v 1.5 0.25 0.5
+v -0.5 0.25 0.5
+usemtl body
+f 1/1/1 2/2/1 3/3/1 4/4/1
+f 5 6 7 8
+usemtl pins
+f 1 2 6 5
+f -5 -6 -2 -1
+"""
+BOX = ((-0.5, 1.5), (-0.25, 0.25), (0.1, 0.5))
+UUID = "0123456789abcdef0123456789abcdef"
+LIB_PADS = {"1": (-1.0, 0.0), "2": (1.0, 0.0), "3": (0.0, 0.5)}  # the footprint's own: not in a line, a mirror shows
+
+
+def rect(cx, cy, w, h):
+    return [(cx - w / 2, cy - h / 2), (cx + w / 2, cy - h / 2), (cx + w / 2, cy + h / 2), (cx - w / 2, cy + h / 2)]
+
+
+def placed_part(back=False, outline=(2.0, 0.5), z=-1.0):
+    """The part as EasyEDA's board has it (mm, y down): at (50, 20), with the outline of its model centred 0.2 mm
+    right of and 0.1 mm below the pads' middle, as EasyEDA's outlines often are; on the bottom, seen mirrored."""
+    m = -1 if back else 1
+    pads = {k: (50 + m * x, 20 + y) for k, (x, y) in LIB_PADS.items()}
+    return pads, back, dict(title="BOX-SMD", uuid=UUID, z=z, size=(2.0, 0.5),
+                            outline=rect(50 + m * 0.2, 20.1, *outline))
+
+
+def board_text(*footprints):
+    """A .kicad_pcb's text with footprints (reference, model path, rotation) as KiCad 10 saves them."""
+    out = ['(kicad_pcb\n\t(version 20250114)\n\t(generator "pcbnew")']
+    for ref, model, rot in footprints:
+        out.append(f'\t(footprint "lib:{ref}"\n\t\t(layer "F.Cu")\n\t\t(property "Reference" "{ref}"\n'
+                   f'\t\t\t(at 0 0 0)\n\t\t)\n\t\t(pad "1" smd rect\n\t\t\t(at -1 0)\n\t\t)\n'
+                   f'\t\t(model "{model}"\n\t\t\t(offset\n'
+                   f'\t\t\t\t(xyz 0.01 -0.2 0)\n\t\t\t)\n\t\t\t(scale\n\t\t\t\t(xyz 1 1 1)\n\t\t\t)\n\t\t\t(rotate\n'
+                   f'\t\t\t\t(xyz -90 0 {rot})\n\t\t\t)\n\t\t)\n\t)')
+    return "\n".join(out) + "\n)\n"
+
+
+class Models3D(unittest.TestCase):
+    """KiCad's importer points each model at ${KIPRJMOD}/EASYEDA_MODELS/<title>.step and writes no file there; the
+    import fetches EasyEDA's OBJ mesh instead, converts it to VRML and places it by EasyEDA's outline."""
+
+    def setUp(self):
+        guard = mock.patch("urllib.request.urlopen", side_effect=AssertionError("the tests don't use the network"))
+        guard.start()
+        self.addCleanup(guard.stop)
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir))
+
+    def test_the_export_names_each_parts_model_by_reference(self):
+        U = 0.254
+        node = {"gId": "gge9", "nodeName": "g", "nodeType": 1, "layerid": "19",
+                "attrs": {"c_width": "7.874", "c_height": "1.9685", "c_rotation": "0,0,90", "z": "-3.937",
+                          "c_origin": "200,80", "uuid": UUID, "c_etype": "outline3D", "title": "BOX-SMD",
+                          "layerid": "19", "transform": "scale(1) translate(0, 0)", "id": "gge9"},
+                "childNodes": [{"gId": "gge10", "nodeName": "polyline", "nodeType": 1,
+                                "attrs": {"fill": "none", "points": "197 79.4 205 79.4 205 81.4 197 81.4 197 79.4"}}]}
+        lib = ("LIB~200~80~package`BOX`3DModel`BOX-SMD`~0~~gge0~2~u~0~0~~yes~~#@$"
+               "TEXT~P~195~70~0.6~0~0~3~~4.5~U1~M 1 1#@$"
+               "PAD~RECT~196~80~3~3~1~GND~1~0~~0~gge1#@$PAD~RECT~204~80~3~3~1~VCC~2~0~~0~gge2#@$"
+               "SVGNODE~" + json.dumps(node))
+        bare = "LIB~0~0~package`TP`#@$TEXT~P~0~0~0.6~0~0~3~~4.5~TP1~M 1 1#@$PAD~ELLIPSE~0~0~4~4~2~~1~0~~0~gge5"
+        path = self.dir / "pcb.json"
+        path.write_text(json.dumps({"shape": [lib, bare]}))
+        got = ie.easyeda_models(path)
+        self.assertEqual(sorted(got), ["U1"])  # TP1 has no model
+        pads, back, model = got["U1"]
+        self.assertTrue(back)
+        self.assertEqual(sorted(pads), ["1", "2"])
+        self.assertAlmostEqual(pads["2"][0], 204 * U)
+        self.assertEqual((model["title"], model["uuid"]), ("BOX-SMD", UUID))
+        for a, b in zip((model["z"], *model["size"]), (-1.0, 2.0, 0.5)):
+            self.assertAlmostEqual(a, b, places=4)
+        self.assertEqual(len(model["outline"]), 5)
+        self.assertAlmostEqual(model["outline"][1][0], 205 * U)
+
+    def test_an_outline_drawn_in_mm_is_read_through_its_transform(self):
+        # as siebenuhr's export has its tantalum: points in mm, scaled to EasyEDA units about the part's origin
+        U = 0.254
+        node = {"nodeName": "g", "attrs": {"c_width": "28.7402", "c_height": "16.9291", "z": "0", "uuid": UUID,
+                                           "c_etype": "outline3D", "title": "CASE-E",
+                                           "transform": "scale(3.937) translate(-2999.5147, -2584.933)"},
+                "childNodes": [{"nodeName": "polyline", "attrs": {
+                    "points": "4024.45 3462.91 4024.45 3467.21 4017.15 3467.21 4017.15 3462.91"}}]}
+        lib = ("LIB~4020.8~3465.06~package`CASE-E`~0~~gge0~1~#@$TEXT~P~0~0~0.6~0~0~3~~4.5~C7~M 1 1#@$"
+               "SVGNODE~" + json.dumps(node))
+        path = self.dir / "pcb.json"
+        path.write_text(json.dumps({"shape": [lib]}))
+        xs, ys = zip(*ie.easyeda_models(path)["C7"][2]["outline"])
+        self.assertAlmostEqual(max(xs) - min(xs), 7.3, places=3)  # the model's 7.3 x 4.3 mm, not a quarter of it
+        self.assertAlmostEqual(max(ys) - min(ys), 4.3, places=3)
+        self.assertAlmostEqual((max(xs) + min(xs)) / 2, 4020.8 * U, places=2)
+        f = ie.svg_transform("translate(5, 6) rotate(90)")
+        self.assertEqual([round(v, 9) + 0.0 for v in f], [0, 1, -1, 0, 5, 6])  # (1, 0) -> (5, 7)
+        self.assertEqual(ie.svg_transform("matrix(2 0 0 2 1 1) scale(0.5)"), (1, 0, 0, 1, 1, 1))
+        with self.assertRaises(ValueError):
+            ie.svg_transform("skewX(10)")
+
+    def test_a_mesh_becomes_vrml_with_its_box_and_materials(self):
+        wrl = ie.obj_to_wrl(OBJ, "BOX-SMD", UUID, (2.0, 0.5))
+        self.assertTrue(wrl.startswith("#VRML V2.0 utf8\n"))
+        self.assertEqual(ie.wrl_header(wrl), (UUID, BOX, 1.0))
+        self.assertEqual(wrl.count("Shape {"), 2)  # one per material
+        self.assertIn("diffuseColor 0.1 0.2 0.3", wrl)
+        self.assertIn("transparency 0.5", wrl)
+        self.assertIn("point [ -0.19685 -0.098425 0.03937, 0.59055", wrl)  # KiCad's VRML unit is 0.1 in
+        self.assertIn("coordIndex [ 0,1,5,4,-1, 3,2,6,7,-1 ]", wrl)  # the second face counted from the end
+        self.assertNotIn("# scaled", wrl)
+
+    def test_a_mesh_of_another_size_than_the_exports_is_scaled_to_it(self):
+        inch = ie.obj_to_wrl(OBJ, "HDR", UUID, (2.0 * 2.54, 0.5 * 2.54))  # drawn in 0.1 in
+        self.assertEqual(ie.wrl_header(inch)[1:], (tuple((a * 2.54, b * 2.54) for a, b in BOX), 2.54))
+        self.assertIn("# scaled 2.54: the mesh was 0.50 x 2.00, the export says 1.27 x 5.08", inch)
+        near = ie.obj_to_wrl(OBJ, "BOX-SMD", UUID, (2.03, 0.508))  # within 2 %: the mesh as it is
+        self.assertEqual(ie.wrl_header(near)[2], 1.0)
+        other = ie.obj_to_wrl(OBJ, "BIG", UUID, (3.0, 0.75))
+        self.assertEqual(ie.wrl_header(other)[2], 1.5)
+        with self.assertRaises(ValueError):
+            ie.obj_to_wrl("# nothing\n", "X", UUID, (1, 1))
+
+    def test_models_are_fetched_once_converted_and_named_by_title(self):
+        asked = []
+
+        def get(uuid):
+            asked.append(uuid)
+            return gzip.compress(OBJ.encode())  # EasyEDA gzips some
+        other = "fedcba9876543210fedcba9876543210"
+        models = {UUID: ("BOX-SMD", (2.0, 0.5)), other: ("BOX-SMD", (2.0, 0.5))}  # two models, one title
+        meshes, fetched, failed = ie.fetch_models(models, self.dir / "3dmodels", get)
+        self.assertEqual((sorted(asked), fetched, failed), (sorted(models), ["BOX-SMD", "BOX-SMD"], {}))
+        self.assertEqual(meshes[UUID], ("BOX-SMD.wrl", BOX, 1.0))
+        self.assertEqual(meshes[other][0], "BOX-SMD_2.wrl")  # its id sorts after
+        self.assertEqual(ie.wrl_header((self.dir / "3dmodels" / "BOX-SMD_2.wrl").read_text())[0], other)
+        again = ie.fetch_models({other: ("BOX-SMD", (2.0, 0.5))}, self.dir / "3dmodels", get)
+        self.assertEqual((again[0], again[1], len(asked)), ({other: meshes[other]}, [], 2))  # the file is kept
+        offline = ie.fetch_models({**models, "11112222333344445555666677778888": ("NEW", (1, 1))},
+                                  self.dir / "3dmodels", None)
+        self.assertEqual((sorted(offline[0]), offline[1], list(offline[2])), (sorted(models), [], ["NEW"]))
+
+    def test_a_model_that_cant_be_fetched_is_listed_and_the_rest_go_on(self):
+        def get(uuid):
+            if uuid == UUID:
+                raise OSError("HTTP Error 404: Not Found")
+            return b"<html>not a mesh</html>"
+        meshes, fetched, failed = ie.fetch_models(
+            {UUID: ("GONE", (1, 1)), "fedcba9876543210fedcba9876543210": ("PAGE", (1, 1)),
+             "../../etc": ("ODD", (1, 1))}, self.dir / "3dmodels", get)
+        self.assertEqual((meshes, fetched), ({}, []))
+        self.assertEqual(failed["GONE"], "HTTP Error 404: Not Found")
+        self.assertEqual(failed["PAGE"], "no mesh in the OBJ")
+        self.assertIn("not EasyEDA's", failed["ODD"])  # never put in a URL
+        self.assertFalse((self.dir / "3dmodels").exists())
+
+    def assertPlaced(self, got, offset, rot, notes=()):
+        self.assertIsNotNone(got)
+        for a, b in zip(got[0], offset):
+            self.assertAlmostEqual(a, b, places=4)
+        self.assertEqual((got[1], got[2]), (rot, list(notes)))
+
+    def test_a_model_is_centred_on_easyedas_outline_with_its_bottom_at_easyedas_height(self):
+        # the outline's centre is 0.2 mm right of the pads' and 0.1 mm down (y up: -0.1); the box's is 0.5 mm right of
+        # the mesh's origin; its bottom 0.1 mm up goes to z -1.0
+        self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(), BOX, 1.0, 0.0), (-0.3, -0.1, -1.1), 0.0)
+        self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(), BOX, 1.0, -360.0), (-0.3, -0.1, -1.1), 0.0)
+        # on the bottom of EasyEDA's board the part is seen mirrored: the same place on the footprint
+        self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(back=True), BOX, 1.0, 0.0), (-0.3, -0.1, -1.1), 0.0)
+
+    def test_a_turned_model_is_centred_after_the_turn(self):
+        # the footprint's pads along y, and KiCad's importer turning the mesh by -90 to match: KiCad turns a model by
+        # -rotation about z, then shifts it
+        along_y = {k: (y, -x) for k, (x, y) in LIB_PADS.items()}
+        self.assertPlaced(ie.model_placement(along_y, placed_part(), BOX, 1.0, -90.0), (0.1, -0.3, -1.1), -90.0)
+
+    def test_where_the_outline_and_the_model_differ_it_says_so(self):
+        got = ie.model_placement(LIB_PADS, placed_part(outline=(3.0, 0.5)), BOX, 1.0, 0.0)
+        self.assertEqual(got[2], ["EasyEDA's outline is 3.00 x 0.50 mm, the model 2.00 x 0.50"])
+        self.assertPlaced(ie.model_placement(LIB_PADS, placed_part(), BOX, 2.54, 0.0), (-0.3, -0.1, -1.1), 0.0,
+                          ["mesh scaled 2.54 to the export's size"])
+        wider = {k: (2 * x, y) for k, (x, y) in LIB_PADS.items()}  # another land pattern
+        self.assertIsNone(ie.model_placement(wider, placed_part(), BOX, 1.0, 0.0))
+
+    def test_kicads_model_path_is_repointed_on_the_text(self):
+        path = self.dir / "b.kicad_pcb"
+        path.write_text(board_text(("U1", "${KIPRJMOD}/EASYEDA_MODELS/BOX-SMD.step", -90),
+                                   ("U2", "${KIPRJMOD}/EASYEDA_MODELS/BOX-SMD.step", 0),
+                                   ("C1", "${KICAD10_3DMODEL_DIR}/C.3dshapes/C.step", 0)))
+        before = path.read_text()
+        new = "${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl"
+        plans = {"U1": (new, (0.1, -0.3, -1.1), -90.0), "C1": (new, (1, 1, 1), 0.0)}
+        self.assertEqual(ie.repoint_models(path, plans), ["U1"])  # C1's model is KiCad's own, U2 has no plan
+        after = path.read_text()
+        u1 = after[after.index('"lib:U1"'):after.index('"lib:U2"')]
+        self.assertIn(f'(model "{new}"\n\t\t\t(offset\n\t\t\t\t(xyz 0.1 -0.3 -1.1)', u1)
+        self.assertIn("(xyz 1 1 1)", u1)
+        self.assertIn("(xyz -90 0 -90)", u1)  # x and y turns kept
+        self.assertEqual(after[after.index('"lib:U2"'):], before[before.index('"lib:U2"'):])
+        self.assertEqual(ie.repoint_models(path, plans), [])  # done: nothing left to re-point
+
+    def test_a_footprint_files_model_is_repointed(self):
+        path = self.dir / "BOX.kicad_mod"
+        path.write_text('(footprint "BOX"\n\t(layer "F.Cu")\n\t(model "${KIPRJMOD}/EASYEDA_MODELS/BOX-SMD.step"\n'
+                        "\t\t(scale\n\t\t\t(xyz 1 1 1)\n\t\t)\n\t)\n)\n")
+        self.assertEqual(ie.repoint_models(path, {None: ("x.wrl", (0.25, 0, 0), 180.0)}), [None])
+        text = path.read_text()
+        self.assertIn('(model "x.wrl"', text)
+        self.assertIn("(offset (xyz 0.25 0 0))", text)  # added where the file had none
+        self.assertIn("(rotate (xyz 0 0 180))", text)
+        self.assertEqual(text.count("("), text.count(")"))
+
+    def test_no_fetch_is_passed_on(self):
+        got = {}
+        with mock.patch.object(ie, "convert", lambda *a, **k: got.update(k)):
+            ie.main(["s.json", "p.json", "out", "--name", "b", "--no-fetch"])
+            self.assertFalse(got["fetch"])
+            ie.main(["s.json", "p.json", "out", "--name", "b"])
+            self.assertTrue(got["fetch"])
 
 
 class SymbolLibrary(unittest.TestCase):
@@ -395,6 +635,47 @@ class Boards(unittest.TestCase):
         fp = self.footprint("Pad_gge1", [("1", "smd", "GND")])
         self.assertEqual(ie.unlinked_footprint(self.pcbnew, fp, False), (None, ["GND"]))
         self.assertTrue(fp.IsBoardOnly() and fp.IsExcludedFromBOM() and fp.IsExcludedFromPosFiles())
+
+    def test_a_model_is_placed_in_the_footprints_own_frame_however_it_sits(self):
+        pcbnew = self.pcbnew
+        kicads = "${KIPRJMOD}/EASYEDA_MODELS/BOX-SMD.step"
+
+        def model(fp, path=kicads):
+            m = pcbnew.FP_3DMODEL()
+            m.m_Filename = path
+            fp.Add3DModel(m)
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        for num, (x, y) in sorted(LIB_PADS.items()):
+            p = pcbnew.PAD(fp)
+            p.SetNumber(num)
+            p.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+            p.SetLayerSet(pcbnew.PAD.SMDMask())
+            p.SetSize(pcbnew.VECTOR2I(pcbnew.FromMM(0.4), pcbnew.FromMM(0.4)))
+            p.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+            fp.Add(p)
+        model(fp)
+        fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(30), pcbnew.FromMM(40)))
+        fp.SetOrientationDegrees(30)
+        fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_TOP_BOTTOM)  # on the bottom, as in EasyEDA
+        own = ie.footprint_pads(pcbnew, fp, own=True)
+        for k, (x, y) in LIB_PADS.items():
+            self.assertAlmostEqual(own[k][0], x, places=5)
+            self.assertAlmostEqual(own[k][1], y, places=5)
+        stock = self.footprint("C1", [("1", "smd", None), ("2", "smd", None)])
+        model(stock, "${KICAD10_3DMODEL_DIR}/C.3dshapes/C.step")
+        other = self.footprint("U3", [("1", "smd", None), ("2", "smd", None), ("3", "smd", None)])
+        model(other)  # another land pattern than the export's
+        plans, notes, unfit = ie.model_plans(
+            pcbnew, [fp, stock, other], {"U1": placed_part(back=True), "C1": placed_part(), "U3": placed_part()},
+            {UUID: ("BOX-SMD.wrl", BOX, 1.0)}, "${KIPRJMOD}/../../lib/3dmodels/")
+        self.assertEqual((sorted(plans), notes, unfit), (["U1"], [], [("U3", "BOX-SMD")]))
+        path, offset, rot = plans["U1"]
+        self.assertEqual((path, rot), ("${KIPRJMOD}/../../lib/3dmodels/BOX-SMD.wrl", 0.0))
+        for a, b in zip(offset, (-0.3, -0.1, -1.1)):
+            self.assertAlmostEqual(a, b, places=4)
+        self.assertEqual(ie.model_plans(pcbnew, [fp], {"U1": placed_part(back=True)}, {}, ""), ({}, [], []))
 
     def test_a_wired_part_without_a_symbol_is_a_problem(self):
         fp = self.footprint("U7", [("1", "smd", "GND"), ("2", "smd", None)])

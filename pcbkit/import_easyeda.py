@@ -1,7 +1,7 @@
 """Turn EasyEDA Std exports (schematic + PCB JSON) into a linked KiCad project.
 
   pcbkit import-easyeda SCH.json PCB.json OUT_DIR --name BOARD [--lib LIBDIR] [--lib-name NICK]
-                        [--title T] [--rev R] [--date D] [--company C] [--force] [--keep-courtyards]
+                        [--title T] [--rev R] [--date D] [--company C] [--force] [--keep-courtyards] [--no-fetch]
 
 KiCad imports EasyEDA PCBs from the command line, but schematics only in the GUI, and a GUI import leaves the
 symbols unlinked from the footprints. This converts the schematic itself, keeping the EasyEDA layout:
@@ -27,7 +27,13 @@ symbols unlinked from the footprints. This converts the schematic itself, keepin
   * courtyards that miss a part's pads or body, or sit on the other side from its pads (KiCad's importer often
     leaves them turned against the pads, a sliver, or round the pins and not the body), are redrawn round the pads
     and the body (its fab outline, or its silk without one) + 0.25 mm, on the board and in the library
-    (--keep-courtyards: listed only; `pcbkit courtyards` checks and redraws them later).
+    (--keep-courtyards: listed only; `pcbkit courtyards` checks and redraws them later);
+  * KiCad's importer points each 3-D model at ${KIPRJMOD}/EASYEDA_MODELS/<title>.step and writes no file there (and
+    EasyEDA's STEP address answers 404). Each model's OBJ mesh is fetched from EasyEDA by the id the export records,
+    converted to VRML in LIBDIR/3dmodels/ (scaled when the mesh doesn't match the export's size), and placed by
+    EasyEDA's outline of it, which isn't always on the model's origin: the export's pads are fitted onto the
+    footprint's, the model's box is centred on the outline, and its bottom goes to the export's height (--no-fetch:
+    only the models LIBDIR/3dmodels already has; the other footprints keep KiCad's path).
 Loose pads and holes on the PCB (no symbol) become board-only footprints, out of the BOM and placement files; one
 with a net (a GND test pad) is listed. A schematic part with no footprint on the PCB is listed as schematic-only and
 gets an empty Footprint field. Sheet files are named after the EasyEDA sheets, without EasyEDA's " copy"
@@ -36,6 +42,7 @@ schematic parity check. Harvested from dodeca's panels/tools/easyeda_to_kicad.py
 """
 import argparse
 import base64
+import gzip
 import json
 import math
 import os
@@ -818,6 +825,18 @@ def write_sheet(sheet, sch_path, sheet_uuid, inst_path, tag, sym_of, defs, power
 
 # ---------------------------------------------------------------- PCB
 
+def library_frame(pcbnew, fp):
+    """A function taking a board point (VECTOR2I) to mm in the footprint's library frame (unrotated, on top, y
+    down): a flipped footprint is the library one mirrored in y."""
+    o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
+
+    def local(v):
+        dx, dy = pcbnew.ToMM(v.x - o.x), pcbnew.ToMM(v.y - o.y)
+        x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+        return (x, -y) if flip else (x, y)
+    return local
+
+
 def footprint_signature(pcbnew, fp):
     """The pads of a footprint as the library holds it (unrotated, on top), sorted: (number, x, y, width, height, drill
     width, drill height, copper x and y from the hole, angle, shape, type, drill shape, layers, corner ratio, copper
@@ -832,19 +851,13 @@ def footprint_signature(pcbnew, fp):
     and in a library, so such a pad can compare different from its own library footprint: the import then makes a
     variant rather than reuse it. (EasyEDA's pads have no padstacks.) Margins are the pad's solder paste margin, paste
     margin ratio and solder mask margin: its own override, else the footprint's, else 0 (none, the board's own)."""
-    o, a, flip = fp.GetPosition(), math.radians(fp.GetOrientationDegrees()), fp.IsFlipped()
+    flip, local = fp.IsFlipped(), library_frame(pcbnew, fp)
     near, far = (pcbnew.B_Cu, pcbnew.F_Cu) if flip else (pcbnew.F_Cu, pcbnew.B_Cu)
     copper_count = fp.GetBoard().GetCopperLayerCount() if fp.GetBoard() else 32  # a library footprint: all of them
     inner_count = copper_count - 2
     turnable = (pcbnew.PAD_SHAPE_CIRCLE, pcbnew.PAD_SHAPE_RECTANGLE, pcbnew.PAD_SHAPE_OVAL, pcbnew.PAD_SHAPE_ROUNDRECT)
     drawn = (pcbnew.PAD_SHAPE_CUSTOM, pcbnew.PAD_SHAPE_CHAMFERED_RECT, pcbnew.PAD_SHAPE_TRAPEZOID)
     cornered = (pcbnew.PAD_SHAPE_ROUNDRECT, pcbnew.PAD_SHAPE_CHAMFERED_RECT)
-
-    def local(v):
-        """A board point in the library footprint's frame, mm: a flipped footprint is the library one mirrored in y."""
-        dx, dy = pcbnew.ToMM(v.x - o.x), pcbnew.ToMM(v.y - o.y)
-        x, y = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
-        return (x, -y) if flip else (x, y)
 
     def ring(r):
         pts = (local(r.CPoint(i)) for i in range(r.PointCount()))
@@ -1107,29 +1120,39 @@ def _region_outlines(path):
     return [o for o in out if len(o) >= 3]
 
 
+def easyeda_parts(pcb_json):
+    """(reference, pads, back, items) for each part (LIB) of an EasyEDA Std PCB export that has a reference: pads
+    {number: (x, y)} in mm in EasyEDA's board frame (numbers that occur once), whether the part sits on the bottom
+    there (the LIB's layer, 2), and its items as the export writes them (TEXT~..., SVGNODE~{...})."""
+    with open(pcb_json) as f:
+        shapes = json.load(f)["shape"]
+    for x in shapes:
+        if not x.startswith("LIB~"):
+            continue
+        groups = x.split("#@$")
+        ref, pads = None, defaultdict(list)
+        head = groups[0].split("~")
+        for k in (g.split("~") for g in groups[1:]):
+            if k[0] == "TEXT" and len(k) > 10 and k[1] == "P":
+                ref = k[10]
+            elif k[0] == "PAD" and len(k) > 8 and k[8]:
+                pads[k[8]].append((float(k[2]) * U, float(k[3]) * U))
+        if ref:
+            back = len(head) > 7 and head[7] == "2"
+            yield ref, {num: at[0] for num, at in pads.items() if len(at) == 1}, back, groups[1:]
+
+
 def easyeda_bodies(pcb_json):
     """{reference: (pads, outlines, back)} for the parts of an EasyEDA Std PCB export that draw their body on layer
     99, EasyEDA's component shape: pads {number: (x, y)} (numbers that occur once), outlines [[(x, y), ...]], in mm
     in EasyEDA's board frame, and whether the part sits on the bottom there (the LIB's layer, 2). KiCad's importer
     drops that layer, so its footprints show the body only in silk, which EasyEDA draws well off it."""
     out = {}
-    with open(pcb_json) as f:
-        shapes = json.load(f)["shape"]
-    for x in shapes:
-        if not x.startswith("LIB~"):
-            continue
-        ref, pads, outlines = None, defaultdict(list), []
-        head = x.split("#@$")[0].split("~")
-        back = len(head) > 7 and head[7] == "2"
-        for k in (g.split("~") for g in x.split("#@$")[1:]):
-            if k[0] == "TEXT" and len(k) > 10 and k[1] == "P":
-                ref = k[10]
-            elif k[0] == "PAD" and len(k) > 8 and k[8]:
-                pads[k[8]].append((float(k[2]) * U, float(k[3]) * U))
-            elif k[0] == "SOLIDREGION" and len(k) > 3 and k[1] == "99":
-                outlines += _region_outlines(k[3])
-        if ref and outlines:
-            out[ref] = ({num: at[0] for num, at in pads.items() if len(at) == 1}, outlines, back)
+    for ref, pads, back, items in easyeda_parts(pcb_json):
+        outlines = [o for k in (g.split("~") for g in items) if k[0] == "SOLIDREGION" and len(k) > 3 and k[1] == "99"
+                    for o in _region_outlines(k[3])]
+        if outlines:
+            out[ref] = (pads, outlines, back)
     return out
 
 
@@ -1141,12 +1164,14 @@ def draw_bodies(pcbnew, footprints, bodies):
                          mirrored=bodies[fp.GetReference()][2] != fp.IsFlipped())]
 
 
-def footprint_pads(pcbnew, fp):
-    """{number: (x, y)} in mm for the pads whose number occurs once."""
-    at = defaultdict(list)
+def footprint_pads(pcbnew, fp, own=False):
+    """{number: (x, y)} in mm for the pads whose number occurs once: on the board, or with own in the footprint's
+    library frame (library_frame)."""
+    at, local = defaultdict(list), library_frame(pcbnew, fp) if own else None
     for p in fp.Pads():
         if p.GetNumber():
-            at[p.GetNumber()].append((pcbnew.ToMM(p.GetPosition().x), pcbnew.ToMM(p.GetPosition().y)))
+            v = p.GetPosition()
+            at[p.GetNumber()].append(local(v) if own else (pcbnew.ToMM(v.x), pcbnew.ToMM(v.y)))
     return {num: a[0] for num, a in at.items() if len(a) == 1}
 
 
@@ -1211,6 +1236,318 @@ def fab_outlines(pcbnew, fp):
                 o = ps.Outline(i)
                 out.append([(pcbnew.ToMM(o.CPoint(k).x), pcbnew.ToMM(o.CPoint(k).y)) for k in range(o.PointCount())])
     return out
+
+
+# ---------------------------------------------------------------- 3-D models
+
+OBJ_URL = "https://modules.easyeda.com/3dmodel/{uuid}"  # EasyEDA's mesh of a model; its STEP address answers 404
+KICAD_MODEL = re.compile(r"\$\{KIPRJMOD\}/EASYEDA_MODELS/.*\.step")  # where KiCad's importer points, writing no file
+CA_FILES = ("/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt")
+
+
+_NUMBER = r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+
+
+def svg_transform(text, m=(1, 0, 0, 1, 0, 0)):
+    """The affine map (a, b, c, d, e, f: x' = a x + c y + e, y' = b x + d y + f) of an SVG transform attribute,
+    after m: translate, scale, rotate and matrix, each applied to a point before the ones left of it. EasyEDA
+    writes an outline drawn in mm as "scale(3.937) translate(...)"."""
+    for fn, args in re.findall(r"(\w+)\s*\(([^)]*)\)", text or ""):
+        v = [float(t) for t in re.findall(_NUMBER, args)]
+        if fn == "translate":
+            t = (1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
+        elif fn == "scale":
+            t = (v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
+        elif fn == "rotate":
+            r, (cx, cy) = math.radians(v[0]), (v[1:3] if len(v) > 2 else (0, 0))
+            c, s = math.cos(r), math.sin(r)
+            t = (c, s, -s, c, cx - c * cx + s * cy, cy - s * cx - c * cy)
+        elif fn == "matrix":
+            t = tuple(v[:6])
+        else:
+            raise ValueError(f"SVG transform {fn} not understood")
+        a, b, c, d, e, f = m
+        m = (a * t[0] + c * t[1], b * t[0] + d * t[1], a * t[2] + c * t[3], b * t[2] + d * t[3],
+             a * t[4] + c * t[5] + e, b * t[4] + d * t[5] + f)
+    return m
+
+
+def _svg_points(node, m=(1, 0, 0, 1, 0, 0)):
+    """All (x, y) of an SVG node's polylines and straight paths, with its children's, in EasyEDA units: their
+    transforms applied."""
+    a = node.get("attrs", {})
+    m = svg_transform(a.get("transform"), m)
+    v = [float(t) for t in re.findall(_NUMBER, a.get("points", ""))]
+    if not re.search(r"[A-DF-KN-Ya-df-z]", a.get("d", "")):  # a path with curves: its numbers aren't all points
+        v += [float(t) for t in re.findall(_NUMBER, a.get("d", ""))]
+    out = [(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]) for x, y in zip(v[0::2], v[1::2])]
+    for c in node.get("childNodes") or []:
+        out += _svg_points(c, m)
+    return out
+
+
+def easyeda_models(pcb_json):
+    """{reference: (pads, back, model)} for the parts of an EasyEDA Std PCB export that have a 3-D model, pads and
+    back as easyeda_parts gives them. model is the part's outline3D node: {title, uuid, z (the model's bottom above
+    the board), size (width, depth), outline [(x, y)]}, in mm in EasyEDA's board frame (y down). The outline is the
+    model seen from above, where EasyEDA shows it, which is not always on the model's own origin."""
+    out = {}
+    for ref, pads, back, items in easyeda_parts(pcb_json):
+        for g in items:
+            if not g.startswith("SVGNODE~"):
+                continue
+            try:
+                node = json.loads(g[len("SVGNODE~"):])
+            except ValueError:  # an SVG node this import doesn't need is no reason to stop
+                continue
+            a = node.get("attrs", {}) if isinstance(node, dict) else {}
+            if a.get("c_etype") != "outline3D":
+                continue
+            try:
+                outline = [(x * U, y * U) for x, y in _svg_points(node)]
+            except ValueError as e:
+                note(f"3-D model outline not read, its model left as KiCad's importer put it: {e}")
+                continue
+            if a.get("uuid") and outline:
+                size = (float(a.get("c_width") or 0) * U, float(a.get("c_height") or 0) * U)
+                out[ref] = (pads, back, dict(title=a.get("title") or a["uuid"], uuid=a["uuid"],
+                                             z=float(a.get("z") or 0) * U, outline=outline, size=size))
+    return out
+
+
+def obj_to_wrl(obj, title, uuid, size):
+    """VRML 2.0 text (KiCad's unit, 0.1 in) for an EasyEDA OBJ mesh with its inline materials, in the OBJ's own
+    frame. size is the export's width and depth of the model (mm): a mesh that doesn't match it is scaled to it, by
+    2.54 exactly when it was drawn in 0.1 in (one 2.0 mm header's is). The header records the model's id, its box in
+    mm after the scale, and the scale, which wrl_header reads back."""
+    mats, cur, use, verts, faces = {}, None, None, [], defaultdict(list)
+    plain = {"Kd": (0.8, 0.8, 0.8), "Ks": (0.2, 0.2, 0.2), "d": 0.0}
+    for line in obj.splitlines():
+        p = line.split()
+        if not p:
+            continue
+        if p[0] == "newmtl":
+            cur = p[1]
+            mats[cur] = dict(plain)
+        elif p[0] in ("Kd", "Ks") and cur:
+            mats[cur][p[0]] = tuple(float(t) for t in p[1:4])
+        elif p[0] == "d" and cur:
+            mats[cur]["d"] = float(p[1])  # EasyEDA writes transparency here (0 = opaque), as easyeda2kicad reads it
+        elif p[0] == "endmtl":
+            cur = None
+        elif p[0] == "v":
+            verts.append(tuple(float(t) for t in p[1:4]))
+        elif p[0] == "usemtl":
+            use = p[1]
+        elif p[0] == "f":
+            idx = [int(t.split("/")[0]) for t in p[1:]]
+            faces[use].append([i - 1 if i > 0 else len(verts) + i for i in idx])
+    if not verts or not faces:
+        raise ValueError("no mesh in the OBJ")
+    span = sorted(max(v[i] for v in verts) - min(v[i] for v in verts) for i in (0, 1))
+    k = sum(s / m for s, m in zip(sorted(size), span)) / 2 if min(span) > 0 and min(size) > 0 else 1.0
+    k = 1.0 if abs(k - 1) <= 0.02 else 2.54 if abs(k / 2.54 - 1) <= 0.01 else k
+    verts = [tuple(c * k for c in v) for v in verts]
+    box = tuple((min(v[i] for v in verts), max(v[i] for v in verts)) for i in range(3))
+    out = ["#VRML V2.0 utf8",
+           f"# {title}: EasyEDA model {uuid}, converted from its OBJ by pcbkit import-easyeda. EasyEDA's frame, "
+           "unit 0.1 in.",
+           "# box mm " + " ".join(f"{a} {lo:.4f} {hi:.4f}" for a, (lo, hi) in zip("xyz", box))]
+    if k != 1.0:
+        out.append(f"# scaled {k:g}: the mesh was {span[0]:.2f} x {span[1]:.2f}, the export says "
+                   f"{min(size):.2f} x {max(size):.2f}")
+    for name, fs in faces.items():
+        mat = mats.get(name, plain)
+        used = sorted({i for f in fs for i in f})
+        local = {g: j for j, g in enumerate(used)}
+        pts = ", ".join(" ".join(f"{c / 2.54:.5g}" for c in verts[g]) for g in used)
+        idx = ", ".join(",".join(str(local[i]) for i in f) + ",-1" for f in fs)
+        out.append("Shape {\n  appearance Appearance { material Material { "
+                   f"diffuseColor {' '.join(f'{c:.4g}' for c in mat['Kd'])} "
+                   f"specularColor {' '.join(f'{c:.4g}' for c in mat['Ks'])} "
+                   f"ambientIntensity 0.2 shininess 0.4 transparency {mat['d']:.3g} }} }}\n"
+                   f"  geometry IndexedFaceSet {{ creaseAngle 0.5 coord Coordinate {{ point [ {pts} ] }}\n"
+                   f"    coordIndex [ {idx} ] }}\n}}")
+    return "\n".join(out) + "\n"
+
+
+def wrl_header(text):
+    """(model id, box ((x0, x1), (y0, y1), (z0, z1)) mm, scale) from the header obj_to_wrl writes (the text, or its
+    first lines); None for a file without one."""
+    uuid, box, k = None, None, 1.0
+    for line in text.splitlines():
+        if not line.startswith("#"):
+            break
+        m = re.search(r"EasyEDA model ([0-9a-fA-F]+)", line)
+        uuid = m.group(1) if m else uuid
+        if line.startswith("# box mm "):
+            v = line.split()[3:]
+            box = tuple((float(v[i + 1]), float(v[i + 2])) for i in (0, 3, 6))
+        elif line.startswith("# scaled "):
+            k = float(line.split()[2].rstrip(":"))
+    return (uuid, box, k) if uuid and box else None
+
+
+def _read_header(path):
+    with open(path, errors="replace") as f:
+        return wrl_header("".join(next(f, "") for _ in range(6)))
+
+
+def download_obj(uuid):
+    """EasyEDA's OBJ mesh of a model, by the id the export records. KiCad's own Python finds no certificates on
+    macOS, so the system's (or certifi's) are used when the default ones are missing."""
+    import ssl
+    import urllib.request
+    paths, cafile = ssl.get_default_verify_paths(), None
+    if not (os.path.exists(paths.cafile or "") or os.path.isdir(paths.capath or "")):
+        try:
+            import certifi
+            found = [certifi.where()]
+        except ImportError:
+            found = []
+        cafile = next((c for c in list(CA_FILES) + found if os.path.exists(c)), None)
+    req = urllib.request.Request(OBJ_URL.format(uuid=uuid), headers={"User-Agent": "pcbkit import-easyeda"})
+    with urllib.request.urlopen(req, timeout=60, context=ssl.create_default_context(cafile=cafile)) as r:
+        return r.read()
+
+
+def fetch_models(models, dest, get=download_obj):
+    """The meshes of models {uuid: (title, size)}, as VRML files in dest (LIBDIR/3dmodels): ({uuid: (file name,
+    box, scale)}, [titles fetched], {title: why not}). A file of the model's title whose header names its id is used
+    as it is; the others are fetched with get(uuid) (OBJ bytes, gzipped or not) and converted. get None fetches
+    nothing: those models are left out. A title another model's file has takes the next free name_2, name_3."""
+    meshes, fetched, failed, claimed = {}, [], {}, set()
+    dest = Path(dest)
+    for uuid, (title, size) in sorted(models.items(), key=lambda kv: (kv[1][0], kv[0])):
+        base, k = safe_name(title), 1
+        while True:
+            name = base if k == 1 else f"{base}_{k}"
+            path = dest / f"{name}.wrl"
+            head = _read_header(path) if path.exists() else None
+            if name not in claimed and (head and head[0] == uuid or not path.exists()):
+                break
+            k += 1
+        claimed.add(name)
+        if not head and get is None:
+            failed[title] = "not in " + dest.name + " and not fetched"
+        elif not head:
+            try:
+                if not re.fullmatch(r"[0-9a-fA-F]{32}", uuid):
+                    raise ValueError(f"model id {uuid!r} is not EasyEDA's")
+                data = get(uuid)
+                text = (gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data).decode("utf-8", "replace")
+                wrl = obj_to_wrl(text, title, uuid, size)
+            except Exception as e:  # urllib's errors, a timeout, a page that isn't a mesh
+                failed[title] = str(e) or type(e).__name__
+                continue
+            dest.mkdir(parents=True, exist_ok=True)
+            path.write_text(wrl)
+            head = wrl_header(wrl)
+            fetched.append(title)
+        if head:
+            meshes[uuid] = (path.name, head[1], head[2])
+    return meshes, fetched, failed
+
+
+def model_placement(pads, part, box, scale, turn):
+    """(offset (x, y, z) mm, z rotation, notes) that put a part's model (easyeda_models) on a footprint whose pads
+    {number: (x, y)} are in its library frame (y down), or None if the part's pads don't fit them. The export's
+    pads are fitted onto the footprint's, which carries EasyEDA's outline of the model into the footprint's frame,
+    and the model's box (mm, its own frame, y up) is centred on the outline; its bottom goes to the export's z. turn
+    is the z rotation KiCad's importer gave the model: KiCad turns a model by -rotation about z, then shifts it by
+    the offset (y up). Notes say where the outline's size and the turned model's differ."""
+    src, back, model = part
+    f = fit_pads(src, pads, mirrored=back)
+    if not f:
+        return None
+    q = [f(p) for p in model["outline"]]
+    xs, ys = [p[0] for p in q], [p[1] for p in q]
+    ux, uy = (min(xs) + max(xs)) / 2, -(min(ys) + max(ys)) / 2
+    (x0, x1), (y0, y1), (z0, _) = box
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    phi = (turn + 180) % 360 - 180
+    a = math.radians(-phi)
+    offset = (ux - (cx * math.cos(a) - cy * math.sin(a)), uy - (cx * math.sin(a) + cy * math.cos(a)), model["z"] - z0)
+    w, d = (y1 - y0, x1 - x0) if round(phi) % 180 == 90 else (x1 - x0, y1 - y0)
+    ow, od = max(xs) - min(xs), max(ys) - min(ys)
+    notes = []
+    if scale != 1.0:
+        notes.append(f"mesh scaled {scale:g} to the export's size")
+    elif abs(w - ow) > 0.05 or abs(d - od) > 0.05:
+        notes.append(f"EasyEDA's outline is {ow:.2f} x {od:.2f} mm, the model {w:.2f} x {d:.2f}")
+    return tuple(round(c, 4) + 0.0 for c in offset), round(phi, 3) + 0.0, notes
+
+
+def model_plans(pcbnew, footprints, models, meshes, model_ref):
+    """What repoint_models does to each footprint whose model KiCad's importer left at EASYEDA_MODELS: ({reference:
+    (model path, offset, z rotation)}, [(reference, title, note)], [(reference, title)] that don't fit). models
+    from easyeda_models, meshes from fetch_models, model_ref the path a footprint names a model file by
+    (${KIPRJMOD}/../../lib/3dmodels/)."""
+    plans, notes, unfit = {}, [], []
+    for fp in footprints:
+        ref = fp.GetReference()
+        olds = [m for m in fp.Models() if KICAD_MODEL.fullmatch(m.m_Filename)]
+        if ref not in models or not olds or models[ref][2]["uuid"] not in meshes:
+            continue
+        title = models[ref][2]["title"]
+        name, box, scale = meshes[models[ref][2]["uuid"]]
+        got = model_placement(footprint_pads(pcbnew, fp, own=True), models[ref], box, scale, olds[0].m_Rotation.z)
+        if not got:
+            unfit.append((ref, title))
+            continue
+        plans[ref] = (model_ref + name, got[0], got[1])
+        notes += [(ref, title, x) for x in got[2]]
+    return plans, notes, unfit
+
+
+def _set_xyz(block, head, values):
+    """A model block with its (head (xyz ...)) set to values, where a value None keeps the one there."""
+    m = re.search(r"\(" + head + r"\s*\(xyz\s+([^)]*)\)", block)
+    if not m:
+        return block[:block.rindex(")")] + f" ({head} (xyz {' '.join(n(v or 0) for v in values)})))"
+    old = (m.group(1).split() + ["0", "0", "0"])[:3]
+    new = " ".join(o if v is None else n(v) for o, v in zip(old, values))
+    return block[:m.start(1)] + new + block[m.end(1):]
+
+
+def repoint_models(path, plans):
+    """Point the models KiCad's importer left at ${KIPRJMOD}/EASYEDA_MODELS/ at the converted meshes, on the text of a
+    saved board or footprint file (pcbnew can't set a model's fields): plans {reference: (model path, offset, z
+    rotation)}, a footprint file's under None. The model's x and y rotation and its scale stay. Returns the
+    references re-pointed."""
+    path = Path(path)
+    text = path.read_text()
+    root = text.index("(")
+    if _HEAD.match(text, root).group(1) == "footprint":
+        footprints = [(root, None)]
+    else:
+        footprints = []
+        for s, _, head in child_blocks(text, root):
+            if head == "footprint":
+                ref = next((m.group(1) for cs, ce, h in child_blocks(text, s) if h == "property"
+                            for m in [re.match(r'\(property\s+"Reference"\s+' + _STR, text[cs:ce])] if m), None)
+                footprints.append((s, ref and unq(ref)))
+    edits, done = [], []
+    for s, ref in footprints:
+        if ref not in plans:
+            continue
+        model, offset, rot = plans[ref]
+        for ms, me, head in child_blocks(text, s):
+            m = re.match(r"\(model\s+" + _STR, text[ms:me]) if head == "model" else None
+            if m and KICAD_MODEL.fullmatch(unq(m.group(1))):
+                block = text[ms:me]
+                block = block[:m.start(1) - 1] + q(model) + block[m.end(1) + 1:]
+                block = _set_xyz(_set_xyz(block, "offset", offset), "rotate", (None, None, rot))
+                edits.append((ms, me, block))
+                if ref not in done:
+                    done.append(ref)
+    out, i = [], 0
+    for s, e, block in edits:
+        out += [text[i:s], block]
+        i = e
+    if edits:
+        path.write_text("".join(out) + text[i:])
+    return done
 
 
 LAYER_NAMES = {"F_Cu": "F.Cu", "B_Cu": "B.Cu", "F_SilkS": "F.SilkS", "B_SilkS": "B.SilkS", "F_Mask": "F.Mask",
@@ -1303,11 +1640,13 @@ def set_footprint_fields(out_dir, links, names, nick):
         path.write_text(text)
 
 
-def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, keep_courtyards=False, bodies=None):
+def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, keep_courtyards=False, bodies=None,
+                 models=None, meshes=None, model_ref=""):
     """Link the imported board to the schematic and correct what the importer leaves. shown: {ref: (reference
     shown, value shown)} for every part of the EasyEDA PCB; pretty: the footprint library the exports go to;
     bodies: easyeda_bodies() of the PCB, drawn on each part's fab. Courtyards that miss the pads or the body are
-    then redrawn (listed only, with keep_courtyards)."""
+    then redrawn (listed only, with keep_courtyards). models, meshes and model_ref: the 3-D models, placed on the
+    footprints (model_plans) once the board is saved."""
     ensure_pcbnew()
     import pcbnew
     from .checks import courtyards as cy
@@ -1437,6 +1776,8 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
                     if part.endswith(" removed"):
                         removed_courtyards[part.split()[0]].append(fp.GetReference())
     gaps = close_outline(pcbnew, b)
+    plans, model_notes, unfit = model_plans(pcbnew, sorted(b.GetFootprints(), key=ref_order), models or {},
+                                            meshes or {}, model_ref)
     tb = b.GetTitleBlock()
     tb.SetTitle(meta["title"])
     tb.SetRevision(meta["rev"])
@@ -1449,11 +1790,13 @@ def update_board(pcb_path, links, sch_pins, nick, meta, force, shown, pretty, ke
     pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, str(pcb_path), b)
     drop_fields(pcb_path)
     keepouts = strip_user_keepouts(pcb_path)
+    placed = repoint_models(pcb_path, plans)  # before the library exports, which copy the board's footprints
     return dict(renamed=renamed, paste_fixed=paste_fixed, duplicate_vias=len(dupes), board_only=board_only, exports=exports,
                 problems=problems, schematic_only=schematic_only, loose_nets=loose_nets, unpinned=unpinned,
                 fp_names=fp_names, gaps=gaps, keepouts=keepouts, footprints=len(placements),
                 courtyards=bad_courtyards, courtyards_kept=keep_courtyards, lib_kept=lib_kept,
-                courtyards_removed=dict(removed_courtyards), bodies=drawn)
+                courtyards_removed=dict(removed_courtyards), bodies=drawn,
+                models=dict(plans=plans, placed=placed, notes=model_notes, unfit=unfit))
 
 
 # ---------------------------------------------------------------- project
@@ -1474,7 +1817,7 @@ def write_project(kdir, project, root, subs, nick, lib_rel):
 
 
 def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=None, force=False, pin_fixes=(),
-            keep_courtyards=False):
+            keep_courtyards=False, fetch=True):
     ensure_pcbnew()  # first: it runs the command again under KiCad's Python, which must not find a half-merged library
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1497,8 +1840,13 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
+    # KiCad's importer points each model at a STEP file it doesn't write: EasyEDA's meshes, converted to VRML
+    models, model_dir = easyeda_models(pcb_json), lib_dir / "3dmodels"
+    meshes, fetched, missing = fetch_models({m["uuid"]: (m["title"], m["size"]) for _, _, m in models.values()},
+                                            model_dir, download_obj if fetch else None)
+    model_ref = "${KIPRJMOD}/" + Path(os.path.relpath(model_dir, out_dir)).as_posix() + "/"
     fixes = update_board(pcb_path, links, read_netlist(sch_path), nick, meta, force, shown, pretty, keep_courtyards,
-                         easyeda_bodies(pcb_json))
+                         easyeda_bodies(pcb_json), models, meshes, model_ref)
     if fixes["fp_names"]:
         set_footprint_fields(out_dir, links, fixes["fp_names"], nick)
     r = subprocess.run([KICAD_PYTHON, "-c", "import sys, json; from pcbkit.import_easyeda import export_footprints; "
@@ -1509,6 +1857,12 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
                        check=True, capture_output=True, text=True,
                        env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1])))
     fixes["lib"] = json.loads(r.stdout.strip().splitlines()[-1])
+    # the library's own footprints, used as they are, get the model their board copy got if theirs is KiCad's too
+    plans = fixes["models"]["plans"]
+    fixes["models"].update(fetched=fetched, missing=missing, fetch=fetch, dir=model_dir, refs={
+        ref: m["title"] for ref, (_, _, m) in models.items()}, lib_placed=[
+        name for ref, name in fixes["lib_kept"] if ref in plans and repoint_models(pretty / f"{name}.kicad_mod",
+                                                                                   {None: plans[ref]})])
     count = lambda k: sum(len(s[k]) for s in sch["sheets"])
     sheets = f"{len(subs)} sheets, " if subs else ""
     print(f"{name}: {sheets}{count('parts')} parts, {len(defs)} symbols, {fixes['footprints']} footprints, {count('wires')} wires, "
@@ -1568,6 +1922,7 @@ def report_lines(fixes, sym_stats, links, sym_lib):
                    if fixes["courtyards_kept"] else
                    f"library: courtyards redrawn in footprints already in {sym_lib.stem}.pretty (the rest of each "
                    f"kept): {names}")
+    out += model_lines(fixes.get("models") or {}, sym_lib.stem)
     if fixes["loose_nets"]:
         out.append("loose pads with a net, made board-only (no symbol, not in the BOM or placement files): "
                    + ", ".join(fixes["loose_nets"]))
@@ -1577,6 +1932,40 @@ def report_lines(fixes, sym_stats, links, sym_lib):
         parts = [f"{r} ({links[r]['package']})" if links[r]["package"] else r for r in fixes["schematic_only"]]
         out.append("schematic-only parts, no footprint on the PCB (Footprint field left empty; DRC parity lists them "
                    "as missing_footprint): " + ", ".join(parts))
+    return out
+
+
+def model_lines(mo, lib):
+    """report_lines' lines on the 3-D models: mo is update_board's "models", with what convert adds."""
+    out, refs = [], mo.get("refs", {})
+
+    def by_title(items):  # {title: [references]}, in the order given
+        got = defaultdict(list)
+        for ref in items:
+            got[refs.get(ref, "?")].append(ref)
+        return got
+    if mo.get("placed"):
+        out.append(f"3-D models: {len(mo['placed'])} footprints point at EasyEDA's meshes, as VRML in "
+                   f"{mo['dir'].parent.name}/{mo['dir'].name}/ ({len(mo['fetched'])} fetched now), each centred on "
+                   "EasyEDA's outline of it (lined up by the pads) and its bottom at EasyEDA's height")
+    notes = defaultdict(list)
+    for ref, title, note in mo.get("notes", []):
+        notes[(title, note)].append(ref)
+    for (title, note), rs in notes.items():
+        out.append(f"3-D model {title} ({', '.join(rs)}): {note}")
+    left = [r for r in refs if r not in mo.get("plans", {})]
+    missing = {t: rs for t, rs in by_title(left).items() if t in mo.get("missing", {})}
+    if missing:
+        why = ("not in the library and not fetched (--no-fetch)" if not mo.get("fetch") else
+               "not fetched: " + "; ".join(f"{t}: {mo['missing'][t]}" for t in missing))
+        out.append(f"3-D models {why}; their footprints keep KiCad's ${{KIPRJMOD}}/EASYEDA_MODELS path, which has no "
+                   "file: " + ", ".join(f"{t} ({', '.join(rs)})" for t, rs in missing.items()))
+    if mo.get("unfit"):
+        out.append("3-D models left where KiCad's importer put them, the export's pads don't fit the footprint's: "
+                   + ", ".join(f"{r} ({t})" for r, t in mo["unfit"]))
+    if mo.get("lib_placed"):
+        out.append(f"library: 3-D models placed in footprints already in {lib}.pretty that still named KiCad's "
+                   "EASYEDA_MODELS path: " + ", ".join(mo["lib_placed"]))
     return out
 
 
@@ -1592,6 +1981,8 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true", help="write the project even with connectivity differences")
     ap.add_argument("--keep-courtyards", action="store_true",
                     help="leave the imported courtyards as they are; only list the ones that miss pads or the body")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="don't download EasyEDA's 3-D models; footprints get the ones LIBDIR/3dmodels already has")
     ap.add_argument("--pin", action="append", default=[], metavar="REF:NAME=NUM",
                     help="renumber a symbol pin by its name, for EasyEDA symbol typos (repeatable)")
     a = ap.parse_args(argv)
@@ -1602,7 +1993,8 @@ def main(argv=None):
             ap.error(f"--pin wants REF:NAME=NUM, got {s}")
         fixes.append(m.groups())
     meta = {k: v for k, v in (("title", a.title), ("rev", a.rev), ("date", a.date), ("company", a.company)) if v}
-    convert(a.schematic, a.pcb, a.out_dir, a.name, a.lib, a.lib_name, meta, a.force, fixes, a.keep_courtyards)
+    convert(a.schematic, a.pcb, a.out_dir, a.name, a.lib, a.lib_name, meta, a.force, fixes, a.keep_courtyards,
+            fetch=not a.no_fetch)
 
 
 if __name__ == "__main__":

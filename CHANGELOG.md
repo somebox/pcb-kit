@@ -123,6 +123,21 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   back adding up to both. `pcbkit release` takes the back pair for a board whose placed parts are all on the back
   (the same rows its `-both` pair had), and the fab fingerprint leaves the `-back` files out, so releases made
   before keep their fingerprints.
+- **`pcbkit import-easyeda` gives the footprints their 3-D models.** KiCad's importer points each model at
+  `${KIPRJMOD}/EASYEDA_MODELS/<title>.step` and writes no file there (EasyEDA's STEP address answers 404), so the 3-D
+  viewer showed bare pads. The import now fetches each model's OBJ mesh from EasyEDA by the id the export records,
+  converts it to VRML in the library's `3dmodels/` folder and points the footprints at it
+  (`${KIPRJMOD}/../../lib/3dmodels/<title>.wrl` in the usual layout). EasyEDA's outline of a model isn't always on
+  the model's origin (0.15-0.5 mm off on espcandle-pcb's USB-C socket, switches and JST SH), so each model is placed
+  by it: the export's pads are fitted onto the footprint's, the model's box is centred on the outline, and its bottom
+  goes to the export's height. A mesh whose size doesn't match the export's is scaled to it (a 2.0 mm header's was
+  drawn in 0.1 in). A model already in `3dmodels/` is not fetched again; one whose title another model's file has
+  becomes `<title>_2.wrl`. A library footprint from an earlier import that still names KiCad's path gets the model
+  its board copy got. `--no-fetch` downloads nothing: footprints get the models `3dmodels/` already has and the
+  others keep KiCad's path, listed. On espcandle-pcb's two boards the offsets and turns are those its
+  `scripts/models3d.py` worked out, within 0.0002 mm (102 board and library footprints); siebenuhr's controller,
+  the spotlight, the HA protoboard and Orbitchron's LED board import with every model placed. KiCad's own Python
+  finds no certificates on macOS, so the download uses the system's. Tests in `tests/test_import_easyeda.py`.
 
 ### Changed
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put

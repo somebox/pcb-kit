@@ -153,6 +153,45 @@ class Detail(unittest.TestCase):
         self.assertEqual(view["pads"], {})
         self.assertFalse(any("font-weight=\"bold\"" in e for e in view["svg"]))
 
+    def test_nets_whose_copper_stays_outside_the_window_are_left_out(self):
+        """A via, a diagonal track and a zone just outside the window: drawn past its edge, never in the legend."""
+        pcbnew = self.pcbnew
+        self.via(WINDOW[2] + 0.3, 0, "/a/NEAR_VIA")                  # 0.45 mm across: its copper ends 0.075 mm out
+        self.via(WINDOW[2] + 0.1, 1, "/a/EDGE_VIA")                  # reaches 0.125 mm into the window
+        t = pcbnew.PCB_TRACK(self.board)                             # its box covers the corner; it passes outside
+        t.SetStart(self.mm(WINDOW[2] - 0.4, WINDOW[1] - 1.0))
+        t.SetEnd(self.mm(WINDOW[2] + 1.0, WINDOW[1] + 0.4))
+        t.SetWidth(pcbnew.FromMM(0.2))
+        t.SetLayer(pcbnew.F_Cu)
+        self.board.Add(t)
+        t.SetNet(self.net("/a/NEAR_TRACK"))
+        z = pcbnew.ZONE(self.board)
+        z.SetLayer(pcbnew.F_Cu)
+        z.Outline().NewOutline()
+        for x, y in ((-5, -5), (WINDOW[0] - 0.5, -5), (WINDOW[0] - 0.5, 5), (-5, 5)):
+            z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        self.board.Add(z)
+        z.SetNet(self.net("/a/NEAR_ZONE"))
+        pcbnew.ZONE_FILLER(self.board).Fill(self.board.Zones())
+        self.assertTrue(z.HasFilledPolysForLayer(pcbnew.F_Cu))
+        self.assertEqual(self.draw()["nets"], {"/a/EDGE_VIA"})
+
+    def test_sheet_says_each_boards_thickness(self):
+        self.via(-2.2, 0.3, "VOUT")
+        with tempfile.TemporaryDirectory() as d:
+            boards = []
+            for name, thick in (("a", 1.6), ("b", 1.2)):
+                self.board.GetDesignSettings().SetBoardThickness(self.pcbnew.FromMM(thick))
+                boards.append((os.path.join(d, name + ".kicad_pcb"), name))
+                kicad.save_board(self.board, boards[-1][0])
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet(boards, out, *WINDOW, layer_name="F.Cu", metrics=["VOUT"])
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        prose = " ".join(re.sub("<[^>]+>", " ", text).split())
+        self.assertIn("through each board, board by board 1.6, 1.2 mm thick.", prose)
+        self.assertIn(f"{netview.via_ohms(0.2, 1.2) * 1000:.2f} mΩ", text)
+
     def test_an_arc_track_is_drawn_as_its_outline(self):
         """No corpus board has arc tracks; a chord would cut across whatever the arc goes round."""
         pcbnew = self.pcbnew

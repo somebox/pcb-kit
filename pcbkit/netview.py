@@ -192,9 +192,11 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
         if z.GetIsRuleArea() or not z.IsOnLayer(layer) or not z.HasFilledPolysForLayer(layer):
             continue
         ps = pcbnew.SHAPE_POLY_SET(z.GetFilledPolysList(layer))
-        ps.BooleanIntersection(clip)
+        ps.BooleanIntersection(clip)             # drawn a little past the window, so its edge isn't cut short
         polys = _rings(ps, T)
-        if polys:
+        seen = pcbnew.SHAPE_POLY_SET(ps)
+        seen.BooleanIntersection(window)
+        if seen.OutlineCount():
             nets.add(z.GetNetname())
         for d in paths(polys):
             zones.append(f'<path d="{d}" fill="{colour(z.GetNetname())}" fill-opacity="{0.35 if detail else 0.45}" '
@@ -204,12 +206,13 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
         if t.GetClass() == "PCB_VIA":
             p = t.GetPosition()
             x, y, d = T(p.x), T(p.y), T(t.GetWidth(layer))
-            if t.IsOnLayer(layer) and x0 - d < x < x1 + d and y0 - d < y < y1 + d:
+            if t.IsOnLayer(layer) and math.hypot(max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)) < d / 2:
                 via_list.append([x, y, d, T(t.GetDrillValue()), t.GetNetname(), False,
                                  t.GetViaType() == pcbnew.VIATYPE_THROUGH])
                 nets.add(t.GetNetname())
         elif t.GetLayer() == layer and overlaps(t.GetBoundingBox()):
-            nets.add(t.GetNetname())
+            if shape(t, layer, within=window):    # a diagonal track's box can reach the window when it doesn't
+                nets.add(t.GetNetname())
             if t.GetClass() == "PCB_ARC":
                 for d in paths(shape(t, layer)):
                     tracks.append(f'<path d="{d}" fill="{colour(t.GetNetname())}"/>')
@@ -463,11 +466,13 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
         svg.append(f'<text x="{lx + 32:.1f}" y="{ly + 12:.1f}" font-size="14" {FONT}>{escape(text)}</text>')
     top += 22 * -(-len(items) // lcols) + 12
     foot = []
-    if metrics:
-        thick = views[0]["thickness"] if views else 1.6
+    if metrics and views:
+        thicks = [v["thickness"] for v in views]
+        board = (f"the {thicks[0]:g} mm board" if len(set(thicks)) == 1 else
+                 "each board, board by board " + ", ".join(f"{t:g}" for t in thicks) + " mm thick")
         foot.append(f"Vias counted with their centres in the window. Wall = copper cross-section of their barrels "
                     f"at {PLATING * 1000:.0f} µm plating outside the finished hole; mΩ = a net's through vias in "
-                    f"parallel through the {thick:g} mm board.")
+                    f"parallel through {board}.")
     if note:
         foot.append(note)
     lines = _wrap(" ".join(foot), int((W - 2 * M) / 6.0))

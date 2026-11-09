@@ -124,8 +124,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   (the same rows its `-both` pair had), and the fab fingerprint leaves the `-back` files out, so releases made
   before keep their fingerprints.
 - **Each release folder holds a frozen copy of the board's KiCad project**, in `v<label>/kicad/`: the .kicad_pro,
-  the root schematic and every sheet under it (subfolders kept), the .kicad_pcb as released, the .kicad_dru and the
-  library tables, but not the .kicad_prl, lock files, KiCad 10's Local History (`.history/`) or backups. KiCad
+  the root schematic and every sheet under it (subfolders kept; a sheet from outside the board's folder in
+  `kicad/outside/`), the .kicad_pcb as released, the .kicad_dru and the library tables, but not the .kicad_prl, lock
+  files, KiCad 10's Local History (`.history/`) or backups. A sheet path that wouldn't reach the copy's own sheet (an
+  absolute one, one out of the folder) is rewritten to, so nothing in the copy's schematic is read from the working
+  project; sheets are looked for as KiCad does, beside the sheet that names them, then in the project's folder. KiCad
   links a schematic to a board by file stem within one project, and the net classes and rules live in the
   .kicad_pro, so a second board file beside one schematic doesn't open as that version; the copy does, beside the
   working board or any other release. Footprints and symbols are embedded; the `${KIPRJMOD}/../../lib/...` paths in
@@ -150,8 +153,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   for a new header pinout, outline, mounting holes or GPIO map; `--version` now says what changed too. A last release
   recorded without the fingerprint gets a patch, and the output says why; a board unchanged since such a release
   gets it recorded on the next run ("recorded v1.3's netlist/BOM fingerprint"), since its circuit is the
-  release's. docs/CONVENTIONS.md has the rule, and that a first release, which adopts the title block's version,
-  needs `--version` when the circuit changed since that version was built.
+  release's. A source recorded as equivalent before its release had the fingerprint counts as that release only
+  while its netlist and BOM are the release's, in `pcbkit release` and `pcbkit production` both: an MPN that no JLC
+  file shows made it an equivalent then, and makes it a minor now. docs/CONVENTIONS.md has the rule, and that a first
+  release, which adopts the title block's version, needs `--version` when the circuit changed since that version was
+  built.
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
   every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
   270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W

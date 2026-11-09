@@ -13,7 +13,7 @@ For every PCB (or those named, by key, path or folder):
    against that release's folder: zone fills within 0.005 mm of the release's (a KiCad that refills zones a little
    differently) and everything else the same is no change either. A change with the same fab output is recorded as
    equivalent, so the next run knows it by its source fingerprint. A board whose netlist or BOM changed is a change
-   whatever its fab output.
+   whatever its fab output, an equivalent recorded before the release had a circuit fingerprint included.
 3. A changed board gets the next version. Minor when its netlist or BOM differs from the last release's (a part's
    footprint, value, LCSC or MPN field, DNP or exclude-from-BOM flag; a part added or removed; a pin on another
    net), patch when only its fab output does (the layout), as releases.toml's circuit fingerprint tells; the output
@@ -279,10 +279,13 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
     src = source_key(project, pcb)
     on_board = V.title_rev(open(pcb_path, encoding="utf-8").read())
     old_label = on_board if re.fullmatch(r"v\d+(?:\.\d+){1,2}", on_board) else last["label"] if last else ""
-    same = last and (src == last["source"] or src in last.get("equivalent", []))
-    circ = None if same else V.circuit(pcb_path)
+    exact = last and src == last["source"]
+    circ = None if exact else V.circuit(pcb_path)
     cfp = circ and V.circuit_fingerprint(circ)
-    rewired = bool(last and not same and last.get("circuit") and cfp != last["circuit"])   # netlist or BOM changed
+    rewired = bool(last and not exact and last.get("circuit") and cfp != last["circuit"])  # netlist or BOM changed
+    # a source recorded as equivalent before the release had a circuit fingerprint may have another netlist or BOM
+    # (an MPN no fab file shows): it is the release only while its circuit is
+    same = exact or (last and not rewired and src in last.get("equivalent", []))
     ffp = None if same else fab_fingerprint(project, pcb_path, profile)
     near = fab_near(project, pcb, pcb_path, profile, last) \
         if last and not same and not rewired and ffp != last["fab"] else None

@@ -2,11 +2,13 @@
 
 The copy is a KiCad project of its own: the .kicad_pro, the root schematic and every sheet under it, the .kicad_pcb,
 the .kicad_dru and the project's library tables (fp-lib-table, sym-lib-table, design-block-lib-table), so any
-released board opens in KiCad beside the working one or another release. Not the .kicad_prl (window state), lock
-files, KiCad 10's Local History (.history/) or backups. Footprints and symbols are embedded in the board and the
-schematics; the library tables and 3-D models are not, so every path relative to the project (${KIPRJMOD}/..., or a
-3-D model's bare relative path) is rewritten to reach the same file from the copy's folder. They point at the
-project's library as it is now, not as it was at the release. What the copy refers to and doesn't find (a missing
+released board opens in KiCad beside the working one or another release. A sheet from outside the board's folder
+is copied too, into outside/, and a Sheetfile that wouldn't reach its sheet in the copy (an absolute path, a path
+out of the folder) is made to reach the copied one: nothing in the copy's schematic is read from the working
+project. Not the .kicad_prl (window state), lock files, KiCad 10's Local History (.history/) or backups.
+Footprints and symbols are embedded in the board and the schematics; the library tables and 3-D models are not, so
+every path relative to the project (${KIPRJMOD}/..., or a 3-D model's bare relative path) is rewritten to reach the
+same file from the copy's folder. They point at the project's library as it is now, not as it was at the release. What the copy refers to and doesn't find (a missing
 3-D model, an absolute path, a variable not set here) is listed, and MANIFEST.txt says so; KiCad's own library
 variables (${KICAD10_3DMODEL_DIR}) are left to KiCad.
 """
@@ -28,26 +30,53 @@ def _read(path):
 
 
 def sheets(root_sch):
-    """The root schematic and every sheet file under it, each once, as paths relative to the root's folder; and the
-    sheet files that aren't found there or lie outside it."""
+    """The root schematic and every sheet file under it, each once: {its path: where it goes in the copy, relative
+    to the copy's folder}; {a sheet's place in the copy: {each Sheetfile it names: that sheet's place}}; and the
+    sheet files not found, as (the sheet naming it, the name). KiCad looks for a sheet file in the folder of the
+    sheet that names it, then in the project's, as this does. A sheet outside the project's folder (a shared one, or
+    an absolute path) goes to the copy's outside/, so the copy holds every sheet it shows."""
     base = os.path.dirname(os.path.abspath(root_sch))
-    found, missing, todo = [], [], [os.path.basename(root_sch)]
+    root = os.path.abspath(root_sch)
+    place, names, missing, todo = {root: os.path.basename(root)}, {}, [], [root]
     while todo:
-        rel = todo.pop(0)
-        if rel in found:
-            continue
-        found.append(rel)
-        text = _read(os.path.join(base, rel))
-        for name in SHEETFILE.findall(text):
-            name = name.replace("\\", "/")
-            # relative to the project's folder, or failing that to the sheet that names it
-            p = next((q for q in (os.path.normpath(os.path.join(d, name))
-                                  for d in (base, os.path.dirname(os.path.join(base, rel)))) if os.path.isfile(q)), "")
-            if not p or os.path.relpath(p, base).startswith(".."):
-                missing.append(name)
-            elif os.path.relpath(p, base) not in found:
-                todo.append(os.path.relpath(p, base))
-    return found, sorted(set(missing))
+        p = todo.pop(0)
+        here = names[place[p]] = {}
+        for name in SHEETFILE.findall(_read(p)):
+            q = next((x for x in (os.path.normpath(os.path.join(d, name.replace("\\", "/")))
+                                  for d in (os.path.dirname(p), base)) if os.path.isfile(x)), "")
+            if not q:
+                missing.append((place[p], name))
+                continue
+            if q not in place:
+                rel = os.path.relpath(q, base)
+                if rel.startswith(".."):
+                    stem, ext = os.path.splitext(os.path.basename(q))
+                    rel = next(r for r in (os.path.join("outside", stem + (f"-{i}" if i else "") + ext)
+                                           for i in range(len(place) + 1))
+                               if r not in place.values() and not os.path.exists(os.path.join(base, r)))
+                place[q] = rel
+                todo.append(q)
+            here[name] = place[q]
+    return place, names, sorted(set(missing))
+
+
+def _sheetfiles(text, here, names, copied):
+    """A copied sheet's text with every Sheetfile that wouldn't find its sheet in the copy (an absolute path, or one
+    out of the project's folder) made relative to this sheet's folder in the copy."""
+    folder = os.path.dirname(here)
+
+    def found(name):
+        return next((r for r in (os.path.normpath(os.path.join(d, name.replace("\\", "/"))) for d in (folder, ""))
+                     if r in copied), None)
+
+    def fix(m):
+        name = m.group(1)
+        target = names.get(name)
+        if target is None or found(name) == os.path.normpath(target):
+            return m.group(0)
+        new = os.path.relpath(target, folder or ".").replace(os.sep, "/")
+        return m.group(0)[:m.start(1) - m.start(0)] + new + '"'
+    return SHEETFILE.sub(fix, text)
 
 
 def _rewrite(text, src, dst, model_paths):
@@ -105,16 +134,17 @@ def unresolved(dst):
 
 def freeze(pcb, dst):
     """Copy the board's KiCad project into dst (made here; it must not exist). Returns (the files written, relative
-    to dst; what they name and don't find: (file, path, why), a sheet file outside the project's folder included)."""
+    to dst; what they name and don't find: (file, path, why), a missing sheet file included)."""
     src = os.path.dirname(os.path.abspath(pcb))
     stem = os.path.splitext(os.path.basename(pcb))[0]
     os.makedirs(dst)
     sch = os.path.join(src, stem + ".kicad_sch")
-    files, missing = sheets(sch) if os.path.exists(sch) else ([], [])
-    files = [stem + ".kicad_pro", stem + ".kicad_pcb", stem + ".kicad_dru"] + files + list(LIB_TABLES)
+    place, names, missing = sheets(sch) if os.path.exists(sch) else ({}, {}, [])
+    files = [(os.path.join(src, f), f) for f in (stem + ".kicad_pro", stem + ".kicad_pcb", stem + ".kicad_dru")] \
+        + list(place.items()) + [(os.path.join(src, f), f) for f in LIB_TABLES]
+    copied = {os.path.normpath(r) for r in place.values()}
     written = []
-    for rel in files:
-        p = os.path.join(src, rel)
+    for p, rel in files:
         if not os.path.isfile(p):
             continue
         out = os.path.join(dst, rel)
@@ -122,9 +152,10 @@ def freeze(pcb, dst):
         if rel.endswith(".kicad_dru"):
             shutil.copy2(p, out)
         else:
-            text = _read(p)
-            with open(out, "w", encoding="utf-8") as fh:     # ${KIPRJMOD} is the copy's folder, for every sheet
-                fh.write(_rewrite(text, src, dst, rel.endswith(".kicad_pcb")))
+            text = _rewrite(_read(p), src, dst, rel.endswith(".kicad_pcb"))   # ${KIPRJMOD} is the copy's folder
+            if rel in names:
+                text = _sheetfiles(text, rel, names[rel], copied)
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(text)
         written.append(rel.replace(os.sep, "/"))
-    return written, [(stem + ".kicad_sch", m, "sheet file not in the board's folder: not copied") for m in missing] \
-        + unresolved(dst)
+    return written, [(here, name, "sheet file not found") for here, name in missing] + unresolved(dst)

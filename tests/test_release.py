@@ -112,6 +112,80 @@ class Rewrite(unittest.TestCase):
         self.assertIn('(model "models/c.step")', freeze._rewrite(text, src, dst, False))
 
 
+def schematic(uuid, sheets=(), at=None):
+    """A schematic with a sheet symbol per (sheet uuid, Sheetfile, page); at is its own sheet path (the sheet
+    symbols' uuids from the root's down), None for the root."""
+    out = (f'(kicad_sch (version 20250114) (generator "eeschema") (generator_version "10.0")\n\t(uuid "{uuid}")\n'
+           '\t(paper "A4")\n\t(lib_symbols)\n')
+    for i, (sid, name, page) in enumerate(sheets):
+        out += (f'\t(sheet (at {20 + 50 * i} 50) (size 40 20) (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)\n'
+                f'\t\t(stroke (width 0.1524) (type solid)) (fill (color 0 0 0 0.0)) (uuid "{sid}")\n'
+                f'\t\t(property "Sheetname" "S{page}" (at 50 49 0) (effects (font (size 1.27 1.27)) (justify left bottom)))\n'
+                f'\t\t(property "Sheetfile" "{name}" (at 50 71 0) (effects (font (size 1.27 1.27)) (justify left top)))\n'
+                f'\t\t(instances (project "demo" (path "{at or "/" + uuid}" (page "{page}")))))\n')
+    if at is None:
+        out += '\t(sheet_instances (path "/" (page "1")))\n'
+    return out + "\t(embedded_fonts no)\n)\n"
+
+
+def uid(n):
+    return f"5ee7c0de-0000-4000-8000-{n:012d}"
+
+
+class Sheets(unittest.TestCase):
+    """Every sheet the copy shows is in the copy, and its schematic reads nothing from the working project."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.board = os.path.join(self.tmp.name, "p", "boards", "demo")
+        os.makedirs(os.path.join(self.board, "sheets"))
+        os.makedirs(os.path.join(self.tmp.name, "p", "boards", "shared"))
+        write(os.path.join(self.board, "demo.kicad_pro"), "{}\n")
+        root = [(uid(11), "sheets/power.kicad_sch", "2"),                       # relative, in the folder
+                (uid(12), os.path.join(self.board, "sheets", "abs.kicad_sch"), "3"),   # absolute, in the folder
+                (uid(13), "../shared/io.kicad_sch", "4")]                        # outside it, with a sheet of its own
+        write(os.path.join(self.board, "demo.kicad_sch"), schematic(uid(1), root))
+        write(os.path.join(self.board, "sheets", "power.kicad_sch"), schematic(uid(2), at=f"/{uid(1)}/{uid(11)}"))
+        write(os.path.join(self.board, "sheets", "abs.kicad_sch"), schematic(uid(3), at=f"/{uid(1)}/{uid(12)}"))
+        write(os.path.join(self.tmp.name, "p", "boards", "shared", "io.kicad_sch"),
+              schematic(uid(4), [(uid(14), "leaf.kicad_sch", "5")], at=f"/{uid(1)}/{uid(13)}"))
+        write(os.path.join(self.tmp.name, "p", "boards", "shared", "leaf.kicad_sch"),
+              schematic(uid(5), at=f"/{uid(1)}/{uid(13)}/{uid(14)}"))
+
+    def test_the_copy_holds_every_sheet(self):
+        k = os.path.join(self.tmp.name, "kicad")
+        written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
+        self.assertEqual(sorted(written), ["demo.kicad_pro", "demo.kicad_sch", "outside/io.kicad_sch",
+                                           "outside/leaf.kicad_sch", "sheets/abs.kicad_sch", "sheets/power.kicad_sch"])
+        self.assertEqual(lost, [])
+        root = read(k, "demo.kicad_sch")
+        for name in ('"sheets/power.kicad_sch"', '"sheets/abs.kicad_sch"', '"outside/io.kicad_sch"'):
+            self.assertIn(f'(property "Sheetfile" {name}', root)
+        self.assertIn('(property "Sheetfile" "leaf.kicad_sch"', read(k, "outside", "io.kicad_sch"))
+        # with the working project gone, kicad-cli still draws all five sheets from the copy
+        os.rename(os.path.join(self.tmp.name, "p"), os.path.join(self.tmp.name, "gone"))
+        pdf = os.path.join(self.tmp.name, "copy.pdf")
+        r = subprocess.run([kicad.KICAD_CLI, "sch", "export", "pdf", "-o", pdf, os.path.join(k, "demo.kicad_sch")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(pdf, "rb") as fh:
+            self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 5)
+
+    def test_a_missing_sheet_is_reported(self):
+        os.remove(os.path.join(self.board, "sheets", "power.kicad_sch"))
+        written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), os.path.join(self.tmp.name, "k"))
+        self.assertNotIn("sheets/power.kicad_sch", written)
+        self.assertEqual(lost, [("demo.kicad_sch", "sheets/power.kicad_sch", "sheet file not found")])
+
+    def test_the_parent_sheets_folder_comes_first(self):
+        """As in KiCad: a nested sheet's file is looked for beside the sheet that names it, then in the project's."""
+        write(os.path.join(self.board, "leaf.kicad_sch"), schematic(uid(6), at="/"))    # the project folder's, unused
+        _, names, _ = freeze.sheets(os.path.join(self.board, "demo.kicad_sch"))
+        self.assertEqual(names[os.path.join("outside", "io.kicad_sch")],
+                         {"leaf.kicad_sch": os.path.join("outside", "leaf.kicad_sch")})
+
+
 SCH_ROOT = """(kicad_sch (version 20250114) (generator "eeschema") (generator_version "10.0")
 \t(uuid "1d2b7c0e-0000-4000-8000-000000000001")
 \t(paper "A4")
@@ -254,6 +328,28 @@ def edit(root, change):
 
 def value(ref, v):
     return lambda b, pcbnew: b.FindFootprintByReference(ref).SetValue(v)
+
+
+def mpn(ref, v):
+    """A hidden MPN field, which JLC's files don't carry."""
+    def change(b, pcbnew):
+        fp = b.FindFootprintByReference(ref)
+        fp.SetField("MPN", v)
+        next(f for f in fp.GetFields() if f.GetName() == "MPN").SetVisible(False)
+    return change
+
+
+def states(root):
+    """What pcbkit production makes of each board: {key: state}, and its problems."""
+    from pcbkit import production
+    from pcbkit.config import Project
+    cwd, problems = os.getcwd(), []
+    os.chdir(root)
+    try:
+        pcbs = production.survey(Project(), problems, [])
+    finally:
+        os.chdir(cwd)
+    return {k: p["state"] for k, p in pcbs.items()}, problems
 
 
 def move_track(b, pcbnew):
@@ -403,6 +499,34 @@ class Release(unittest.TestCase):
         self.assertIn("current v1.0 (1.0.0): would record v1.0's netlist/BOM fingerprint", release(root, "--dry-run"))
         self.assertIn("current v1.0 (1.0.0): recorded v1.0's netlist/BOM fingerprint", release(root))
         self.assertEqual(entries(root)[-1]["circuit"], fp)
+
+    def test_an_equivalent_recorded_before_the_fingerprint_is_checked_against_it(self):
+        root = self.project("equivalent")
+        rdir = os.path.join(root, "releases", "demo")
+        rs = entries(root)
+        rs[-1].pop("circuit")
+        tomlw.dump({"key": "demo", "release": rs}, os.path.join(rdir, "releases.toml"))
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        with open(board, "rb") as fh:
+            released = fh.read()
+        # with no fingerprint to tell by, an MPN that no JLC file shows is the same fab output: an equivalent
+        edit(root, mpn("R1", "RC0603FR-0710KL"))
+        with open(board, "rb") as fh:
+            with_mpn = fh.read()
+        self.assertIn("same fab output: recorded as equivalent", release(root))
+        # back to the release's own board, which records the fingerprint
+        with open(board, "wb") as fh:
+            fh.write(released)
+        self.assertIn("recorded v1.0's netlist/BOM fingerprint", release(root))
+        self.assertEqual(states(root)[0], {"demo": "released"})
+        # the equivalent again: its circuit isn't the release's, so it is a change, a minor one
+        with open(board, "wb") as fh:
+            fh.write(with_mpn)
+        self.assertIn("would release v1.1 (1.1.0): minor after 1.0.0: R1 MPN (none) -> RC0603FR-0710KL "
+                      "(the fab output is the same)", release(root, "--dry-run"))
+        state, problems = states(root)
+        self.assertEqual(state, {"demo": "changed"})
+        self.assertIn("boards/demo/demo.kicad_pcb: changed since v1.0: run pcbkit release", problems)
 
 
 if __name__ == "__main__":

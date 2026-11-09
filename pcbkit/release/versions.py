@@ -273,6 +273,12 @@ def circuit_fingerprint(c):
     return hashlib.sha1(json.dumps({"parts": c["parts"], "nets": nets}, sort_keys=True).encode()).hexdigest()
 
 
+def same_circuit(entry, pcb):
+    """Whether the board's netlist and BOM are a release's (entry, from releases.toml), as far as it recorded them: a
+    release recorded without the circuit fingerprint can't tell, and counts as the same."""
+    return not entry.get("circuit") or circuit_fingerprint(circuit(pcb)) == entry["circuit"]
+
+
 def _pins(ps, most=6):
     ps = sorted(ps, key=lambda p: (_natural(p[0]), _natural(p[1])))
     out = ", ".join(f"{r}.{n}" for r, n in ps[:most])

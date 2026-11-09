@@ -66,9 +66,10 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
   label. Generators that write a board read its version from its releases.toml rather than keeping their own, and
   leave room on the silkscreen for v1.0.10.
 - A release folder is never rewritten: what was ordered stays in git as it was sent. Beside the fab files and PDFs it
-  holds `kicad/`, a frozen copy of the board's KiCad project: the .kicad_pro, every schematic sheet, the .kicad_pcb,
-  the .kicad_dru and the library tables (not the .kicad_prl, lock files or `.history/`). Every released version opens
-  in KiCad on its own, beside the working board or another release. Its symbols and footprints are embedded in the
+  holds `kicad/`, a frozen copy of the board's KiCad project: the .kicad_pro, every schematic sheet (one from outside
+  the board's folder in `kicad/outside/`), the .kicad_pcb, the .kicad_dru and the library tables (not the .kicad_prl,
+  lock files or `.history/`). Every released version opens in KiCad on its own, beside the working board or another
+  release. Its symbols and footprints are embedded in the
   files; the paths in its library tables and 3-D models are rewritten to reach the same files from the release
   folder, so they show the project's `lib/` as it is now, not as it was. MANIFEST.txt lists what the copy names and
   doesn't find. The board itself stays one project in `boards/<name>/`, edited in place: the versions are the

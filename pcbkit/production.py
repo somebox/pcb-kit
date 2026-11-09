@@ -316,7 +316,7 @@ def survey(project, problems, watch):
         elif last:
             src = V.source_fingerprint(path, project.fab_settings(pcb["profile"]))
             p["state"] = "released"
-            if src != last["source"] and src not in last.get("equivalent", []):
+            if src != last["source"] and not (src in last.get("equivalent", []) and V.same_circuit(last, path)):
                 p["state"] = "changed"
                 problems.append(f"{pcb['path']}: changed since {last['label']}: run pcbkit release")
             if on_board != last["label"]:

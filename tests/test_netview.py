@@ -168,6 +168,19 @@ class Detail(unittest.TestCase):
         self.assertIn("3", texts)
         self.assertNotIn("4", texts)
 
+    def test_a_pad_number_never_hides_a_via_hole(self):
+        """A 0.3 mm pad with a 0.25 mm via hole at its middle: every spot on it covers the hole, so no label."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        self.pad(fp, "7", 0, 0, 0.3, 0.3, (pcbnew.F_Cu, pcbnew.F_Mask, pcbnew.F_Paste), "VOUT")
+        self.via(0, 0, "VOUT", 0.3, 0.25)
+        view = self.draw()
+        self.assertEqual([v[5] for v in view["vias"]], [True])
+        self.assertFalse(any("font-weight=\"bold\"" in e for e in view["svg"]))
+        self.assertEqual(view["pads"], {"VOUT": {"U1": {"7"}}})       # still listed in the legend
+
     def test_a_round_pad_whose_box_alone_reaches_the_window_is_left_out(self):
         """A 2 mm round pad at (1, 1): its box covers the window's corner at (0.1, 0.1), its copper doesn't."""
         pcbnew = self.pcbnew
@@ -203,6 +216,29 @@ class Detail(unittest.TestCase):
         pcbnew.ZONE_FILLER(self.board).Fill(self.board.Zones())
         self.assertTrue(z.HasFilledPolysForLayer(pcbnew.F_Cu))
         self.assertEqual(self.draw()["nets"], {"/a/EDGE_VIA"})
+
+    def test_a_long_legend_entry_wraps_inside_the_sheet(self):
+        """GND on 16 capacitors' pads makes an entry longer than a one-panel sheet is wide."""
+        pcbnew = self.pcbnew
+        for i in range(16):
+            fp = pcbnew.FOOTPRINT(self.board)
+            fp.SetReference(f"C{i + 1}")
+            self.board.Add(fp)
+            self.pad(fp, "2", -2.5 + (i % 8) * 0.7, -1 + (i // 8) * 2, 0.4, 0.4, (pcbnew.F_Cu,), "GND")
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, "Option")], out, *WINDOW, layer_name="F.Cu", note="x")
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        width = float(re.search(r'<svg [^>]*width="([\d.]+)"', text).group(1))
+        legend = re.findall(r'<text x="([\d.]+)" y="[\d.]+" font-size="14"[^>]*>([^<]*)</text>', text)
+        self.assertGreater(len(legend), 1)
+        for x, line in legend:
+            self.assertLessEqual(float(x) + 7.4 * len(line), width - 24, line)
+        refs = sorted(f"C{i + 1}" for i in range(16))
+        self.assertEqual(" ".join(line for _x, line in legend), "GND (" + "; ".join(f"{r} 2" for r in refs) + ")")
 
     def test_sheet_says_each_boards_thickness(self):
         self.via(-2.2, 0.3, "VOUT")

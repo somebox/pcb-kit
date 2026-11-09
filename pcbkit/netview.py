@@ -308,7 +308,12 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             for ax, ay in along:
                 spots += [(cx + s * 0.1 * k * ax * w, cy + s * 0.1 * k * ay * h) for s in (1, -1)]
         room = lambda s: min([math.hypot(s[0] - v[0], s[1] - v[1]) - v[2] / 2 for v in via_list] or [9.0])  # noqa: E731
-        spot = next((s for s in spots if room(s) > half), max(spots, key=room))
+        hw, hh = (0.62 * 13 * len(number) + 6) / 2 / scale, 8.5 / scale     # the label's box, as _text_box draws it
+        clear = [s for s in spots if all(math.hypot(max(abs(s[0] - v[0]) - hw, 0), max(abs(s[1] - v[1]) - hh, 0))
+                                         > v[3] / 2 for v in via_list)]
+        if not clear:                                   # every spot hides a via hole, maybe one ringed red: the
+            continue                                    # legend lists the pad
+        spot = next((s for s in clear if room(s) > half), max(clear, key=room))
         labels.append(_text_box(X(spot[0]), Y(spot[1]), number))
 
     edge = pcbnew.SHAPE_POLY_SET()
@@ -460,11 +465,18 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
     while lcols > 1 and max([34 + 7.4 * len(t) for _s, t in items] or [0]) > (W - 2 * M) / lcols:
         lcols -= 1
     top = M + rows * cell_h + (rows - 1) * GY + 10
-    for i, (swatch, text) in enumerate(items):
-        lx, ly = M + (i % lcols) * (W - 2 * M) / lcols, top + (i // lcols) * 22
-        svg.append(f'<g transform="translate({lx:.1f} {ly:.1f})">{swatch}</g>')
-        svg.append(f'<text x="{lx + 32:.1f}" y="{ly + 12:.1f}" font-size="14" {FONT}>{escape(text)}</text>')
-    top += 22 * -(-len(items) // lcols) + 12
+    width = (W - 2 * M) / lcols
+    chars = max(12, int((width - 34) / 7.4))           # an entry longer than its column wraps under itself
+    for r in range(0, len(items), lcols):
+        row = [(swatch, _wrap(text, chars)) for swatch, text in items[r:r + lcols]]
+        for j, (swatch, lines) in enumerate(row):
+            lx = M + j * width
+            svg.append(f'<g transform="translate({lx:.1f} {top:.1f})">{swatch}</g>')
+            for k, line in enumerate(lines):
+                svg.append(f'<text x="{lx + 32:.1f}" y="{top + 12 + 17 * k:.1f}" font-size="14" {FONT}>'
+                           f'{escape(line)}</text>')
+        top += 22 + 17 * (max(len(lines) for _s, lines in row) - 1)
+    top += 12
     foot = []
     if metrics and views:
         thicks = [v["thickness"] for v in views]

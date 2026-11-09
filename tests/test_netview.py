@@ -35,6 +35,13 @@ class Numbers(unittest.TestCase):
         self.assertAlmostEqual(netview.via_ohms(0.25, 1.6) * 1000, 1.816, places=3)
         self.assertAlmostEqual(netview.wall_area(0.2), math.pi * 0.218 * 0.018)
 
+    def test_an_svg_reference_is_embedded_as_svg(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "fig.svg")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
+            self.assertTrue(netview._image_href(path).startswith("data:image/svg+xml;base64,"))
+
     def test_circle_against_a_polygon_with_a_hole(self):
         square = [(0, 0), (2, 0), (2, 2), (0, 2)]
         hole = [(0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)]
@@ -116,6 +123,27 @@ class Detail(unittest.TestCase):
         self.via(1.5, 0.5, "GND")          # in the exposed pad, between apertures
         found = {(round(v[0], 2), round(v[1], 2)): v[5] for v in self.draw()["vias"]}
         self.assertEqual(found, {(-1.5, 0.3): True, (-2.2, 0.3): False, (0.5, -0.5): True, (1.5, 0.5): False})
+
+    def test_a_custom_pads_paste_shrinks_with_its_margin_ratio(self):
+        """A 2 x 0.5 mm custom pad on a 0.4 x 0.2 mm anchor at -50 % paste: margins -0.2 and -0.1 mm, and KiCad's
+        plotter grows the whole shape by the first, to 1.6 x 0.1 mm. Resizing the anchor alone left it 2 x 0.5."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        p = self.pad(fp, "1", 0, 0, 0.4, 0.2, (pcbnew.F_Cu, pcbnew.F_Mask, pcbnew.F_Paste), "VOUT")
+        p.SetShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CUSTOM)
+        p.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECTANGLE)
+        strip = pcbnew.SHAPE_POLY_SET()
+        strip.NewOutline()
+        for x, y in ((-1, -0.25), (1, -0.25), (1, 0.25), (-1, 0.25)):
+            strip.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        p.AddPrimitivePoly(pcbnew.F_Cu, strip, 0, True)
+        p.SetLocalSolderPasteMarginRatio(-0.5)
+        self.via(0.9, 0, "VOUT", 0.2, 0.1)      # the hole spans x 0.85-0.95: in the copper, past the paste
+        self.via(0.5, 0, "VOUT", 0.2, 0.1)      # in both
+        found = {round(v[0], 2): v[5] for v in self.draw()["vias"]}
+        self.assertEqual(found, {0.9: False, 0.5: True})
 
     def test_plain_view_leaves_paste_out(self):
         self.part()

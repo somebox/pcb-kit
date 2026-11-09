@@ -263,8 +263,8 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
                 aperture(shape(p, layer, p.GetSolderMaskExpansion(mask_layer)), "mask")
             if p.IsOnLayer(paste_layer):
                 m = p.GetSolderPasteMargin(paste_layer)
-                if m.x == m.y:
-                    aperture(shape(p, layer, m.x), "paste")
+                if m.x == m.y or p.GetShape(layer) == pcbnew.PAD_SHAPE_CUSTOM:
+                    aperture(shape(p, layer, m.x), "paste")     # KiCad's plotter grows a custom shape by m.x
                 else:                   # a margin ratio on a non-square pad: grow each axis, as KiCad's plotter does
                     q = pcbnew.PAD(p)
                     s = p.GetSize(layer)
@@ -358,7 +358,7 @@ def _wrap(text, chars):
 
 def _image_href(path):
     ext = os.path.splitext(path)[1].lower().lstrip(".")
-    mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "gif": "gif"}.get(ext, "png")
+    mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "gif": "gif", "svg": "svg+xml"}.get(ext, "png")
     with open(path, "rb") as fh:
         return f"data:image/{mime};base64," + base64.b64encode(fh.read()).decode()
 

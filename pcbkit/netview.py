@@ -62,6 +62,8 @@ def make_colour(table):
     suffix = {k[1:]: v for k, v in table.items() if k.startswith("*")}
 
     def colour(net):
+        if net in exact:                                # a full hierarchical name first, then its last part
+            return exact[net]
         name = net.split("/")[-1]
         if name in exact:
             return exact[name]
@@ -463,14 +465,16 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
             svg.append(f'<text x="{cx:.1f}" y="{py + PH + 22 + 18 * j:.1f}" font-size="14" {FONT}>'
                        f'{escape(line)}</text>')
 
-    shown = sorted({n for v in views for n in v["nets"] if colour(n) != OTHER}, key=lambda n: n.split("/")[-1])
+    shown = sorted({n for v in views for n in v["nets"] if colour(n) != OTHER}, key=lambda n: (n.split("/")[-1], n))
+    short = [n.split("/")[-1] for n in shown]
     items = []
-    for n in shown:
+    for n, s in zip(shown, short):
         on = {}
         for v in views:
             for ref, nums in v["pads"].get(n, {}).items():
                 on.setdefault(ref, set()).update(nums)
-        label = n.split("/")[-1] + (f" ({_pad_list(on)})" if on else "")
+        name = s if short.count(s) == 1 else n          # nets sharing a last part go by their full names
+        label = name + (f" ({_pad_list(on)})" if on else "")
         items.append((f'<rect width="24" height="14" fill="{colour(n)}"/>', label))
     if paste:
         items += [('<rect width="24" height="14" fill="url(#paste)" stroke="#555"/>', "solder paste"),

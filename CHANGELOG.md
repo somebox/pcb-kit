@@ -17,8 +17,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   `--metrics NET,...` counts the through vias in the window per net, with their barrels' copper cross-section and
   their resistance in parallel through the board (18 um plating outside KiCad's drill, which is the finished hole;
   blind and micro vias are counted apart; a name is a net's full name or the last part of it, and nets that share
-  only the last part get a line each); `--note` adds to the footnote, and on its own makes a one-panel sheet. `--colour NET=#rrggbb` sets one net's
-  colour, and `--fill` fills the zones in memory first. Drawn from the siebenuhr controller v3 study of U5's vias
+  only the last part get a line each); `--note` adds to the footnote, and on its own makes a one-panel sheet.
+  `--colour NET=#rrggbb` sets one net's colour (here and in `--colours`, a full hierarchical name comes before its
+  last part, and the legend names nets that share a last part in full), and `--fill` fills the zones in memory first. Drawn from the siebenuhr controller v3 study of U5's vias
   (2026-11-09), whose matplotlib picture it reproduces (`docs/images/via-options-tps55288.webp`) with the same counts;
   the study put the plating inside the drill, so its copper figures were 13 % (0.25 mm) to 17 % (0.2 mm) low, and
   the options compare the same way. On the sign controller it finds all nine vias in U4's exposed pad in

@@ -42,6 +42,10 @@ class Numbers(unittest.TestCase):
                 fh.write('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
             self.assertTrue(netview._image_href(path).startswith("data:image/svg+xml;base64,"))
 
+    def test_a_colour_by_full_name_comes_before_one_by_last_part(self):
+        colour = netview.make_colour({"/a/VOUT": "#111111", "VOUT": "#222222"})
+        self.assertEqual([colour("/a/VOUT"), colour("/b/VOUT"), colour("VOUT")], ["#111111", "#222222", "#222222"])
+
     def test_a_window_without_area_is_refused(self):
         """Reversed corners gave a negative wrap width (a loop without end), equal ones a division by zero."""
         for window in (("3", "-3", "-3", "3"), ("0", "0", "0", "6"), ("0", "6", "6", "6")):
@@ -376,6 +380,24 @@ class Detail(unittest.TestCase):
                 lines = re.findall(r">([^<>]*: [^<>]*)<", fh.read())
         one = f"1 vias, wall {netview.wall_area(0.2):.3f} mm², {netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ"
         self.assertEqual(lines, [f"/a/VOUT: {one}", f"/b/VOUT: {one}", f"GND: {one}", f"/a/VOUT: {one}"])
+
+    def test_legend_names_nets_sharing_a_last_part_in_full(self):
+        """Coloured apart by their full names, /a/VOUT and /b/VOUT are two legend entries told apart; GND is alone."""
+        self.via(-2.2, 0.3, "/a/VOUT")
+        self.via(2.2, 0.3, "/b/VOUT")
+        self.via(0, 2.2, "/a/GND")
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, "Option")], out, *WINDOW, layer_name="F.Cu", note="x",
+                          colours={"/a/VOUT": "#e8892b", "/b/VOUT": "#c94a4a"})
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        legend = re.findall(r'<text x="[\d.]+" y="[\d.]+" font-size="14"[^>]*>([^<]*)</text>', text)
+        self.assertEqual(legend, ["GND", "/a/VOUT", "/b/VOUT"])
+        self.assertIn('fill="#e8892b"', text)
+        self.assertIn('fill="#c94a4a"', text)
 
     def test_a_note_alone_makes_a_sheet(self):
         """--note asks for a footnote, which only a sheet has."""

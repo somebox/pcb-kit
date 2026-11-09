@@ -153,8 +153,7 @@ When there are a few ways to lay something out, build each as a copy of the boar
 net in one colour across every panel, paste hatched, mask openings dashed, any via hole that lands in paste ringed
 red, and the numbers that decide it under each panel. On siebenuhr's controller v3 it showed five open via holes
 inside the strip pads of a TPS55288 buck-boost, under the paste. The option chosen moves every via off the pads, to
-the part's corners and beside the strips where TI's figure and EVM put them, and keeps the VOUT via copper within
-3 %:
+the part's corners and beside the strips where TI's figure and EVM put them, and keeps 95 % of the VOUT via copper:
 
 <img src="docs/images/via-options-tps55288.webp" width="720" alt="Four panels of the TPS55288's pads: TI's layout figure with vias beside the strip pads, the board before with five via holes ringed red inside the strips, and two options with vias moved to the corners and beside the strips, numbers under each">
 

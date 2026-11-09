@@ -30,10 +30,10 @@ WINDOW = (-3.0, -3.0, 3.0, 3.0)
 
 class Numbers(unittest.TestCase):
     def test_via_resistance(self):
-        """A 0.2 mm via through 1.6 mm with 18 um plating is 2.67 mOhm; 0.25 mm is 2.10 (the U5 study's figures)."""
-        self.assertAlmostEqual(netview.via_ohms(0.2, 1.6) * 1000, 2.674, places=3)
-        self.assertAlmostEqual(netview.via_ohms(0.25, 1.6) * 1000, 2.098, places=3)
-        self.assertAlmostEqual(netview.wall_area(0.2), math.pi * 0.182 * 0.018)
+        """A 0.2 mm finished hole through 1.6 mm with 18 um plating outside it is 2.23 mOhm; 0.25 mm is 1.82."""
+        self.assertAlmostEqual(netview.via_ohms(0.2, 1.6) * 1000, 2.232, places=3)
+        self.assertAlmostEqual(netview.via_ohms(0.25, 1.6) * 1000, 1.816, places=3)
+        self.assertAlmostEqual(netview.wall_area(0.2), math.pi * 0.218 * 0.018)
 
     def test_circle_against_a_polygon_with_a_hole(self):
         square = [(0, 0), (2, 0), (2, 2), (0, 2)]
@@ -81,14 +81,14 @@ class Detail(unittest.TestCase):
             p.SetNet(self.net(net))
         return p
 
-    def via(self, x, y, net, size=0.45, drill=0.2):
+    def via(self, x, y, net, size=0.45, drill=0.2, blind=False):
         pcbnew = self.pcbnew
         v = pcbnew.PCB_VIA(self.board)
         v.SetPosition(self.mm(x, y))
         v.SetWidth(pcbnew.FromMM(size))
         v.SetDrill(pcbnew.FromMM(drill))
-        v.SetViaType(pcbnew.VIATYPE_THROUGH)
-        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        v.SetViaType(pcbnew.VIATYPE_BLIND if blind else pcbnew.VIATYPE_THROUGH)
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.In1_Cu if blind else pcbnew.B_Cu)
         self.board.Add(v)
         v.SetNet(self.net(net))
         return v
@@ -129,6 +129,17 @@ class Detail(unittest.TestCase):
         texts = [re.sub("<[^>]+>", "", e) for e in self.draw()["svg"] if "font-weight=\"bold\"" in e]
         self.assertEqual(sorted(t for t in texts if t), ["1", "2"])  # VOUT and GND have colours; the aperture none
 
+    def test_a_pad_reaching_into_the_window_is_in_the_legend(self):
+        """Its centre is outside the window, but its copper is drawn, so its net and number are listed and labelled."""
+        fp = self.part()
+        self.pad(fp, "3", WINDOW[0] - 0.5, 0, 2.0, 1.0, (self.pcbnew.F_Cu,), "VOUT")
+        self.pad(fp, "4", WINDOW[0] - 1.5, 0, 0.5, 0.5, (self.pcbnew.F_Cu,), "VOUT")   # wholly outside
+        view = self.draw()
+        self.assertEqual(view["pads"]["VOUT"], {"U1": {"1", "3"}})
+        texts = [re.sub("<[^>]+>", "", e) for e in view["svg"] if "font-weight=\"bold\"" in e]
+        self.assertIn("3", texts)
+        self.assertNotIn("4", texts)
+
     def test_an_arc_track_is_drawn_as_its_outline(self):
         """No corpus board has arc tracks; a chord would cut across whatever the arc goes round."""
         pcbnew = self.pcbnew
@@ -164,7 +175,27 @@ class Detail(unittest.TestCase):
         self.assertIn(f"{ohms:.2f} mΩ", text)
         self.assertIn("GND: no vias", text)
         self.assertIn("VOUT (U1 1)", text)
-        self.assertIn("DRC clean.", text)
+        prose = " ".join(re.sub("<[^>]+>", " ", text).split())       # the footnote wraps over several lines
+        self.assertIn("parallel through the 1.6 mm board. DRC clean.", prose)
+
+    def test_sheet_leaves_blind_vias_out_of_the_copper(self):
+        """A blind via spans part of the board: it is counted apart, not put in parallel with the through vias."""
+        self.board.SetCopperLayerCount(4)
+        self.part()
+        self.via(-2.2, 0.3, "VOUT")
+        self.via(-2.2, -0.5, "VOUT", blind=True)
+        self.via(2.2, 0.3, "GND", blind=True)
+        with tempfile.TemporaryDirectory() as d:
+            board = os.path.join(d, "b.kicad_pcb")
+            kicad.save_board(self.board, board)
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet([(board, "Option")], out, *WINDOW, layer_name="F.Cu", detail=True,
+                          metrics=["VOUT", "GND"])
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
+        self.assertIn(f"VOUT: 1 vias, wall {netview.wall_area(0.2):.3f} mm², "
+                      f"{netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ, 1 blind/micro not counted", text)
+        self.assertIn("GND: no through vias, 1 blind/micro not counted", text)
 
 
 if __name__ == "__main__":

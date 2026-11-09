@@ -53,12 +53,13 @@ from one sheet than from a table, and the sheet shows what a table hides.
 
 Worked example ([via-options-tps55288.webp](../../docs/images/via-options-tps55288.webp)), siebenuhr controller v3,
 2026-11-09. U5 is a TPS55288 buck-boost in TI's HotRod package, with three long strip pads under it. Five of the
-board's eight vias there were open holes inside the strips, under paste: a 0.2 mm barrel holds about 0.034 mm³,
-more than one strip's whole paste deposit (0.027 mm³), and JLC can't plug a via in or within 0.35 mm of a pad. TI's
+board's eight vias there were open holes inside the strips, under paste: a 0.2 mm hole through the 1.6 mm board
+holds 0.050 mm³, almost twice one strip's whole paste deposit (0.027 mm³), and JLC can't plug a via in or within
+0.35 mm of a pad. TI's
 figure and EVM put the vias beside the strips. A search of the board for free spots (the via's copper 0.16 mm from
 other nets on every layer and 0.02 mm from every mask opening, holes 0.25 mm apart, on its own net's copper on both
 layers it joins) found three of U5's corners and, with 0.007 mm to spare, TI's side spots. Option 2 uses both: no
-hole under paste, the VOUT via copper within 3 %, PGND's doubled. The sheet also shows what the study's first
+hole under paste, 95 % of the VOUT via copper kept, PGND's doubled. The sheet also shows what the study's first
 picture left out, since it drew no tracks: Option 1's copy kept the tracks that led to two of the vias it removed.
 
 ```bash

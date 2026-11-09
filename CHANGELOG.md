@@ -14,11 +14,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   any via hole that lands in paste. `--compare BOARD=TITLE` puts the same window of more boards on one sheet, after
   `--ref IMAGE=TITLE` images such as the datasheet's layout figure (`--ref-rotate` turns them to match the board):
   each net in one colour across every panel, a title over each, the numbers under it, one legend and a footnote.
-  `--metrics NET,...` counts the vias in the window per net, with their barrels' copper cross-section and their
-  resistance in parallel through the board (18 um plating); `--note` adds to the footnote. `--colour NET=#rrggbb`
-  sets one net's colour, and `--fill` fills the zones in memory first. Drawn from the siebenuhr controller v3 study
-  of U5's vias (2026-11-09), whose matplotlib picture it reproduces with the same numbers
-  (`docs/images/via-options-tps55288.webp`). On the sign controller it finds all nine vias in U4's exposed pad in
+  `--metrics NET,...` counts the through vias in the window per net, with their barrels' copper cross-section and
+  their resistance in parallel through the board (18 um plating outside KiCad's drill, which is the finished hole;
+  blind and micro vias are counted apart); `--note` adds to the footnote. `--colour NET=#rrggbb` sets one net's
+  colour, and `--fill` fills the zones in memory first. Drawn from the siebenuhr controller v3 study of U5's vias
+  (2026-11-09), whose matplotlib picture it reproduces (`docs/images/via-options-tps55288.webp`) with the same counts;
+  the study put the plating inside the drill, so its copper figures were 13 % (0.25 mm) to 17 % (0.2 mm) low, and
+  the options compare the same way. On the sign controller it finds all nine vias in U4's exposed pad in
   its paste windows; on dodeca v1.3's BQ25890 the vias sit between them. Tests in `tests/test_netview.py`.
 - **`pcbkit courtyards`: courtyards that don't describe their part.** DRC's placement checks trust each footprint's
   courtyard, so one that misses its pads or body lets a part be placed on it and DRC passes. On espcandle-pcb's base

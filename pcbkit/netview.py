@@ -23,7 +23,8 @@ Comparing layout options: the same window of several boards side by side, in the
 board, then each --compare board in order; "\\n" in a title starts a new line. With --compare, --ref, --title or
 --metrics the output is a sheet: a title over each panel, its numbers under it, one legend and a footnote. The
 numbers count the vias whose centres are in the window: with --detail, holes under paste; for each --metrics net, its
-vias, their barrels' copper cross-section at 18 um plating and their resistance in parallel through the board.
+through vias, their barrels' copper cross-section (18 um plating outside the finished hole) and their resistance in
+parallel through the board. Blind and micro vias are counted apart and left out of the copper and resistance.
 --note adds to the footnote (the DRC result of each option, say).
 """
 import argparse
@@ -74,13 +75,14 @@ def make_colour(table):
 
 
 def via_ohms(drill, thickness, plating=PLATING):
-    """Resistance of one via barrel through a board thickness mm thick: a copper tube of wall pi (drill - t) t."""
+    """Resistance of one via barrel through a board thickness mm thick: a copper tube of wall pi (drill + t) t."""
     return RHO_CU * thickness * 1e-3 / (wall_area(drill, plating) * 1e-6)
 
 
 def wall_area(drill, plating=PLATING):
-    """Copper cross-section of a via barrel in mm^2."""
-    return math.pi * (drill - plating) * plating
+    """Copper cross-section of a via barrel in mm^2. KiCad's drill is the finished hole, so the plating lies outside
+    it: the fab drills drill + 2t (JLC's drill tables give the size after plating)."""
+    return math.pi * (drill + plating) * plating
 
 
 def _rings(ps, T):
@@ -145,8 +147,9 @@ def _text_box(x, y, text, size=13):
 def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
     """One board's window on one layer, as SVG elements in px with the window's top-left corner at the origin.
 
-    Returns {"svg": [...], "vias": [(x, y, size, drill, net, in_paste)], "pads": {net: {ref: {numbers}}},
-    "nets": {nets with copper in the window}, "thickness": mm}; positions in mm."""
+    Returns {"svg": [...], "vias": [(x, y, size, drill, net, in_paste, through)], "pads": {net: {ref: {numbers}}},
+    "nets": {nets with copper in the window}, "thickness": mm}; positions in mm. A pad counts for "pads" and "nets"
+    when any of its copper is inside the window."""
     T, F = pcbnew.ToMM, pcbnew.FromMM
     x0, y0, x1, y1 = win
     X = lambda v: (v - x0) * scale  # noqa: E731
@@ -195,7 +198,8 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             p = t.GetPosition()
             x, y, d = T(p.x), T(p.y), T(t.GetWidth(layer))
             if t.IsOnLayer(layer) and x0 - d < x < x1 + d and y0 - d < y < y1 + d:
-                via_list.append([x, y, d, T(t.GetDrillValue()), t.GetNetname(), False])
+                via_list.append([x, y, d, T(t.GetDrillValue()), t.GetNetname(), False,
+                                 t.GetViaType() == pcbnew.VIATYPE_THROUGH])
                 nets.add(t.GetNetname())
         elif t.GetLayer() == layer and overlaps(t.GetBoundingBox()):
             nets.add(t.GetNetname())
@@ -228,7 +232,13 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             net, polys = p.GetNetname(), shape(p, layer) if on_cu else []
             pc = p.GetPosition()
             px, py = T(pc.x), T(pc.y)
-            if polys and x0 < px < x1 and y0 < py < y1:
+            seen = None                 # the part of the pad's copper inside the window, as a box
+            if polys:
+                xs = [x for o, _ in polys for x, _ in o]
+                ys = [y for o, _ in polys for _, y in o]
+                seen = (max(min(xs), x0), max(min(ys), y0), min(max(xs), x1), min(max(ys), y1))
+                seen = seen if seen[0] < seen[2] and seen[1] < seen[3] else None
+            if seen:
                 nets.add(net)
                 pad_nets.setdefault(net, {}).setdefault(fp.GetReference(), set()).add(p.GetNumber())
             look = 'stroke="#333" fill-opacity="0.9"' if detail else 'stroke="black"'
@@ -250,10 +260,8 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
                     s = p.GetSize(layer)
                     q.SetSize(layer, pcbnew.VECTOR2I(s.x + 2 * m.x, s.y + 2 * m.y))
                     aperture(shape(q, layer), "paste")
-            if polys and colour(net) != OTHER and x0 < px < x1 and y0 < py < y1:
-                xs = [x for o, _ in polys for x, _ in o]
-                ys = [y for o, _ in polys for _, y in o]
-                number_at.append((p.GetNumber(), min(xs), min(ys), max(xs), max(ys)))
+            if seen and colour(net) != OTHER:
+                number_at.append((p.GetNumber(), *seen))
         if detail:
             for g in fp.GraphicalItems():
                 if g.GetLayer() in (mask_layer, paste_layer):
@@ -272,7 +280,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
                 aperture(shape(g, g.GetLayer()), "mask" if g.GetLayer() == mask_layer else "paste")
 
     for v in via_list:
-        x, y, d, drill, net, _ = v
+        x, y, d, drill, net = v[:5]
         v[5] = bool(detail) and circle_hits(x, y, drill / 2, paste_polys)
         thick = 1.6 if detail else 1
         vias.append(f'<circle cx="{X(x):.2f}" cy="{Y(y):.2f}" r="{d / 2 * scale:.2f}" fill="{colour(net)}" '
@@ -371,13 +379,15 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
         inside = [v for v in view["vias"] if x0 < v[0] < x1 and y0 < v[1] < y1]
         lines = [f"holes under paste: {sum(1 for v in inside if v[5])}"] if paste else []
         for key in metrics:
-            vs = [v for v in inside if v[4] == key or v[4].split("/")[-1] == key]
+            on_net = [v for v in inside if v[4] == key or v[4].split("/")[-1] == key]
+            vs = [v for v in on_net if v[6]]          # blind and micro vias span part of the board: not counted
+            other = f", {len(on_net) - len(vs)} blind/micro not counted" if len(vs) < len(on_net) else ""
             if not vs:
-                lines.append(f"{key}: no vias")
+                lines.append(f"{key}: no {'through ' if other else ''}vias{other}")
                 continue
             ohms = 1 / sum(1 / via_ohms(v[3], view["thickness"]) for v in vs)
             lines.append(f"{key}: {len(vs)} vias, wall {sum(wall_area(v[3]) for v in vs):.3f} mm², "
-                         f"{ohms * 1000:.2f} mΩ")
+                         f"{ohms * 1000:.2f} mΩ{other}")
         return lines
 
     panels = [("ref", path, title) for path, title in refs] + [("board", v, t) for v, (_p, t) in zip(views, boards)]
@@ -440,8 +450,8 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
     if metrics:
         thick = views[0]["thickness"] if views else 1.6
         foot.append(f"Vias counted with their centres in the window. Wall = copper cross-section of their barrels "
-                    f"at {PLATING * 1000:.0f} µm plating; mΩ = a net's vias in parallel through the "
-                    f"{thick:g} mm board.")
+                    f"at {PLATING * 1000:.0f} µm plating outside the finished hole; mΩ = a net's through vias in "
+                    f"parallel through the {thick:g} mm board.")
     if note:
         foot.append(note)
     lines = _wrap(" ".join(foot), int((W - 2 * M) / 6.0))

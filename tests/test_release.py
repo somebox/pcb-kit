@@ -22,7 +22,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from pcbkit import kicad, tomlw  # noqa: E402
+from pcbkit import kicad, sexp, tomlw  # noqa: E402
 from pcbkit.release import freeze  # noqa: E402
 from pcbkit.release import versions as V  # noqa: E402
 
@@ -205,6 +205,12 @@ class Rewrite(unittest.TestCase):
                          '(model "${KIPRJMOD}/../../../../lib/3d/r.step")\n'
                          '(model "${KIPRJMOD}/../../../../boards/demo/models/c.step")\n'
                          '(model "${KICAD10_3DMODEL_DIR}/R.3dshapes/R.step")\n(model "/abs/x.step")')
+        # a folder name with a quote in it is escaped, and an escaped one read as one string
+        src_q = '/p/boards/de"mo'
+        out = freeze._rewrite('(model "models/c.step")\n(model "${KIPRJMOD}/sub\\"dir/m.step")', src_q, dst, True)
+        self.assertEqual(out, '(model "${KIPRJMOD}/../../../../boards/de\\"mo/models/c.step")\n'
+                              '(model "${KIPRJMOD}/../../../../boards/de\\"mo/sub\\"dir/m.step")')
+        self.assertEqual(sexp.parse("(x " + out + ")")[1][1], '${KIPRJMOD}/../../../../boards/de"mo/models/c.step')
         # only a board's 3-D models take a bare relative path as the project's
         self.assertIn('(model "models/c.step")', freeze._rewrite(text, src, dst, False))
 
@@ -284,6 +290,23 @@ class Sheets(unittest.TestCase):
         self.assertIn("outside/io-5.kicad_sch", written)
         self.assertIn('(property "Sheetfile" "outside/io-5.kicad_sch"', read(k, "demo.kicad_sch"))
         self.assertEqual(lost, [])
+
+    def test_a_sheet_with_a_quote_in_its_name(self):
+        shared = os.path.join(self.tmp.name, "p", "boards", "shared")
+        write(os.path.join(shared, 'q"t.kicad_sch'), schematic(uid(8), at="/"))
+        root = read(self.board, "demo.kicad_sch").replace('"../shared/io.kicad_sch"', '"../shared/q\\"t.kicad_sch"')
+        write(os.path.join(self.board, "demo.kicad_sch"), root)
+        k = os.path.join(self.tmp.name, "kicad")
+        written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
+        self.assertIn('outside/q"t.kicad_sch', written)
+        self.assertIn('(property "Sheetfile" "outside/q\\"t.kicad_sch"', read(k, "demo.kicad_sch"))
+        self.assertEqual(lost, [])
+        pdf = os.path.join(self.tmp.name, "q.pdf")
+        r = subprocess.run([kicad.KICAD_CLI, "sch", "export", "pdf", "-o", pdf, os.path.join(k, "demo.kicad_sch")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(pdf, "rb") as fh:
+            self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 5)    # q"t has no leaf sheet
 
     def test_a_missing_sheet_is_reported(self):
         os.remove(os.path.join(self.board, "sheets", "power.kicad_sch"))

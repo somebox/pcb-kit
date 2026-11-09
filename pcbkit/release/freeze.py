@@ -18,11 +18,21 @@ import re
 import shutil
 
 LIB_TABLES = ("fp-lib-table", "sym-lib-table", "design-block-lib-table")
-PRJ = re.compile(r'"(?:\$\{KIPRJMOD\}|\$\(KIPRJMOD\))([/\\][^"]*)"')
+PRJ = re.compile(r'"(?:\$\{KIPRJMOD\}|\$\(KIPRJMOD\))((?:[^"\\]|\\.)*)"')
 MODEL = re.compile(r'(\(model ")((?:[^"\\]|\\.)*)(")')
 URI = re.compile(r'\(uri "((?:[^"\\]|\\.)*)"\)')
 VAR = re.compile(r"^\$[{(]([A-Za-z0-9_]+)[})]")
 SHEETFILE = re.compile(r'\(property "Sheet ?file" "((?:[^"\\]|\\.)*)"')
+
+
+def _unq(s):
+    """A quoted string's text as written in a KiCad file (S-expression or the .kicad_pro's JSON): \\" and \\\\ undone."""
+    return re.sub(r"\\(.)", r"\1", s)
+
+
+def _q(s):
+    """The text to write between quotes: \\ and " escaped, as both KiCad's S-expressions and JSON read them."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _read(path):
@@ -55,7 +65,7 @@ def sheets(root_sch):
         p = todo.pop(0)
         here = names[place[p]] = {}
         for name in SHEETFILE.findall(_read(p)):
-            q = next((x for x in (os.path.normpath(os.path.join(d, _expand(name, base)))
+            q = next((x for x in (os.path.normpath(os.path.join(d, _expand(_unq(name), base)))
                                   for d in (os.path.dirname(p), base)) if os.path.isfile(x)), "")
             if not q:
                 missing.append((place[p], name))
@@ -80,30 +90,39 @@ def _sheetfiles(text, here, names, copied):
     folder = os.path.dirname(here)
 
     def found(name):
-        return next((r for r in (os.path.normpath(os.path.join(d, name.replace("\\", "/"))) for d in (folder, ""))
-                     if r in copied), None)
+        return next((r for r in (os.path.normpath(os.path.join(d, _unq(name).replace("\\", "/")))
+                                 for d in (folder, "")) if r in copied), None)
 
     def fix(m):
         name = m.group(1)
         target = names.get(name)
         if target is None or found(name) == os.path.normpath(target):
             return m.group(0)
-        new = os.path.relpath(target, folder or ".").replace(os.sep, "/")
+        new = _q(os.path.relpath(target, folder or ".").replace(os.sep, "/"))
         return m.group(0)[:m.start(1) - m.start(0)] + new + '"'
     return SHEETFILE.sub(fix, text)
 
 
 def _rewrite(text, src, dst, model_paths):
     """The text with every path relative to the project folder src made relative to dst, as ${KIPRJMOD}/...; with
-    model_paths, a 3-D model's bare relative path too (KiCad looks for it in the project folder first)."""
+    model_paths, a 3-D model's bare relative path too (KiCad looks for it in the project folder first). Strings are
+    unescaped before and escaped after, so a folder name with a quote in it stays one string."""
     def to_dst(rel):
-        return "${KIPRJMOD}/" + os.path.relpath(os.path.normpath(os.path.join(src, rel.lstrip("/\\"))),
-                                                dst).replace(os.sep, "/")
-    text = PRJ.sub(lambda m: '"' + to_dst(m.group(1)) + '"', text)
+        return _q("${KIPRJMOD}/" + os.path.relpath(os.path.normpath(os.path.join(src, rel.lstrip("/\\"))),
+                                                   dst).replace(os.sep, "/"))
+
+    def prj(m):
+        rel = _unq(m.group(1))
+        return '"' + to_dst(rel) + '"' if rel[:1] in ("/", "\\") else m.group(0)
+
+    def model(m):
+        path = _unq(m.group(2))
+        if path and not os.path.isabs(path) and not path.startswith(("$", "kicad-embed://")):
+            return m.group(1) + to_dst(path) + m.group(3)
+        return m.group(0)
+    text = PRJ.sub(prj, text)
     if model_paths:
-        text = MODEL.sub(lambda m: m.group(1) + (to_dst(m.group(2)) if m.group(2) and not os.path.isabs(m.group(2))
-                                                 and not m.group(2).startswith(("$", "kicad-embed://"))
-                                                 else m.group(2)) + m.group(3), text)
+        text = MODEL.sub(model, text)
     return text
 
 
@@ -135,7 +154,7 @@ def unresolved(dst):
             paths = URI.findall(_read(p))
         else:
             continue
-        for path in sorted(set(paths)):
+        for path in sorted({_unq(x) for x in paths}):
             target, why = _resolve(path, dst)
             if why:
                 out.append((f, path, why))

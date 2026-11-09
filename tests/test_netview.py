@@ -141,6 +141,26 @@ class Detail(unittest.TestCase):
         found = {(round(v[0], 2), round(v[1], 2)): v[5] for v in self.draw()["vias"]}
         self.assertEqual(found, {(-1.5, 0.3): True, (-2.2, 0.3): False, (0.5, -0.5): True, (1.5, 0.5): False})
 
+    def test_a_paste_zone_counts_as_paste(self):
+        """A stencil opening drawn as a zone on F.Paste, on the board and in a footprint: vias under it are in paste."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        self.pad(fp, "1", 0, 0, 4.0, 4.0, (pcbnew.F_Cu, pcbnew.F_Mask), "GND")
+        for owner, (xa, xb) in ((self.board, (-1.8, -0.2)), (fp, (0.2, 1.8))):
+            z = pcbnew.ZONE(owner)
+            z.SetLayer(pcbnew.F_Paste)
+            z.Outline().NewOutline()
+            for x, y in ((xa, -1), (xb, -1), (xb, 1), (xa, 1)):
+                z.Outline().Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+            owner.Add(z)
+        self.via(-1.0, 0, "GND")         # under the board's zone
+        self.via(1.0, 0, "GND")          # under the footprint's zone
+        self.via(0, 1.6, "GND")          # in the pad, between and below the zones
+        found = {(round(v[0], 2), round(v[1], 2)): v[5] for v in self.draw()["vias"]}
+        self.assertEqual(found, {(-1.0, 0.0): True, (1.0, 0.0): True, (0.0, 1.6): False})
+
     def test_a_custom_pads_paste_shrinks_with_its_margin_ratio(self):
         """A 2 x 0.5 mm custom pad on a 0.4 x 0.2 mm anchor at -50 % paste: margins -0.2 and -0.1 mm, and KiCad's
         plotter grows the whole shape by the first, to 1.6 x 0.1 mm. Resizing the anchor alone left it 2 x 0.5."""

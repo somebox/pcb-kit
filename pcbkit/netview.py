@@ -194,7 +194,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
     for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
         window.Append(F(x), F(y))
     zones, tracks, pads, masks, pastes, vias, labels, courts, refs, edges = ([] for _ in range(10))
-    nets, pad_nets, via_list, paste_polys, number_at, drills = set(), {}, [], [], [], []
+    nets, pad_nets, via_list, paste_polys, number_at, drills, tech_zones = set(), {}, [], [], [], [], []
 
     for z in b.Zones():
         if z.GetIsRuleArea() or not z.IsOnLayer(layer) or not z.HasFilledPolysForLayer(layer):
@@ -285,6 +285,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             for g in fp.GraphicalItems():
                 if g.GetLayer() in (mask_layer, paste_layer):
                     aperture(shape(g, g.GetLayer()), "mask" if g.GetLayer() == mask_layer else "paste")
+            tech_zones.extend(fp.Zones())
         elif (layer == pcbnew.B_Cu) == fp.IsFlipped():
             fp.BuildCourtyardCaches()
             for d in paths(_rings(fp.GetCourtyard(pcbnew.B_CrtYd if fp.IsFlipped() else pcbnew.F_CrtYd), T)):
@@ -297,6 +298,15 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
         for g in b.GetDrawings():
             if g.GetLayer() in (mask_layer, paste_layer) and overlaps(g.GetBoundingBox()):
                 aperture(shape(g, g.GetLayer()), "mask" if g.GetLayer() == mask_layer else "paste")
+        for z in list(b.Zones()) + tech_zones:          # a stencil or mask opening drawn as a zone on that layer
+            if z.GetIsRuleArea() or not overlaps(z.GetBoundingBox()):
+                continue
+            for lyr, kind in ((mask_layer, "mask"), (paste_layer, "paste")):
+                if z.IsOnLayer(lyr):
+                    ps = pcbnew.SHAPE_POLY_SET(z.GetFilledPolysList(lyr)) if z.HasFilledPolysForLayer(lyr) else None
+                    ps = ps if ps is not None and ps.OutlineCount() else pcbnew.SHAPE_POLY_SET(z.Outline())
+                    ps.BooleanIntersection(clip)
+                    aperture(_rings(ps, T), kind)
 
     for v in via_list:
         x, y, d, drill, net = v[:5]

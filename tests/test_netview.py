@@ -198,6 +198,46 @@ class Detail(unittest.TestCase):
         self.assertFalse(any("font-weight=\"bold\"" in e for e in view["svg"]))
         self.assertEqual(view["pads"], {"VOUT": {"U1": {"7"}}})       # still listed in the legend
 
+    def label_centres(self, svg):
+        """Each pad number's box centre, mm (draw() at 100 px/mm, the window's corner at WINDOW[0], WINDOW[1])."""
+        boxes = [re.match(r'<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)"', e)
+                 for e in svg if "font-weight=\"bold\"" in e]
+        return [((float(x) + float(w) / 2) / 100 + WINDOW[0], (float(y) + float(h) / 2) / 100 + WINDOW[1])
+                for x, y, w, h in (m.groups() for m in boxes)]
+
+    def test_a_pad_number_keeps_off_a_through_hole_pads_drill(self):
+        """A 1.6 x 0.6 mm pad drilled 0.3 mm at its middle: the number goes beside the drill, not on it."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("J1")
+        self.board.Add(fp)
+        p = self.pad(fp, "1", 0, 0, 1.6, 0.6, (pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.F_Mask), "VOUT")
+        p.SetAttribute(pcbnew.PAD_ATTRIB_PTH)
+        p.SetDrillSize(self.mm(0.3, 0.3))
+        (x, y), = self.label_centres(self.draw()["svg"])
+        hw, hh = (0.62 * 13 + 6) / 2 / 100, 8.5 / 100
+        self.assertGreater(math.hypot(max(abs(x) - hw, 0), max(abs(y) - hh, 0)), 0.15)
+
+    def test_a_pad_number_sits_on_its_own_copper(self):
+        """An L-shaped pad's box is centred over the notch, where a neighbour sits: the number goes on the L."""
+        pcbnew = self.pcbnew
+        fp = pcbnew.FOOTPRINT(self.board)
+        fp.SetReference("U1")
+        self.board.Add(fp)
+        p = self.pad(fp, "1", 0, 0, 0.3, 0.3, (pcbnew.F_Cu,), "VOUT")
+        p.SetShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_CUSTOM)
+        p.SetAnchorPadShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECTANGLE)
+        ell = pcbnew.SHAPE_POLY_SET()
+        ell.NewOutline()
+        for x, y in ((0, 0), (2, 0), (2, 0.4), (0.4, 0.4), (0.4, 2), (0, 2)):
+            ell.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+        p.AddPrimitivePoly(pcbnew.F_Cu, ell, 0, True)
+        self.pad(fp, "2", 1.2, 1.2, 1.0, 1.0, (pcbnew.F_Cu,), "GND")    # in the notch
+        centres = self.label_centres(self.draw()["svg"])
+        self.assertEqual(len(centres), 2)
+        on_l = [(x, y) for x, y in centres if (x < 0.4 or y < 0.4) and -0.15 < min(x, y)]
+        self.assertEqual(len(on_l), 1, centres)
+
     def test_a_round_pad_whose_box_alone_reaches_the_window_is_left_out(self):
         """A 2 mm round pad at (1, 1): its box covers the window's corner at (0.1, 0.1), its copper doesn't."""
         pcbnew = self.pcbnew
@@ -380,6 +420,22 @@ class Detail(unittest.TestCase):
                 lines = re.findall(r">([^<>]*: [^<>]*)<", fh.read())
         one = f"1 vias, wall {netview.wall_area(0.2):.3f} mm², {netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ"
         self.assertEqual(lines, [f"/a/VOUT: {one}", f"/b/VOUT: {one}", f"GND: {one}", f"/a/VOUT: {one}"])
+
+    def test_a_metrics_name_means_the_same_net_in_every_panel(self):
+        """One board has a via on /a/VOUT, the other on /b/VOUT: neither panel may call its net plain VOUT."""
+        v = self.via(-2.2, 0.3, "/a/VOUT")
+        with tempfile.TemporaryDirectory() as d:
+            boards = []
+            for name in ("a", "b"):
+                v.SetNet(self.net(f"/{name}/VOUT"))
+                boards.append((os.path.join(d, name + ".kicad_pcb"), name))
+                kicad.save_board(self.board, boards[-1][0])
+            out = os.path.join(d, "sheet.svg")
+            netview.sheet(boards, out, *WINDOW, layer_name="F.Cu", metrics=["VOUT"])
+            with open(out, encoding="utf-8") as fh:
+                lines = re.findall(r">([^<>]*: [^<>]*)<", fh.read())
+        one = f"1 vias, wall {netview.wall_area(0.2):.3f} mm², {netview.via_ohms(0.2, 1.6) * 1000:.2f} mΩ"
+        self.assertEqual(lines, [f"/a/VOUT: {one}", "/b/VOUT: no vias", "/a/VOUT: no vias", f"/b/VOUT: {one}"])
 
     def test_legend_names_nets_sharing_a_last_part_in_full(self):
         """Coloured apart by their full names, /a/VOUT and /b/VOUT are two legend entries told apart; GND is alone."""

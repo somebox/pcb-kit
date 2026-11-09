@@ -194,7 +194,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
     for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
         window.Append(F(x), F(y))
     zones, tracks, pads, masks, pastes, vias, labels, courts, refs, edges = ([] for _ in range(10))
-    nets, pad_nets, via_list, paste_polys, number_at = set(), {}, [], [], []
+    nets, pad_nets, via_list, paste_polys, number_at, drills = set(), {}, [], [], [], []
 
     for z in b.Zones():
         if z.GetIsRuleArea() or not z.IsOnLayer(layer) or not z.HasFilledPolysForLayer(layer):
@@ -263,6 +263,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
             for d in paths(polys):
                 pads.append(f'<path d="{d}" fill="{colour(net)}" {look} stroke-width="0.6"/>')
             if on_cu and p.GetDrillSize().x > 0:
+                drills.append((px, py, T(max(p.GetDrillSize().x, p.GetDrillSize().y)) / 2))
                 pads.append(f'<circle cx="{X(px):.2f}" cy="{Y(py):.2f}" r="{T(p.GetDrillSize().x) / 2 * scale:.2f}" '
                             f'fill="white" stroke="black"/>')
             if not detail:
@@ -279,7 +280,7 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
                     q.SetSize(layer, pcbnew.VECTOR2I(s.x + 2 * m.x, s.y + 2 * m.y))
                     aperture(shape(q, layer), "paste")
             if seen and colour(net) != OTHER:
-                number_at.append((p.GetNumber(), *seen))
+                number_at.append((p.GetNumber(), *seen, inner))
         if detail:
             for g in fp.GraphicalItems():
                 if g.GetLayer() in (mask_layer, paste_layer):
@@ -308,7 +309,8 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
         vias.append(f'<circle cx="{X(x):.2f}" cy="{Y(y):.2f}" r="{drill / 2 * scale:.2f}" fill="white"{ring}/>')
 
     half = 9.5 / scale                                  # half a label's height, mm
-    for number, bx0, by0, bx1, by1 in number_at:
+    holes = [(v[0], v[1], v[3] / 2) for v in via_list] + drills
+    for number, bx0, by0, bx1, by1, copper in number_at:
         cx, cy, w, h = (bx0 + bx1) / 2, (by0 + by1) / 2, bx1 - bx0, by1 - by0
         spots = [(cx, cy)]
         for k in (1, 2, 3, 4):                          # off the pad's vias, nearest its middle first
@@ -317,10 +319,12 @@ def draw(pcbnew, b, layer_name, win, colour, scale, detail=False):
                 spots += [(cx + s * 0.1 * k * ax * w, cy + s * 0.1 * k * ay * h) for s in (1, -1)]
         room = lambda s: min([math.hypot(s[0] - v[0], s[1] - v[1]) - v[2] / 2 for v in via_list] or [9.0])  # noqa: E731
         hw, hh = (0.62 * 13 * len(number) + 6) / 2 / scale, 8.5 / scale     # the label's box, as _text_box draws it
-        clear = [s for s in spots if all(math.hypot(max(abs(s[0] - v[0]) - hw, 0), max(abs(s[1] - v[1]) - hh, 0))
-                                         > v[3] / 2 for v in via_list)]
-        if not clear:                                   # every spot hides a via hole, maybe one ringed red: the
-            continue                                    # legend lists the pad
+        on_pad = [s for s in spots if any(_inside(s[0], s[1], o) and not any(_inside(s[0], s[1], g) for g in gaps)
+                                          for o, gaps in copper)]      # on this pad's copper, not a neighbour's
+        clear = [s for s in on_pad if all(math.hypot(max(abs(s[0] - x) - hw, 0), max(abs(s[1] - y) - hh, 0)) > r
+                                          for x, y, r in holes)]
+        if not clear:                                   # every spot hides a hole (a via's, maybe ringed red, or a
+            continue                                    # pad's drill): the legend lists the pad
         spot = next((s for s in clear if room(s) > half), max(clear, key=room))
         labels.append(_text_box(X(spot[0]), Y(spot[1]), number))
 
@@ -406,22 +410,26 @@ def sheet(boards, out, x0, y0, x1, y1, layer_name="B.Cu", colours=None, detail=F
         views.append(draw(pcbnew, _load(pcbnew, path, fill), layer_name, (x0, y0, x1, y1), colour, scale, detail))
     paste = any(v["detail"] for v in views)            # an outer layer, whatever the board calls it
 
+    def in_window(view):
+        return [v for v in view["vias"] if x0 < v[0] < x1 and y0 < v[1] < y1]
+
+    names = {}                  # what each --metrics name means, the same in every panel
+    for key in metrics:
+        found = {v[4] for view in views for v in in_window(view) if v[4] == key or v[4].split("/")[-1] == key}
+        names[key] = [key] if key in found or not found else sorted(found)  # the full name asked for, if any
+
     def numbers(view):
-        inside = [v for v in view["vias"] if x0 < v[0] < x1 and y0 < v[1] < y1]
+        inside = in_window(view)
         lines = [f"holes under paste: {sum(1 for v in inside if v[5])}"] if paste else []
         for key in metrics:
-            groups = {}
-            for v in inside:
-                if v[4] == key or v[4].split("/")[-1] == key:
-                    groups.setdefault(v[4], []).append(v)
-            if key in groups:                         # the full name asked for, not others ending in it
-                groups = {key: groups[key]}
-            if not groups:
-                lines.append(f"{key}: no vias")
-            for name, on_net in sorted(groups.items()):   # nets sharing a last name part are not in parallel
-                label = key if len(groups) == 1 else name
+            for name in names[key]:                   # nets sharing a last name part are not in parallel
+                label = key if len(names[key]) == 1 else name
+                on_net = [v for v in inside if v[4] == name]
                 vs = [v for v in on_net if v[6]]      # blind and micro vias span part of the board: not counted
                 other = f", {len(on_net) - len(vs)} blind/micro not counted" if len(vs) < len(on_net) else ""
+                if not on_net:
+                    lines.append(f"{label}: no vias")
+                    continue
                 if not vs:
                     lines.append(f"{label}: no through vias{other}")
                     continue

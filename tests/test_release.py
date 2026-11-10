@@ -73,6 +73,10 @@ class CircuitChanges(unittest.TestCase):
         new = self.changed(nets={"X": [["R3", "1"], ["U2", "5"]]})
         self.assertEqual(V.circuit_changes(self.old, new), ["net X gains U2.5 and loses U2.4"])
 
+    def test_a_net_with_every_pin_replaced_is_said_once(self):
+        new = self.changed(nets={"VIN": [["R3", "2"], ["U2", "3"]]})
+        self.assertEqual(V.circuit_changes(self.old, new), ["net VIN gains R3.2, U2.3 and loses R1.1, U2.1"])
+
     def test_a_net_down_to_one_pin(self):
         new = self.changed(nets={"VIN": [["R1", "1"], ["U2", "1"], ["R3", "1"]], "X": [["U2", "4"]]})
         self.assertEqual(V.circuit_changes(self.old, new), ["net VIN gains R3.1", "net X loses R3.1"])

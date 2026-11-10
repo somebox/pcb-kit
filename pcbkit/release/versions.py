@@ -315,9 +315,10 @@ def circuit_changes(old, new):
     was, now = _connections(old), _connections(new)
     gone = [(n, s) for n, s in was if s not in {s for _, s in now}]
     came = [(n, s) for n, s in now if s not in {s for _, s in was}]
-    # each net that changed is matched with the old net it shares most pins with (the same name first, on a tie)
+    # each net that changed is matched with the old net it shares most pins with (the same name first, on a tie), or
+    # failing that with the old net of its name, even with every pin replaced: one change, said once
     pairs = sorted(((len(s & t), n == m, i, j) for i, (n, s) in enumerate(came) for j, (m, t) in enumerate(gone)
-                    if s & t), reverse=True)
+                    if s & t or n == m), reverse=True)
     matched, used = {}, set()
     for _, _, i, j in pairs:
         if i not in matched and j not in used:

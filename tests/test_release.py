@@ -312,6 +312,27 @@ class Sheets(unittest.TestCase):
         with open(pdf, "rb") as fh:
             self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 5)    # q"t has no leaf sheet
 
+    def test_a_variable_in_the_middle_of_a_sheet_path(self):
+        """KiCad expands ${VAR} anywhere in a Sheetfile; the copy names the copied sheet and needs no variable."""
+        root = read(self.board, "demo.kicad_sch").replace('"${KIPRJMOD}/sheets/kp.kicad_sch"',
+                                                          '"${KIPRJMOD}/sheets/${PCBKIT_TEST_SHEET}.kicad_sch"')
+        write(os.path.join(self.board, "demo.kicad_sch"), root)
+        k = os.path.join(self.tmp.name, "kicad")
+        with mock.patch.dict(os.environ, {"PCBKIT_TEST_SHEET": "kp"}):
+            written, lost = freeze.freeze(os.path.join(self.board, "demo.kicad_pcb"), k)
+        self.assertIn("sheets/kp.kicad_sch", written)
+        self.assertEqual(lost, [])
+        self.assertIn('(property "Sheetfile" "sheets/kp.kicad_sch"', read(k, "demo.kicad_sch"))
+        self.assertNotIn("PCBKIT_TEST_SHEET", read(k, "demo.kicad_sch"))
+        # without the variable, and with the working project gone, the copy still draws all six sheets
+        os.rename(os.path.join(self.tmp.name, "p"), os.path.join(self.tmp.name, "gone"))
+        pdf = os.path.join(self.tmp.name, "v.pdf")
+        r = subprocess.run([kicad.KICAD_CLI, "sch", "export", "pdf", "-o", pdf, os.path.join(k, "demo.kicad_sch")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(pdf, "rb") as fh:
+            self.assertEqual(len(re.findall(rb"/Type\s*/Page[^s]", fh.read())), 6)
+
     def test_the_project_files_paths_are_json(self):
         """The .kicad_pro is JSON: a path written as caf\\u00e9 is café, and comes back out as a string JSON reads."""
         doc = 'docs/café "draft".pdf'

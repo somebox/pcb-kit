@@ -23,6 +23,7 @@ PRJ = re.compile(r'"(?:\$\{KIPRJMOD\}|\$\(KIPRJMOD\))((?:[^"\\]|\\.)*)"')
 MODEL = re.compile(r'(\(model ")((?:[^"\\]|\\.)*)(")')
 URI = re.compile(r'\(uri "((?:[^"\\]|\\.)*)"\)')
 VAR = re.compile(r"^\$[{(]([A-Za-z0-9_]+)[})]")
+VARS = re.compile(r"\$[{(]([A-Za-z0-9_]+)[})]")
 SHEETFILE = re.compile(r'\(property "Sheet ?file" "((?:[^"\\]|\\.)*)"')
 
 
@@ -55,14 +56,13 @@ def _read(path):
 
 
 def _expand(name, base):
-    """A Sheetfile with its leading variable expanded as KiCad does: ${KIPRJMOD} (or $(KIPRJMOD)) is the project's
-    folder, another variable its value here; one not set stays as written, and isn't found."""
-    name = name.replace("\\", "/")
-    m = VAR.match(name)
-    if not m:
-        return name
-    value = base if m.group(1) == "KIPRJMOD" else os.environ.get(m.group(1))
-    return name if value is None else value + "/" + name[m.end():].lstrip("/")
+    """A Sheetfile with its variables expanded as KiCad does, wherever they are in it (kicad-cli finds
+    ${KIPRJMOD}/sub/${PART}.kicad_sch): ${KIPRJMOD} (or $(KIPRJMOD)) is the project's folder, another variable its
+    value here; one not set stays as written, so the sheet isn't found and MANIFEST.txt says so."""
+    def value(m):
+        v = base if m.group(1) == "KIPRJMOD" else os.environ.get(m.group(1))
+        return m.group(0) if v is None else v
+    return VARS.sub(value, name.replace("\\", "/"))
 
 
 def sheets(root_sch):

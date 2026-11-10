@@ -125,6 +125,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   before keep their fingerprints.
 
 ### Changed
+- **More JLC rotations from the preview (2026-11-08).** KiCad's `WSON-6-1EP_2x2mm_P0.65mm` gets 270 and
+  `SOT-583-8` 180: neither had a rule, and the preview put a TVS diode's pin 1 a quarter turn off (it would have
+  shorted VBUS) and a buck converter's half a turn. The 6.3x7.7 mm polymer capacitor C46550459 gets 0 in place of
+  the `CP_Elec_6.3x7.7` rule's 180, which put its + on the - pad. VSON-8, TDSON-8-1, SOT-23-6 (with C7843 and
+  C55266), SSOP and TSSOP were right and are dated 2026-11-08. The placement checklist now says the preview's hover
+  reading counts from the drill/place origin with Y up, as checked on that quote, and drops its advice to subtract
+  the outline's corner.
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
   every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
   270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W

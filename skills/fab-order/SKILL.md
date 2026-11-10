@@ -95,15 +95,15 @@ has the fee table.
      looked right.
    - Hovering in the 2D view shows board coordinates. Compare the reading over pad 1 with *Pad 1 at* and the
      reading over the body with *Centre*. Centre right and pad 1 elsewhere is a wrong rotation; both shifted is an
-     offset. The checklist counts in mm from the drill/place origin with Y up. If the viewer counts from the board
-     outline's lower-left corner instead, subtract the corner the checklist gives.
-   - Which of those two frames the viewer uses has not been confirmed on a live order yet. Note the first reading
-     and which frame it matched in PRODUCTION.md, and tell the user, so the kit's checklist can say it.
+     offset. The checklist and the viewer both count in mm from the drill/place origin with Y up (confirmed on a
+     live quote, 2026-11-08). A reading off by the outline's lower-left corner would mean JLC changed its viewer:
+     tell the user.
    - Parts JLC has no model or footprint for show only their pads. JLC's engineers place them by hand.
    - Fix a wrong part in the viewer for this order ("Rotate Right" is a quarter turn, -90 on either side). Then fix
      its rule in the kit's `pcbkit/data/jlc/corrections.csv`, so the next fab comes out right. When others in the
      same package were right, a row keyed by the part's LCSC number stands in for its package rule for that part
-     alone; it does nothing for a footprint no rule matches (the checklist's *Rule* column shows which matched).
+     alone; it does nothing for a footprint no rule matches (the checklist's *Rule* column shows which matched), so
+     a part with no rule gets a rule for its KiCad footprint instead.
      Write the hand fix and its cart number into PRODUCTION.md.
    - Put the order's date in the Checked column of each rule the viewer showed right, the **never** ones above all.
      The column changes no board's fab fingerprint, so no release is needed for it.
@@ -112,6 +112,10 @@ has the fee table.
 What the viewer caught on 2026-10-26: SOT-23 and SOT-23-5 a quarter turn out (one rule matched both packages), the
 HRO TYPE-C-31-M-12 USB-C 180°, and 1.27 mm sockets a quarter turn (EasyEDA draws the footprint along X, KiCad along Y).
 Those rules, and the ones the viewer showed right that day, are dated 2026-10-26 in the Checked column.
+
+On 2026-11-08: a WSON-6 TVS a quarter turn out and a SOT-583-8 buck half a turn (neither package had a rule), and a
+polymer capacitor (C46550459) half a turn, its + on the - pad: the CP_Elec rule's 180 was wrong for that part. The
+new rules, and the ones the viewer showed right that day, are dated 2026-11-08.
 
 ## Parts for hand assembly (LCSC)
 

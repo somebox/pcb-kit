@@ -19,9 +19,9 @@ compared with pad 1's position. The checklist lists those parts and the numbers 
 - Positions are in mm from the drill/place (aux) origin, Y up: the frame of the Gerbers (kicad-cli plots them from
   that origin with --use-drill-file-origin, Y up as Gerber has it) and of the CPL, which JLC matches to the Gerbers.
   Bottom parts are in it as seen from the top, as in the CPL and the B.Cu Gerber; on the boards it was tried on,
-  every pad 1 lands on its pad in the copper Gerber of its side. That the preview's hover reading counts from the
-  same origin has not been checked against a live quote: the outline's corners are given in the same frame, so a
-  viewer that counts from the outline's lower-left corner reads every position less that corner.
+  every pad 1 lands on its pad in the copper Gerber of its side. The preview's hover reading counts from the same
+  origin, Y up: on a live quote (2026-11-08) a part's centre read within 0.07 mm of the checklist, on a board whose
+  origin is not at the outline's corner. The outline's corners are given in the same frame.
 """
 import os
 import re
@@ -196,9 +196,9 @@ def write(board, placed, placement, out, name):
              "- the pink pin-1 dot sits on pad 1, by the silkscreen's pin-1 or cathode mark;",
              "- in the 2D view, the hover reading over pad 1 matches *Pad 1 at* below.", "",
              "Positions are in mm from the board's drill/place origin with Y up: the frame of the Gerbers and the CPL, "
-             "the one JLC places parts in. Bottom parts are in it as seen from the top, as in the CPL."
-             + (" The board outline runs from ({}) to ({}); if the preview reads (0, 0) at the outline's lower-left "
-                "corner, subtract that corner from every position here.".format(*(f2(at(v)) for v in corners))
+             "the one JLC places parts in, and the one its preview's hover reading counts in. Bottom parts are in it "
+             "as seen from the top, as in the CPL."
+             + (" The board outline runs from ({}) to ({}).".format(*(f2(at(v)) for v in corners))
                 if corners else "")
              + " KiCad's status bar shows the same numbers with Preferences, PCB Editor, Origins & Axes set to the "
              "drill/place file origin and the Y axis increasing up.", "",

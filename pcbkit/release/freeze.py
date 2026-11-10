@@ -22,7 +22,6 @@ LIB_TABLES = ("fp-lib-table", "sym-lib-table", "design-block-lib-table")
 PRJ = re.compile(r'"(?:\$\{KIPRJMOD\}|\$\(KIPRJMOD\))((?:[^"\\]|\\.)*)"')
 MODEL = re.compile(r'(\(model ")((?:[^"\\]|\\.)*)(")')
 URI = re.compile(r'\(uri "((?:[^"\\]|\\.)*)"\)')
-VAR = re.compile(r"^\$[{(]([A-Za-z0-9_]+)[})]")
 VARS = re.compile(r"\$[{(]([A-Za-z0-9_]+)[})]")
 SHEETFILE = re.compile(r'\(property "Sheet ?file" "((?:[^"\\]|\\.)*)"')
 
@@ -144,20 +143,19 @@ def _rewrite(text, src, dst, model_paths, as_json=False):
 
 
 def _resolve(path, dst):
-    """Where a path in the copy points, or why it can't be told: (absolute path or None, reason)."""
-    m = VAR.match(path)
-    if m:
-        var = m.group(1)
-        if var == "KIPRJMOD":
-            return os.path.normpath(os.path.join(dst, path[m.end():].lstrip("/\\"))), ""
-        if var.startswith("KICAD"):
-            return None, ""                       # KiCad's own libraries: wherever KiCad is installed
-        if var not in os.environ:
-            return None, f"${{{var}}} is not set here"
-        return os.path.normpath(os.environ[var] + path[m.end():]), ""
+    """Where a path in the copy points, or why it can't be told: (absolute path or None, reason). Its variables are
+    expanded wherever they are, as KiCad does: ${KIPRJMOD} is the copy's folder, another its value here."""
     if path.startswith("kicad-embed://"):
         return None, ""
-    return (path if os.path.isabs(path) else os.path.normpath(os.path.join(dst, path))), ""
+    dst = os.path.abspath(dst)                    # ${KIPRJMOD} is a folder, not a path to join to dst again
+    names = VARS.findall(path)
+    if any(v.startswith("KICAD") for v in names):
+        return None, ""                           # KiCad's own libraries: wherever KiCad is installed
+    unset = [v for v in names if v != "KIPRJMOD" and v not in os.environ]
+    if unset:
+        return None, f"${{{unset[0]}}} is not set here"
+    full = VARS.sub(lambda m: dst if m.group(1) == "KIPRJMOD" else os.environ[m.group(1)], path)
+    return os.path.normpath(full if os.path.isabs(full) else os.path.join(dst, full)), ""
 
 
 def unresolved(dst):

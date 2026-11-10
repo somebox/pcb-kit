@@ -200,6 +200,21 @@ class ZoneFills(unittest.TestCase):
 
 class Rewrite(unittest.TestCase):
     """Paths relative to the project, as the copy in releases/<board>/v<label>/kicad/ must write them."""
+    def test_a_variable_in_the_middle_of_a_model_path(self):
+        """unresolved() expands every variable, as KiCad does: an existing model isn't listed as missing."""
+        with tempfile.TemporaryDirectory() as k:
+            os.makedirs(os.path.join(k, "models"))
+            write(os.path.join(k, "models", "r.step"), "")
+            write(os.path.join(k, "demo.kicad_pcb"), '(kicad_pcb (footprint "x" (model "${KIPRJMOD}/models/'
+                                                     '${PCBKIT_TEST_MODEL}.step")) (footprint "y" (model '
+                                                     '"${KIPRJMOD}/${PCBKIT_TEST_UNSET}/c.step")))\n')
+            with mock.patch.dict(os.environ, {"PCBKIT_TEST_MODEL": "r"}):
+                os.environ.pop("PCBKIT_TEST_UNSET", None)
+                for d in (k, os.path.relpath(k)):         # the copy's folder given as an absolute or relative path
+                    self.assertEqual(freeze.unresolved(d), [("demo.kicad_pcb",
+                                                             "${KIPRJMOD}/${PCBKIT_TEST_UNSET}/c.step",
+                                                             "${PCBKIT_TEST_UNSET} is not set here")])
+
     def test_paths_reach_the_same_files(self):
         src, dst = "/p/boards/demo", "/p/releases/demo/v1.0/kicad"
         text = ('(uri "${KIPRJMOD}/../../lib/demo.pretty")\n(model "${KIPRJMOD}/../../lib/3d/r.step")\n'

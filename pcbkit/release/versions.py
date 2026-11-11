@@ -7,18 +7,28 @@ Where a version is written on a board:
 - any silkscreen text (gr_text) that carries the old label as a word, e.g. "v1.0" on a front tag or
   "<name> v1.0 2026-10-19" on the back; a date in such a text becomes the release date.
 Each stamp must change exactly what it means to: the masked text before and after must be identical.
+
+Fab output is compared by fab_fingerprint, a hash. When the hash differs, fab_gap compares the files themselves with a
+release's: zone fills (Gerber regions) whose outlines lie within ZONE_TOLERANCE of the release's, every point of them,
+are the same copper, since a KiCad that refills zones a little differently moves a vertex by a nanometre or drops
+one.
+
+The circuit (circuit(), circuit_fingerprint(), circuit_changes()) is the board's netlist and BOM as the PCB has them:
+what decides between a minor version (the circuit changed) and a patch (only the layout did).
 """
 import csv
 import datetime
+import difflib
 import glob
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import zipfile
 
-from .. import tomlw
+from .. import sexp, tomlw
 
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 REV = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?")
@@ -27,6 +37,9 @@ DATE = r"\d{4}-\d{2}-\d{2}"
 TEXT = re.compile(r'(\(gr_text ")((?:[^"\\]|\\.)*)(")')
 STR = r'"(?:[^"\\]|\\.)*"'
 STAMP = re.compile(r'\s*\((?:rev|date) ' + STR + r'\)')
+HEADER = ("%TF", "G04", ";", "%TA")    # Gerber and drill header comments and attributes: dates, the project ID and rev
+ZONE_TOLERANCE = 0.005                 # mm: KiCad's own default maximum error for arcs and zone fills
+VERTEX = re.compile(r"X(-?\d+)Y(-?\d+)D0([12])\*$")
 
 
 def parse(v):
@@ -114,14 +127,15 @@ def mask(text):
     return _label_texts(text, None, None)
 
 
-def neutral(text):
-    """The file with neutral version and date stamps, so that two versions of a board fab the same."""
+def neutral(text, label="v0.0", date="2000-01-01"):
+    """The file with neutral version and date stamps, so that two versions of a board fab the same; or with a given
+    label and date, as a release stamped it."""
     b = title_block(text)
     if b:
-        block = re.sub(r'(\(rev )' + STR, r'\1"v0.0"', text[b[0]:b[1]])
-        block = re.sub(r'(\(date )' + STR, r'\1"2000-01-01"', block)
+        block = re.sub(r'(\(rev )' + STR, lambda m: f'{m.group(1)}"{label}"', text[b[0]:b[1]])
+        block = re.sub(r'(\(date )' + STR, lambda m: f'{m.group(1)}"{date}"', block)
         text = text[:b[0]] + block + text[b[1]:]
-    return _label_texts(text, "v0.0", "2000-01-01")
+    return _label_texts(text, label, date)
 
 
 def design_files(pcb):
@@ -165,6 +179,26 @@ def preview_source(pcb):
                    for f in design_files(pcb))
 
 
+def _zip_files(path):
+    """A Gerber zip's files in name order, each by its name after the last "-" (the layer, or PTH.drl), without the
+    header comments and attributes that change from run to run."""
+    with zipfile.ZipFile(path) as z:
+        return [(n.split("-")[-1], [l for l in io.TextIOWrapper(z.open(n), encoding="utf-8", errors="replace")
+                                    .read().splitlines() if not l.startswith(HEADER)])
+                for n in sorted(z.namelist())]
+
+
+def _csv_rows(path):
+    """A BOM's, CPL's or centroid's rows; PCBWay's BOM without the description and package it takes from the parts
+    cache."""
+    f = os.path.basename(path)
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.reader(fh))
+    drop = {i for i, c in enumerate(rows[0]) if c in ("Description", "Package")} \
+        if rows and f.startswith("BOM-") and f.endswith("-pcbway.csv") else set()
+    return [[c for i, c in enumerate(r) if i not in drop] for r in rows]
+
+
 def fab_fingerprint(out):
     """A fab output folder (pcbkit fab, every house's files) hashed without what changes from run to run: Gerber and
     drill header comments and attributes (dates, the project ID with its rev), file names, and the description and
@@ -176,18 +210,285 @@ def fab_fingerprint(out):
         if f.endswith("-back.csv"):
             continue
         if f.endswith(".zip"):
-            with zipfile.ZipFile(p) as z:
-                for n in sorted(z.namelist()):
-                    lines = io.TextIOWrapper(z.open(n), encoding="utf-8", errors="replace").read().splitlines()
-                    h.update(n.split("-")[-1].encode())
-                    h.update("\n".join(l for l in lines if not l.startswith(("%TF", "G04", ";", "%TA"))).encode())
+            for n, lines in _zip_files(p):
+                h.update(n.encode())
+                h.update("\n".join(lines).encode())
         elif f.endswith(".csv"):
-            rows = list(csv.reader(open(p, newline="", encoding="utf-8-sig")))
-            drop = {i for i, c in enumerate(rows[0]) if c in ("Description", "Package")} \
-                if rows and f.startswith("BOM-") and f.endswith("-pcbway.csv") else set()
-            h.update(f.split("-")[0].encode() + b"\0" + "\n".join(
-                "\t".join(c for i, c in enumerate(r) if i not in drop) for r in rows).encode())
+            h.update(f.split("-")[0].encode() + b"\0" + "\n".join("\t".join(r) for r in _csv_rows(p)).encode())
     return h.hexdigest()
+
+
+BOM_FIELDS = ("LCSC", "MPN")            # with the footprint and value: what a part is, as the BOM orders it
+BOM_FLAGS = ("dnp", "exclude_from_bom")  # a part not fitted, or not bought with the board
+
+
+def circuit(pcb):
+    """The board's netlist and BOM as its .kicad_pcb has them, read as S-expressions (however the file is laid out:
+    KiCad 8 and later indent with tabs, 6 and 7 with spaces): parts, one [reference, footprint name, value, LCSC,
+    MPN, flags] row a footprint, in reference order, and nets, {name: sorted [reference, pad] pins}. Board-only
+    footprints (logos, a test pad drawn on the board) are neither parts nor pins. A pad on no net, or on KiCad's
+    unconnected-(...) net for a pin left open, is on none. KiCad 6 and 7 keep the reference and value as fp_text,
+    and write a pad's net as (net 3 "name"), KiCad 10 as (net "name")."""
+    with open(pcb, encoding="utf-8") as fh:
+        tree = sexp.parse(fh.read())
+    parts, nets = [], {}
+    for fp in tree[1:] if isinstance(tree, list) else []:
+        if not isinstance(fp, list) or len(fp) < 2 or fp[0] not in ("footprint", "module"):
+            continue
+        props, flags, pads = {}, set(), []
+        for c in fp[2:]:
+            if not isinstance(c, list) or len(c) < 2:
+                continue
+            if c[0] == "property" and len(c) > 2:
+                props.setdefault(str(c[1]), str(c[2]))
+            elif c[0] == "fp_text" and len(c) > 2 and c[1] in ("reference", "value"):
+                props.setdefault(str(c[1]).capitalize(), str(c[2]))
+            elif c[0] == "attr":
+                flags |= {str(x) for x in c[1:] if not isinstance(x, list)}
+            elif c[0] in ("dnp", "exclude_from_bom", "board_only") and c[1] == "yes":
+                flags.add(str(c[0]))
+            elif c[0] == "pad":
+                pads.append(c)
+        if "board_only" in flags:
+            continue
+        ref = props.get("Reference", "")
+        parts.append([ref, str(fp[1]).split(":")[-1], props.get("Value", "")]
+                     + [props.get(f, "").strip() for f in BOM_FIELDS] + [sorted(flags & set(BOM_FLAGS))])
+        for pad in pads:
+            net = next((x for x in pad[2:] if isinstance(x, list) and len(x) > 1 and x[0] == "net"), None)
+            name = str(net[-1]) if net else ""
+            if str(pad[1]) and name and not name.startswith("unconnected-("):
+                nets.setdefault(name, set()).add((ref, str(pad[1])))
+    return dict(parts=sorted(parts, key=lambda r: (_natural(r[0]), r)),        # R1 and R01 sort alike: then by all
+                nets={n: sorted([list(p) for p in v], key=lambda p: (_natural(p[0]), _natural(p[1]), p))
+                      for n, v in sorted(nets.items())})
+
+
+def _natural(s):
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", s)]
+
+
+def _connections(c):
+    """The nets as sets of pins, without their names: a net renamed is the same circuit. A net of one pin connects
+    nothing."""
+    return [(n, frozenset(map(tuple, pins))) for n, pins in c["nets"].items() if len(pins) > 1]
+
+
+def circuit_fingerprint(c):
+    """A hash of circuit(): the parts and the connections between their pins, not the nets' names."""
+    nets = sorted(sorted(pins) for _, pins in _connections(c))
+    return hashlib.sha1(json.dumps({"parts": c["parts"], "nets": nets}, sort_keys=True).encode()).hexdigest()
+
+
+def same_circuit(entry, pcb):
+    """Whether the board's netlist and BOM are a release's (entry, from releases.toml), as far as it recorded them: a
+    release recorded without the circuit fingerprint can't tell, and counts as the same."""
+    return not entry.get("circuit") or circuit_fingerprint(circuit(pcb)) == entry["circuit"]
+
+
+def _pins(ps, most=6):
+    ps = sorted(ps, key=lambda p: (_natural(p[0]), _natural(p[1])))
+    out = ", ".join(f"{r}.{n}" for r, n in ps[:most])
+    return out + (f", ... ({len(ps)} pins)" if len(ps) > most else "")
+
+
+def circuit_changes(old, new):
+    """What changed from one circuit() to another, in words: parts added, removed or changed ("R3 value 10k -> 4.7k"),
+    then the connections ("net VIN gains U2.5"), each net named as the new circuit names it. Empty when their
+    fingerprints are the same."""
+    out = []
+    a, b = ({r[0]: r for r in c["parts"]} for c in (old, new))
+    names = ("footprint", "value") + BOM_FIELDS
+    for ref in sorted(set(a) | set(b), key=_natural):
+        x, y = a.get(ref), b.get(ref)
+        if not x:
+            out.append(f"adds {ref} (" + ", ".join(v for v in [y[2], y[1]] + y[3:-1] if v) + ")")
+        elif not y:
+            out.append(f"removes {ref}")
+        else:
+            out += [f"{ref} {k} {u or '(none)'} -> {v or '(none)'}"
+                    for k, u, v in zip(names, x[1:-1], y[1:-1]) if u != v]
+            for f in BOM_FLAGS:
+                if (f in x[-1]) != (f in y[-1]):
+                    word = "DNP" if f == "dnp" else "out of the BOM"
+                    out.append(f"{ref} {word}" if f in y[-1] else f"{ref} no longer {word}")
+    was, now = _connections(old), _connections(new)
+    gone = [(n, s) for n, s in was if s not in {s for _, s in now}]
+    came = [(n, s) for n, s in now if s not in {s for _, s in was}]
+    # each net that changed is matched with the old net it shares most pins with (the same name first, on a tie), or
+    # failing that with the old net of its name, even with every pin replaced: one change, said once
+    pairs = sorted(((len(s & t), n == m, i, j) for i, (n, s) in enumerate(came) for j, (m, t) in enumerate(gone)
+                    if s & t or n == m), reverse=True)
+    matched, used = {}, set()
+    for _, _, i, j in pairs:
+        if i not in matched and j not in used:
+            matched[i] = j
+            used.add(j)
+    def moved(name, s, t):
+        what = [f"gains {_pins(s - t)}"] * bool(s - t) + [f"loses {_pins(t - s)}"] * bool(t - s)
+        return f"net {name} " + " and ".join(what)
+    for i, (n, s) in enumerate(came):
+        if i in matched:
+            m, t = gone[matched[i]]
+            out.append(moved(n if n == m else f"{m} (now {n})", s, t))
+        elif n in old["nets"]:                  # it had one pin, which connected nothing
+            out.append(moved(n, s, set(map(tuple, old["nets"][n]))))
+        else:
+            out.append(f"adds net {n} ({_pins(s)})")
+    for j, (m, t) in enumerate(gone):
+        if j in used:
+            continue
+        if m in new["nets"]:                    # down to one pin
+            out.append(moved(m, set(map(tuple, new["nets"][m])), t))
+        else:
+            out.append(f"removes net {m} ({_pins(t)})")
+    if not out and circuit_fingerprint(old) != circuit_fingerprint(new):
+        out.append("the netlist or BOM changed")
+    return out
+
+
+def _step(lines):
+    """A Gerber's coordinate step in mm (%FSLAX46Y46*% with %MOMM*%: a nanometre), or None."""
+    fs = [re.match(r"%FSLAX\d(\d)Y\d(\d)\*%$", l) for l in lines if l.startswith("%FS")]
+    mo = [l for l in lines if l.startswith("%MO")]
+    if len(fs) != 1 or not fs[0] or fs[0].group(1) != fs[0].group(2) or mo not in (["%MOMM*%"], ["%MOIN*%"]):
+        return None
+    return 10.0 ** -int(fs[0].group(1)) * (25.4 if mo == ["%MOIN*%"] else 1)
+
+
+def _regions(lines):
+    """A Gerber's lines outside its regions (G36* ... G37*, which KiCad draws zone fills with) and each region's
+    lines, or None when a region isn't closed."""
+    outside, regions, region = [], [], None
+    for l in lines:
+        if region is None:
+            outside.append(l)
+            if l == "G36*":
+                region = []
+        elif l == "G37*":
+            outside.append(l)
+            regions.append(region)
+            region = None
+        else:
+            region.append(l)
+    return None if region is not None else (outside, regions)
+
+
+def _seg_distance(p, a, b):
+    """From a point to a segment."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+PIECES = 200000                        # a comparison that would need more pieces than this is no match
+
+
+def _polyline_gap(a, b, tol):
+    """How far apart two polylines are, or None beyond tol: a bound on how far any point of either lies from the
+    other, over every point of every segment, not only sampled ones. Each segment is halved until a bound holds for
+    the whole piece: the furthest of its two ends from any one segment of the other (along a straight piece the
+    distance to a segment is convex, so it is largest at an end), or the ends' distances and half the piece's length
+    (a point moved by d is at most d further from the other). None when a point lies beyond tol, or when a piece
+    one coordinate step long still can't be bounded within it. One segment at a time, its pieces depth first: the
+    distances held are those of the pieces still to do, a few dozen at most, and the first point beyond tol ends it."""
+    worst, tol, budget = 0.0, max(tol, 1), PIECES
+    for line, other in ((a, b), (b, a)):
+        segs = list(zip(other, other[1:])) or [(other[0], other[0])]
+
+        def dists(p):
+            return [_seg_distance(p, s, e) for s, e in segs]
+        dq = None
+        for p, q in list(zip(line, line[1:])) or [(line[0], line[0])]:
+            dp = dq or dists(p)                # the last segment's end is this one's start
+            if min(dp) > tol:
+                return None
+            dq = dists(q)
+            todo = [(p, q, dp, dq)]
+            while todo:
+                p0, q0, d_p, d_q = todo.pop()
+                d0, d1 = min(d_p), min(d_q)
+                if d1 > tol:
+                    return None
+                length = math.hypot(q0[0] - p0[0], q0[1] - p0[1])
+                bound = min(min(max(x, y) for x, y in zip(d_p, d_q)), (d0 + d1 + length) / 2)
+                if bound <= tol:
+                    worst = max(worst, bound)
+                    continue
+                budget -= 1
+                if length <= 1 or budget < 0:
+                    return None
+                m = ((p0[0] + q0[0]) / 2, (p0[1] + q0[1]) / 2)
+                dm = dists(m)
+                todo += [(m, q0, dm, d_q), (p0, m, d_p, dm)]
+    return worst
+
+
+def _region_gap(a, b, tol):
+    """How far region b's outline lies from region a's, in coordinate steps, when only its vertices differ (moved,
+    added or dropped) and by no more than tol; else None. Each stretch that differs is compared between the vertices
+    on either side of it, which are the same in both."""
+    va, vb = [VERTEX.match(l) for l in a], [VERTEX.match(l) for l in b]
+
+    def pts(ms):
+        return [(int(m.group(1)), int(m.group(2))) for m in ms]
+    worst = 0.0
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        old, new = va[i1:i2], vb[j1:j2]
+        if not all(old) or not all(new):
+            return None
+        gap = None
+        if len(old) == len(new) and all(x.group(3) == y.group(3) for x, y in zip(old, new)):
+            # the same vertices moved: no point of the outline moves further than the furthest of them
+            g = max(math.hypot(p[0] - q[0], p[1] - q[1]) for p, q in zip(pts(old), pts(new)))
+            gap = g if g <= tol else None
+        before, after = va[i1 - 1] if i1 else None, va[i2] if i2 < len(va) else None
+        if gap is None and before and after and all(m.group(3) == "1" for m in old + new + [after]):
+            gap = _polyline_gap(pts([before] + old + [after]), pts([before] + new + [after]), tol)
+        if gap is None:
+            return None
+        worst = max(worst, gap)
+    return worst
+
+
+def gerber_gap(a, b, tol=ZONE_TOLERANCE):
+    """How far apart two Gerbers' (or drill files') lines put copper, in mm: 0 when they are the same; the furthest a
+    region's (zone fill's) outline moved when only region vertices differ, by no more than tol; else None."""
+    if a == b:
+        return 0.0
+    step, ra, rb = _step(a), _regions(a), _regions(b)
+    if not step or step != _step(b) or not ra or not rb or ra[0] != rb[0]:
+        return None
+    worst = 0.0
+    for x, y in zip(ra[1], rb[1]):
+        if x != y:
+            g = _region_gap(x, y, tol / step)
+            if g is None:
+                return None
+            worst = max(worst, g)
+    return worst * step
+
+
+def fab_gap(pairs, tol=ZONE_TOLERANCE):
+    """Two fab outputs compared file by file, as fab_fingerprint sees them: pairs of Gerber zips or of CSVs. How far
+    apart their copper is in mm (0: the same) when they differ only in their zone fills, by no more than tol; else
+    None."""
+    worst = 0.0
+    for p, q in pairs:
+        if p.endswith(".zip"):
+            a, b = _zip_files(p), _zip_files(q)
+            if [n for n, _ in a] != [n for n, _ in b]:
+                return None
+            for (_, x), (_, y) in zip(a, b):
+                g = gerber_gap(x, y, tol)
+                if g is None:
+                    return None
+                worst = max(worst, g)
+        elif _csv_rows(p) != _csv_rows(q):
+            return None
+    return worst
 
 
 # ---- stamping -------------------------------------------------------------------------------------------------------

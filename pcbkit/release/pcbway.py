@@ -5,7 +5,7 @@ corrections applied). The Gerber zip is the same for both houses.
 - BOM-<name>-pcbway.csv: Item #, Designator, Qty, Manufacturer, Mfg Part #, Description, Value, Package, Type, LCSC,
   Notes. One row per part number. The part number is the footprint's MPN field without a trailing " (...)" note (the note goes
   to Notes), else the parts cache's MFR_Part; the manufacturer, description and package come from konnect's parts
-  cache by LCSC number.
+  cache by LCSC number. Without the cache pcbkit fab stops before writing anything (require_cache).
 - centroid-<name>-pcbway.csv: Designator, Mid X, Mid Y, Layer, Rotation, Value, Package. The footprint's origin
   relative to the aux (drill/place) origin, Y up, in mm; the rotation as KiCad stores it, on either side.
 Both are UTF-8 with a byte-order mark (the cache's descriptions carry Ω, ±, ℃). Check the parts and the placement
@@ -21,9 +21,19 @@ from ..jlc import DB
 NOTE = re.compile(r"\s+\(([^)]*)\)\s*$")       # "BCM847BS,115 (matched pair)", not "B3B-XH-A(LF)(SN)"
 
 
-def _cache(lcscs):
+def require_cache(who):
+    """Stop when konnect's parts cache is missing: PCBWay's BOM would lack its manufacturers and the part numbers the
+    footprints don't carry, and pcbkit release would take that for new fab output on every changed board."""
     if not os.path.exists(DB):
-        return {}
+        raise SystemExit(f"{who}: no parts cache at {DB}. PCBWay's BOM takes each part's manufacturer, and a part "
+                         "number its footprint lacks, from it; without it the BOM is incomplete and a release would "
+                         "see new fab output where the board hasn't changed. Get it with konnect's "
+                         "download_jlcpcb_database, or leave pcbway out of the houses (--houses, or [release] fab in "
+                         "pcbkit.toml).")
+
+
+def _cache(lcscs):
+    require_cache("pcbkit fab")
     db = sqlite3.connect(DB)
     out = {}
     for lcsc in lcscs:

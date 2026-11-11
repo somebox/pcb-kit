@@ -202,19 +202,23 @@ assemble it (the front, the back, both sides: Economic PCBA does one side). Besi
 a checklist for JLC's placement preview, to go through before paying: every placed part whose orientation matters
 (more than two pads, or a polarity mark), with the rotation rule behind its CPL angle, when that rule was last seen
 right in the preview, and where its pad 1 should be, in the Gerbers' frame. With `--houses jlcpcb,pcbway`, it also
-writes PCBWay's BOM (manufacturer and part number) and centroid. The Gerbers have the mask openings subtracted from
-the silkscreen; a board that prints inside them on purpose takes `--keep-silk-in-mask`, or
-`keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit assembly panels with rails,
-fiducials and tooling holes, and runs DRC on each.
+writes PCBWay's BOM (manufacturer and part number, from konnect's parts cache, which it then needs) and centroid.
+The Gerbers have the mask openings subtracted from the silkscreen; a board that prints inside them on purpose takes
+`--keep-silk-in-mask`, or `keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit
+assembly panels with rails, fiducials and tooling holes, and runs DRC on each.
 
 `pcbkit release` is the step before an order. It checks every board, and gives each one that changed since its last
-release the next version (a fix to v1.0 makes v1.0.1), stamped into the title block and the silkscreen, so the KiCad
-file always says which version it is. That version's Gerbers, BOMs, placement files and PDFs go into a committed
-release folder. A KiCad save that only reshuffles the file, or a schematic note, doesn't count as a change: only a
-different fab output does. `pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders
-in production with their state, order numbers and prices, parts costs, boards and parts in stock, and what is short.
-Orders and stock are small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says
-where everything goes and can turn either feature off.
+release the next version, stamped into the title block and the silkscreen, so the KiCad file always says which
+version it is: a minor version (v1.0 to v1.1) when its netlist or BOM changed, a patch (v1.0.1) when only its layout
+did, a major one when you say so (a new pinout, outline or GPIO map). `--dry-run` says which, and what changed. That
+version's Gerbers, BOMs, placement files and PDFs go into a committed release folder, with a frozen copy of its KiCad
+project that opens beside any other version. A KiCad save that only reshuffles the file, or a schematic note, doesn't
+count as a change: only a different netlist, BOM or fab output does, and zone fills that another KiCad refills within
+0.005 mm of the release's don't.
+`pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders in production with their
+state, order numbers and prices, parts costs, boards and parts in stock, and what is short. Orders and stock are
+small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says where everything goes and
+can turn either feature off.
 
 ## Skills
 
@@ -303,7 +307,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
 | `pcbkit fab BOARD OUT [--houses jlcpcb,pcbway] [--placed field:NAME=VALUE] [--no-assembly] [--extra-layers L,..] [--keep-silk-in-mask] [--name N]` | JLC Gerber zip, BOM (one row per LCSC number) and CPL (front-only, back-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table; `PLACEMENT-<name>.md`, the checklist for JLC's placement preview (polarised parts, their rotation rules, pad 1 positions); PCBWay's BOM and centroid with `pcbway`. The silkscreen has the mask openings subtracted unless `--keep-silk-in-mask` (legends printed inside a face panel's mask windows) |
-| `pcbkit release [PCB ..] [--minor\|--major] [--version X.Y.Z] [--dry-run] [--refresh-parts]` | every board per `pcbkit.toml`: checks; a new version for each changed one (patch by default), stamped into its KiCad files; its fab files, PDFs and previews in its release folder; then `pcbkit production`. `--refresh-parts` records a release's hand parts again after the part rules changed |
+| `pcbkit release [PCB ..] [--patch\|--minor\|--major] [--version X.Y.Z] [--dry-run] [--refresh-parts]` | every board per `pcbkit.toml`: checks; a new version for each changed one (minor when its netlist or BOM changed, patch when only its layout did; `--patch` or `--minor` overrides, `--major` is yours to give), stamped into its KiCad files; its fab files, PDFs, previews and a frozen copy of its KiCad project (`kicad/`) in its release folder; then `pcbkit production`. `--refresh-parts` records a release's hand parts again after the part rules changed |
 | `pcbkit production [--check]` | PRODUCTION.md's overview from the releases, `production/orders/*/order.toml` and `production/stock.toml`; each order's ORDER.md (with the parts to buy for hand assembly) and upload folder; `--check` exits 1 on problems |
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |

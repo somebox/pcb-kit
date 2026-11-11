@@ -253,6 +253,13 @@ class Models3D(unittest.TestCase):
         self.assertIn("coordIndex [ 0,1,5,4,-1, 3,2,6,7,-1 ]", wrl)  # the second face counted from the end
         self.assertNotIn("# scaled", wrl)
 
+    def test_a_vertex_no_face_uses_is_not_part_of_the_box(self):
+        stray = OBJ.replace("usemtl body", "v 40 -30 9\nusemtl body")  # before the faces, so -5 etc. still count back
+        stray = stray.replace("f -5 -6 -2 -1", "f -6 -7 -3 -2")
+        wrl = ie.obj_to_wrl(stray, "BOX-SMD", UUID, (2.0, 0.5))
+        self.assertEqual(ie.wrl_header(wrl), (UUID, BOX, 1.0))  # not scaled to it, nor boxed round it
+        self.assertEqual(wrl.split("\n", 3)[3], ie.obj_to_wrl(OBJ, "BOX-SMD", UUID, (2.0, 0.5)).split("\n", 3)[3])
+
     def test_a_mesh_of_another_size_than_the_exports_is_scaled_to_it(self):
         inch = ie.obj_to_wrl(OBJ, "HDR", UUID, (2.0 * 2.54, 0.5 * 2.54))  # drawn in 0.1 in
         self.assertEqual(ie.wrl_header(inch)[1:], (tuple((a * 2.54, b * 2.54) for a, b in BOX), 2.54))

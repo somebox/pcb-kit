@@ -1356,10 +1356,11 @@ def obj_to_wrl(obj, title, uuid, size):
             faces[use].append([i - 1 if i > 0 else len(verts) + i for i in idx])
     if not verts or not faces:
         raise ValueError("no mesh in the OBJ")
-    span = sorted(max(v[i] for v in verts) - min(v[i] for v in verts) for i in (0, 1))
+    drawn = [verts[i] for i in sorted({i for fs in faces.values() for f in fs for i in f})]  # a stray vertex isn't
+    span = sorted(max(v[i] for v in drawn) - min(v[i] for v in drawn) for i in (0, 1))
     k = mesh_scale(span, size)
     verts = [tuple(c * k for c in v) for v in verts]
-    box = tuple((min(v[i] for v in verts), max(v[i] for v in verts)) for i in range(3))
+    box = tuple((min(v[i] * k for v in drawn), max(v[i] * k for v in drawn)) for i in range(3))
     out = ["#VRML V2.0 utf8",
            f"# {title}: EasyEDA model {uuid}, converted from its OBJ by pcbkit import-easyeda. EasyEDA's frame, "
            "unit 0.1 in.",

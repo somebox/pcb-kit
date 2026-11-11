@@ -1274,12 +1274,14 @@ def svg_transform(text, m=(1, 0, 0, 1, 0, 0)):
 
 def _svg_points(node, m=(1, 0, 0, 1, 0, 0)):
     """All (x, y) of an SVG node's polylines and straight paths, with its children's, in EasyEDA units: their
-    transforms applied."""
+    transforms applied. A path drawn with curves or relative moves raises ValueError: its numbers aren't all points,
+    and an outline without it would be taken for the whole one."""
     a = node.get("attrs", {})
     m = svg_transform(a.get("transform"), m)
     v = [float(t) for t in re.findall(_NUMBER, a.get("points", ""))]
-    if not re.search(r"[A-DF-KN-Ya-df-y]", a.get("d", "")):  # curves or relative moves: not all absolute points
-        v += [float(t) for t in re.findall(_NUMBER, a.get("d", ""))]
+    if re.search(r"[A-DF-KN-Ya-df-y]", a.get("d", "")):
+        raise ValueError("a path drawn with curves or relative moves")
+    v += [float(t) for t in re.findall(_NUMBER, a.get("d", ""))]
     out = [(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]) for x, y in zip(v[0::2], v[1::2])]
     for c in node.get("childNodes") or []:
         out += _svg_points(c, m)
@@ -1310,8 +1312,7 @@ def easyeda_models(pcb_json):
                 note(f"{ref}: the outline of 3-D model {title} not read ({e}); the model stays at KiCad's path")
                 continue
             if a.get("uuid") and not outline:
-                note(f"{ref}: the outline of 3-D model {title} is drawn with curves or relative moves, not read; the "
-                     "model stays at KiCad's path")
+                note(f"{ref}: 3-D model {title} has no outline drawn; the model stays at KiCad's path")
             if a.get("uuid") and outline:
                 size = (float(a.get("c_width") or 0) * U, float(a.get("c_height") or 0) * U)
                 out[ref] = (pads, back, dict(title=title, uuid=a["uuid"],

@@ -239,8 +239,13 @@ class Models3D(unittest.TestCase):
     def test_a_path_closed_with_z_is_read_and_one_with_curves_or_relative_moves_is_not(self):
         self.assertEqual(ie._svg_points({"attrs": {"d": "M 0 0 L 2 0 L 2 1 L 0 1 z"}}),
                          [(0, 0), (2, 0), (2, 1), (0, 1)])
-        self.assertEqual(ie._svg_points({"attrs": {"d": "M 0 0 l 2 0 l 0 1 z"}}), [])  # relative: not where they say
-        self.assertEqual(ie._svg_points({"attrs": {"d": "M 0 0 C 1 1 2 2 3 3 Z"}}), [])
+        for d in ("M 0 0 l 2 0 l 0 1 z", "M 0 0 C 1 1 2 2 3 3 Z"):  # relative: not where they say; curves
+            with self.assertRaises(ValueError):
+                ie._svg_points({"attrs": {"d": d}})
+        # nor one such path beside a readable one: the rest isn't the whole outline
+        with self.assertRaises(ValueError):
+            ie._svg_points({"attrs": {}, "childNodes": [{"attrs": {"points": "0 0 2 0 2 1"}},
+                                                        {"attrs": {"d": "M 2 1 A 1 1 0 0 1 4 1"}}]})
 
     def test_a_mesh_becomes_vrml_with_its_box_and_materials(self):
         wrl = ie.obj_to_wrl(OBJ, "BOX-SMD", UUID, (2.0, 0.5))
@@ -351,7 +356,8 @@ class Models3D(unittest.TestCase):
     def test_an_outline_that_cant_be_read_is_said_by_reference_and_title(self):
         node = {"nodeName": "g", "attrs": {"c_width": "8", "c_height": "2", "z": "0", "uuid": UUID,
                                            "c_etype": "outline3D", "title": "ROUND"},
-                "childNodes": [{"nodeName": "path", "attrs": {"d": "M 0 0 A 1 1 0 0 1 2 0 Z"}}]}
+                "childNodes": [{"nodeName": "polyline", "attrs": {"points": "0 0 2 0"}},
+                               {"nodeName": "path", "attrs": {"d": "M 0 0 A 1 1 0 0 1 2 0 Z"}}]}
         lib = ("LIB~0~0~package`ROUND`~0~~gge0~1~#@$TEXT~P~0~0~0.6~0~0~3~~4.5~X1~M 1 1#@$"
                "SVGNODE~" + json.dumps(node))
         path = self.dir / "pcb.json"
@@ -359,8 +365,8 @@ class Models3D(unittest.TestCase):
         ie.NOTES.clear()
         self.addCleanup(ie.NOTES.clear)
         self.assertEqual(ie.easyeda_models(path), {})
-        self.assertEqual(list(ie.NOTES), ["X1: the outline of 3-D model ROUND is drawn with curves or relative moves, "
-                                          "not read; the model stays at KiCad's path"])
+        self.assertEqual(list(ie.NOTES), ["X1: the outline of 3-D model ROUND not read (a path drawn with curves or "
+                                          "relative moves); the model stays at KiCad's path"])
 
     def assertPlaced(self, got, offset, rot, scale=1.0, notes=(), turn_xy=(0, 0)):
         self.assertIsNotNone(got)

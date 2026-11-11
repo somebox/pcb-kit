@@ -29,6 +29,12 @@ def run(board, refill=False, save=False, parity=True, out=None):
     return cli_report(out, *args, board)
 
 
+def zone_name(description):
+    """A zone by its quoted name, or as KiCad 10.0.7 describes an unnamed one: "[GND] on F.Cu, priority 0"."""
+    m = re.search(r"'([^']*)'", description)
+    return m.group(1) if m else description[len("Zone "):]
+
+
 def summarise(d, full=False):
     v = d["violations"]
     errors = [x for x in v if x["severity"] == "error"]
@@ -49,7 +55,7 @@ def summarise(d, full=False):
                 m = re.search(r" of (\S+)", it["description"])
                 if m:
                     refs[m.group(1)] += 1
-        split = sorted({i["items"][0]["description"].split("'")[1] for i in u
+        split = sorted({zone_name(i["items"][0]["description"]) for i in u
                         if len(i["items"]) == 2 and all(x["description"].startswith("Zone") for x in i["items"])
                         and i["items"][0]["description"] == i["items"][1]["description"]})
         if split:

@@ -141,8 +141,50 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   `scripts/models3d.py` worked out, within 0.0002 mm (102 board and library footprints); siebenuhr's controller,
   the spotlight, the HA protoboard and Orbitchron's LED board import with every model placed. KiCad's own Python
   finds no certificates on macOS, so the download uses the system's. Tests in `tests/test_import_easyeda.py`.
+- **Each release folder holds a frozen copy of the board's KiCad project**, in `v<label>/kicad/`: the .kicad_pro,
+  the root schematic and every sheet under it (subfolders kept; a sheet from outside the board's folder in
+  `kicad/outside/`), the .kicad_pcb as released, the .kicad_dru and the library tables, but not the .kicad_prl, lock
+  files, KiCad 10's Local History (`.history/`) or backups. A sheet path that wouldn't reach the copy's own sheet (an
+  absolute one, one out of the folder, one through `${KIPRJMOD}`) is rewritten to, so nothing in the copy's
+  schematic is read from the working project; sheets are looked for as KiCad does, beside the sheet that names
+  them, then in the project's folder, with `${KIPRJMOD}` and other variables expanded. KiCad
+  links a schematic to a board by file stem within one project, and the net classes and rules live in the
+  .kicad_pro, so a second board file beside one schematic doesn't open as that version; the copy does, beside the
+  working board or any other release. Footprints and symbols are embedded; the `${KIPRJMOD}/../../lib/...` paths in
+  the library tables and 3-D models (and a model's bare relative path) are rewritten to reach the same files from
+  the release folder's depth. MANIFEST.txt lists the copy's files and what it names and doesn't find (a missing
+  model, an absolute path, a variable not set here), and the release's output counts them. The fab fingerprint and
+  the comparison with a release's own files read only the fab files, so the copy changes neither. Checked in
+  `tests/test_release.py`: the copy opens with `pcbnew.LoadBoard` and `kicad-cli` draws both sheets of its
+  schematic. The project template's `.gitignore` gains `.history/`.
 
 ### Changed
+- **`pcbkit release` chooses the version from what changed: minor for the netlist or BOM, patch for the layout.**
+  It bumped the patch for any change unless given `--minor` or `--major`. It now reads each board's netlist and BOM
+  from the .kicad_pcb's S-expressions, so a board KiCad 6 or 7 saved, indented with spaces, reads the same (every
+  footprint but board-only ones, by reference: footprint, value, LCSC and MPN fields, DNP
+  and exclude-from-BOM flags; each pin's net) and keeps a fingerprint of them per version in releases.toml
+  (`circuit`, also in MANIFEST.txt). A board whose netlist or BOM differs from its last release's gets the next
+  minor version, even with the same fab output (an MPN that only PCBWay's BOM would show, a hand-soldered part's
+  value); one whose only difference is its fab output gets a patch. A net renamed, or a net of one pin, connects
+  nothing new and doesn't count. The output, `--dry-run`'s too, says which part and what changed, read against the
+  last release's `kicad/` copy (`minor after 1.0.0: R1 value 10k -> 4.7k; net VIN gains R2.2`), and the release's
+  note in releases.toml keeps it. `--patch` (new) and `--minor` override the choice; `--major` stays yours to give,
+  for a new header pinout, outline, mounting holes or GPIO map; `--version` now says what changed too. A last release
+  recorded without the fingerprint gets a patch, and the output says why; a board unchanged since such a release
+  gets it recorded on the next run ("recorded v1.3's netlist/BOM fingerprint"), since its circuit is the
+  release's. A source recorded as equivalent before its release had the fingerprint counts as that release only
+  while its netlist and BOM are the release's, in `pcbkit release` and `pcbkit production` both: an MPN that no JLC
+  file shows made it an equivalent then, and makes it a minor now. docs/CONVENTIONS.md has the rule, and that a first
+  release, which adopts the title block's version, needs `--version` when the circuit changed since that version was
+  built.
+- **More JLC rotations from the preview (2026-11-08).** KiCad's `WSON-6-1EP_2x2mm_P0.65mm` gets 270 and
+  `SOT-583-8` 180: neither had a rule, and the preview put a TVS diode's pin 1 a quarter turn off (it would have
+  shorted VBUS) and a buck converter's half a turn. The 6.3x7.7 mm polymer capacitor C46550459 gets 0 in place of
+  the `CP_Elec_6.3x7.7` rule's 180, which put its + on the - pad. VSON-8, TDSON-8-1, SOT-23-6 (with C7843 and
+  C55266), SSOP and TSSOP were right and are dated 2026-11-08. The placement checklist now says the preview's hover
+  reading counts from the drill/place origin with Y up, as checked on that quote, and drops its advice to subtract
+  the outline's corner.
 - **JLC placement rotations corrected from JLC's own preview.** KiCad's SOT-23 now gets 180 (the table's -90 put
   every SOT-23 transistor and reference a quarter turn off its pads), SOT-363 0 (it was half a turn round), SOP-4
   270 like the other SOP and SOIC packages (at 0 a CPC1017N relay's leads lay across its pads) and the Bourns 3224W
@@ -204,6 +246,33 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   killed mid-run printed the previous board's summary and could exit 0. The report is now removed before each run.
   A non-zero exit from `kicad-cli`, or no readable report, stops the command with exit status 1 and `kicad-cli`'s
   message. That also covers `pcbkit release`'s checks and `import-easyeda`'s.
+- **`pcbkit drc` no longer stops with an IndexError on a board with a split pour.** Its "split zones" line took each
+  zone's name from between quotes, and KiCad 10.0.7 describes an unnamed zone without them (`Zone [GND] on F.Cu,
+  priority 0`); such a zone is now listed by that description.
+- **`pcbkit fab` and `pcbkit release` stop when PCBWay's files are wanted and konnect's parts cache is missing**
+  (`~/.konnect/jlcpcb.db`). PCBWay's BOM takes each part's manufacturer, and a part number its footprint lacks, from
+  the cache; without it the BOM came out incomplete, and `pcbkit release --dry-run` on a new machine reported every
+  changed board as new fab output (would release) where, with the cache, they had the same fab output as their last
+  release. `pcbkit fab --no-assembly`, a release without `pcbway` in `[release] fab`, and `--refresh-parts` don't
+  need it.
+- **`pcbkit release` no longer gives a board a new version because a newer KiCad refills its zones a little
+  differently.** KiCad 10.0.7 moves some zone-fill vertices by a nanometre, or drops a few that lie within a couple
+  of micrometres of the outline, so two of synth-blocks' boards whose copper hadn't changed no longer matched their
+  releases' fab fingerprints. When the fingerprint differs, release now makes the files again from a copy stamped as
+  the last release was, and compares them with that release's folder: zone fills (Gerber regions) may lie within
+  0.005 mm of the release's, KiCad's own maximum error for zone fills, every point of their outlines and not only
+  points sampled along them (each differing edge is halved until a bound on its distance holds for all of it);
+  everything else must be the same, as the fingerprint sees it. A match is recorded as equivalent, its note saying how far the fills moved. Stored
+  fingerprints keep their meaning, and a board whose release folder doesn't hold its files gets a new version, as
+  before.
+- **`pcbkit check` no longer reports a via in the middle of a track as floating copper.** It joined a via to a track
+  only where one of the track's ends lay on the via, so a via stitched into a straight run, as a scripted wide feed
+  lays them on both layers, was floating, and so was any track hanging off it. A via now joins every track of its net
+  on a layer it is on wherever its ring touches the track (centre within half the track width plus the via's
+  radius), measured to an arc's curve rather than its chord, as is a track end on another track or arc. Stubs are
+  found from track ends as before. On esp32-s3-ha-node's board the six floating VIN and +5V_BUCK
+  groups are gone, which KiCad's DRC already saw as connected, and nothing else changed there or on the other corpus
+  boards. The first fixture boards for `check` are in `tests/test_route_check.py`.
 - **`pcbkit import-easyeda` no longer leaves what took hand fixes on espcandle-pcb's two boards.** The copper-pour
   keep-outs KiCad's importer makes on User.4 from EasyEDA's pin outlines (layer-100 cutouts in LCSC's SOT-23, SC-70
   and SOD-123 footprints) are removed from the board and the library footprints: they were 11 and 16 DRC

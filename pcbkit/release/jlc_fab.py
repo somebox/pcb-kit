@@ -39,15 +39,18 @@ BOM but leaves both files; the summary counts it as left out for hand assembly.
   per-part exceptions. Checked in JLC's placement preview
   (2026-10-26): KiCad's SOT-23 needs 180, SOT-23-5 (-BR) 180, SOT-23-6 (-BL) -90, the 1x08 1.27 mm SMD socket -90,
   the HRO TYPE-C-31-M-12 USB-C 0 (the table's 180 turned it half round), SOT-363_SC-70-6 0, SOP-4 270 and the Bourns
-  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. "Rotate Right" in
-  the preview is -90 on either side. The table's Checked column dates the rules seen right there; a rule without
+  3224W trimmer 180; SOIC, SSOP, TSSOP, SOD-123, SOD-323 and the 0402/0603/0805 LEDs were right. On 2026-11-08,
+  KiCad's WSON-6-1EP_2x2mm needed 270 and SOT-583-8 180 (neither had a rule), and the 6.3x7.7 mm polymer capacitor
+  C46550459 0 (the CP_Elec rule's 180 put its + on the - pad); VSON-8, TDSON-8-1, SOT-23-6 (with C7843 and C55266),
+  SSOP and TSSOP were right. "Rotate Right" in the preview is -90 on either side. The table's Checked column dates the rules seen right there; a rule without
   a date has no check on record, and PLACEMENT-<name>.md marks the parts under it.
 Check rotations and polarity in JLC's placement preview before ordering, with PLACEMENT-<name>.md. Harvested from the
 sign's jlc_fab.py.
---houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py). --no-assembly writes the Gerbers only (a bare
-board, or a panel of breakouts). --extra-layers adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score
-lines are drawn. --keep-silk-in-mask leaves silkscreen inside mask openings in the Gerbers, for a board that prints
-there on purpose (legends in a face panel's mask windows); say so in the order remark, or the fab house may clip it.
+--houses jlcpcb,pcbway adds PCBWay's BOM and centroid (release/pcbway.py), which need konnect's parts cache: without
+it nothing is written. --no-assembly writes the Gerbers only (a bare board, or a panel of breakouts). --extra-layers
+adds layers to the Gerbers, e.g. Cmts.User where a panel's V-score lines are drawn. --keep-silk-in-mask leaves
+silkscreen inside mask openings in the Gerbers, for a board that prints there on purpose (legends in a face panel's
+mask windows); say so in the order remark, or the fab house may clip it.
 """
 import argparse
 import csv
@@ -125,6 +128,9 @@ def selector(placed):
 
 
 def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, extra_layers=(), keep_silk_in_mask=False):
+    if assembly and "pcbway" in houses:
+        from .pcbway import require_cache
+        require_cache("pcbkit fab")
     ensure_pcbnew()
     import pcbnew
     mm = pcbnew.ToMM

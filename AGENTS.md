@@ -15,7 +15,8 @@ sees inside a project.
 - When a script is harvested from a project, record it in `docs/HARVEST.md` with its source and what changed.
 - Test a change on more than one project's boards before committing: the sign, siebenuhr, spotlight and dodeca
   repos are the corpus. A change to the router is judged with `pcbkit reroute corpus`, against `bench/baseline.json`
-  (see docs/ROUTER.md).
+  (see docs/ROUTER.md). `tests/` holds fixture boards drawn in pcbnew; each `python3 tests/test_*.py` (route_check,
+  courtyards, import_easyeda, release) runs its own under KiCad's Python.
 - Commit messages: imperative, prefixed with the area (`checks:`, `release:`, `schematic:`, `skills:`, `docs:`).
 
 ## Releases

@@ -8,6 +8,20 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit changelog`: a draft of a project's CHANGELOG.md from its boards.** For each board, what changed in words:
+  the netlist and BOM as `pcbkit release` compares them, a part's fields on one line and parts that changed alike
+  together ("R4, R5 value 10Ω -> 20Ω, LCSC C17415 -> C17544"), then the layout: parts moved, turned or put on the
+  other side, board-only footprints, the tracks' count and length, vias, zones by net and layer, the outline and the
+  silkscreen texts. Against the last release's `kicad/` copy (or the board at its base commit), `--since` a board
+  (an as-built copy in `archive/`) or a git revision, or, for a board never released, the commit where its title
+  block first read the version it reads; `--all` adds each release against the one before. On espcandle-pcb it
+  gives the 35 netlist and BOM changes of the top since the board as converted from v1.4.0 (`c79678c`) and the 68
+  of the base since the v1.3.1 import that the project's CHANGELOG.md was checked against. It reads files only.
+  `docs/CONVENTIONS.md` lays out the project's CHANGELOG.md: a section per version as released, an entry per change
+  citing the decision behind it, checked against the draft; `pcbkit new` writes one.
+- **`[release] date_format` in pcbkit.toml**: the title block's date as a strftime format, so `${ISSUE_DATE}` prints
+  "11.2026" with `"%m.%Y"` (the default stays ISO). releases.toml keeps the date as a date; a release compared with
+  later is stamped with the date its own `kicad/` copy carries, so its files still compare the same.
 - **`pcbkit netview --detail` and `--compare`: layout options side by side.** `--detail` draws an outer layer the
   way assembly sees it: each pad's mask opening dashed green, its paste hatched (paste apertures drawn as pads with
   no copper too, as KiCad's QFN footprints have them), the numbers of the pads on coloured nets, and a red ring round
@@ -175,6 +189,25 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   schematic. The project template's `.gitignore` gains `.history/`.
 
 ### Changed
+- **The version and date on a board are KiCad's text variables, `${REVISION}` and `${ISSUE_DATE}`**, filled from the
+  title block when the Gerbers are plotted (docs/CONVENTIONS.md, which also says when to use `label = "full"`).
+  `pcbkit release` stamps the title block of the board, of the root schematic and now of every sheet under it in the
+  board's folder that has one, so every page of schematic.pdf carries the version (espcandle-pcb's v1.5.0 release
+  left its two sub-sheets at 1.3.1); the board and the root schematic take each other's title and company when one
+  has none. It stamps the release's date even when the label is already right, and a board unchanged since its
+  release gets that release's stamps where a file lacks them. It refuses a board whose silkscreen, copper or mask
+  says `v${REVISION}` (prints vv1.0) or `${CURRENT_DATE}` (the plot's day, so no two runs make the same Gerbers), and
+  says when a text has the version typed in. The fab fingerprint, the masked source fingerprint and the silkscreen
+  check after stamping were checked with variable texts: DRC measures them as KiCad fills them in. A title block
+  without a rev or date gets one in the neutral copy the fab fingerprint is made from, as stamping gives it.
+- **A first release needs `--version` when the title block names a version** (`v1.4`, `1.3.1`, `2.0`): boards of it
+  may have been built, and the new board would go out under their label. It took the title block's version before,
+  which on espcandle-pcb would have released the changed top as v1.4.0 again. The output says what git knows: the
+  commit where the title block first read that version, and how many netlist and BOM changes there are since. A
+  draft's rev (`0.1-draft`) or none is still taken as it is.
+- **A mockup's line names its DRC errors**, by type and part: `mockup (drc 2: 2 hole_clearance (USBC1))`.
+  docs/CONVENTIONS.md says how to accept one: a measured `.kicad_dru` rule naming the part and the value, not a
+  DRC exclusion; the pcb-kit skill's courtyard advice says the same.
 - **`pcbkit release` chooses the version from what changed: minor for the netlist or BOM, patch for the layout.**
   It bumped the patch for any change unless given `--minor` or `--major`. It now reads each board's netlist and BOM
   from the .kicad_pcb's S-expressions, so a board KiCad 6 or 7 saved, indented with spaces, reads the same (every

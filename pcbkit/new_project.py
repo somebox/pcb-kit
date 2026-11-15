@@ -2,7 +2,7 @@
 
   pcbkit new DIR --board NAME [--title "..."] [--description "..."] [--company "..."] [--no-git] [--no-bomi]
 
-Creates DIR with README.md, DESIGN.md, LAYOUT.md, PRODUCTION.md, .gitignore and pcbkit.toml from the kit's templates (placeholders
+Creates DIR with README.md, DESIGN.md, LAYOUT.md, PRODUCTION.md, CHANGELOG.md, .gitignore and pcbkit.toml from the kit's templates (placeholders
 filled in), boards/NAME/ with an empty KiCad 10 project (root schematic, blank board, lib tables pointing at lib/),
 lib/<project>.kicad_sym and lib/<project>.pretty (empty), docs/previews/, docs/datasheets/, scripts/ with the
 previews wrapper and the builder glue for pcbkit.schematic, a bomi project in the board folder, and a first git
@@ -67,7 +67,7 @@ def new(dir_, board, title=None, description="", company="", git=True, bomi=True
              "<one line: what is done, what is next>": "scaffolded with pcbkit new; requirements next",
              "<where the design stands>": "requirements being written", "<placed / routed / DRC state>": "no board yet",
              "<What it is, in two sentences. Which version is current, how versions are named.>": description}
-    for f in ("README.md", "DESIGN.md", "LAYOUT.md", "PRODUCTION.md", ".gitignore", "pcbkit.toml"):
+    for f in ("README.md", "DESIGN.md", "LAYOUT.md", "PRODUCTION.md", "CHANGELOG.md", ".gitignore", "pcbkit.toml"):
         text = (TEMPLATES / f).read_text()
         for k, v in subst.items():
             text = text.replace(k, v)
@@ -90,7 +90,7 @@ def new(dir_, board, title=None, description="", company="", git=True, bomi=True
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, check=True)
         subprocess.run(["git", "add", "-A"], cwd=d, check=True)
         subprocess.run(["git", "commit", "-q", "-m", f"{project}: scaffold with pcbkit new"], cwd=d, check=True)
-    print(f"{d}: boards/{board}/{board}.kicad_pro, lib/{project}.*, docs/, scripts/, README/DESIGN/LAYOUT/PRODUCTION"
+    print(f"{d}: boards/{board}/{board}.kicad_pro, lib/{project}.*, docs/, scripts/, README/DESIGN/LAYOUT/PRODUCTION/CHANGELOG"
           + (", bomi" if bomi and shutil.which("bomi") else "") + (", git" if git else ""))
 
 

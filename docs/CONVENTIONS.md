@@ -10,6 +10,7 @@ README.md            index: what the project is, where things are, naming of ver
 DESIGN.md            requirements, decisions (dated, numbered), block designs, what the last version taught
 LAYOUT.md            the PCB: floor plan, stackup and rules, scripted copper, routing, checks, silkscreen
 PRODUCTION.md        how to order: checklist (polarity, rotations), bring-up, costs; its overview is generated
+CHANGELOG.md         what changed in each board version and why, newest first, citing DESIGN.md's decisions
 pcbkit.toml          the project's settings for pcbkit release and production (templates/project has the defaults)
 BOM.md               from bomi
 boards/<name>/       one KiCad project per board (<name>.kicad_pro/.kicad_sch/.kicad_pcb, fp-lib-table)
@@ -45,8 +46,7 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 ## Versions, releases and orders
 
 - A board's version is `major.minor.patch`, written "1.0.0" in the data and v1.0 (then v1.0.1) on the board. Only
-  `pcbkit release` changes it, stamped into the title block of the board and its root schematic and into every
-  silkscreen text that carried the old label. What changed since the last release says which part goes up:
+  `pcbkit release` changes it. What changed since the last release says which part goes up:
   - **minor** when the circuit changed: the netlist or the BOM. A part added or removed, a part's footprint, value,
     LCSC or MPN field, DNP or exclude-from-BOM flag (a value alone counts), a pin on another net. Release reads them
     from the board, board-only footprints left out, and keeps their fingerprint in releases.toml (`circuit`). A net
@@ -60,11 +60,61 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
   ("R3 value 10k -> 4.7k", "net VIN gains U2.5"). A release recorded before pcbkit kept the circuit fingerprint has
   nothing to compare with: the next change gets a patch, and the output says why (`--minor` if the circuit changed).
   A board unchanged since such a release gets the fingerprint recorded on the next run.
-- A board's first release takes the version its title block already reads as (`v1.0`, `0.1`), or `--version`. That
-  is the version of the board that was built: a board whose circuit has changed since (a v1.3 that was ordered, then
-  rewired) needs `--version` for its first release, 1.4.0 here, or the new circuit goes out under the old version's
-  label. Generators that write a board read its version from its releases.toml rather than keeping their own, and
-  leave room on the silkscreen for v1.0.10.
+- **The label.** `[release] label = "short"` (the default) writes v1.4, then v1.4.1 after a layout fix: the shortest
+  text on the silkscreen, and the version as people say it. `label = "full"` writes v1.4.0 every time: for a
+  project whose boards were labelled so before (ESP Candle's v1.3.1 and v1.4.0), for firmware or a test jig that
+  reads the version back with three parts, or where patch releases are common and the label should keep one width.
+  Choose before the first release: the label names the release folders (`v1.4/` or `v1.4.0/`), and changing it
+  later leaves the earlier folders as they were named. Boards made to work together (a stack, a base and a top) can
+  share one version when every change to one is released with the other (`--version` for both); otherwise each
+  board has its own.
+- **The version and date on the board are KiCad's text variables**, never typed in. Release stamps the title block
+  of the board, of its root schematic and of every sheet under it in the board's folder that has a title block of
+  its own (KiCad prints each sheet's own on its page of schematic.pdf; Page Settings' "Export to other sheets" gives
+  them one), and gives the board and the root schematic each other's title and company when one has none. The
+  silkscreen says `${REVISION}` and `${ISSUE_DATE}` (for example `${ISSUE_DATE} ${REVISION}`, or
+  `<name>\n${REVISION}\n${ISSUE_DATE}` on the back), which KiCad fills from the board's title block when it plots
+  the Gerbers, so the board text never changes and DRC measures what it will print. `${TITLE}` and `${COMPANY}` work
+  the same. Two variables print wrong, and release refuses a board that has one on its silkscreen, copper or mask:
+  `v${REVISION}`, which prints vv1.4 (the rev is the label, its v included), and `${CURRENT_DATE}`, which prints the
+  day of the plot, so no two runs make the same Gerbers and the release can't be compared with. A version typed
+  into a silkscreen text (`v1.4 2026-03-01`) is still stamped where it matches the old label and an ISO date, and
+  release says so. Leave room on the silkscreen for the longest label (v1.0.10, v10.0) and date the format makes.
+- **The date format.** `[release] date_format` is the title block's date, so `${ISSUE_DATE}`'s, as a strftime
+  format: `"%Y-%m-%d"` (the default, 2026-11-15) sorts and reads the same everywhere; `"%m.%Y"` (11.2026) or `"%Y-%m"`
+  is shorter, for a small board or a project that labelled its boards by month before. It changes only what is
+  written: releases.toml keeps each release's date as a date, the fingerprints mask the title block, and a release
+  compared with later is stamped with the date its own `kicad/` copy carries. A version typed into the silkscreen
+  keeps its date in ISO.
+- **A first release.** A board without releases takes the version its title block reads only when that is a
+  draft's (`0.1-draft` gives 0.1.0) or there is none (1.0.0). A rev that is a version alone (`v1.4`, `1.3.1`, `2.0`)
+  may be the label of boards already built, and if the circuit or layout has changed since, the new board would go
+  out under the same label: release asks for `--version`, and says what git knows, the commit where the title block
+  first read that version and whether the netlist and BOM have changed since (`pcbkit changelog` says how). Use the
+  title block's own version when no board of it was built, else the next one: minor after a change to the circuit,
+  patch after one to the layout only. ESP Candle's top read 1.4.0 as converted from the boards that were built, and
+  35 netlist and BOM changes later went out as 1.5.0, with the base (from 1.3.1) as its matched pair.
+- **CHANGELOG.md** at the project's root says what changed in each board version and why, newest first:
+  - a section per version as released, `## <board> v1.1 (released 2026-11-20)`, or `## v1.5.0, both boards
+    (released 2026-11-15)` for boards released together; a `### <board>, from v1.0` per board under it;
+  - first what the version is for, and what it still works with (the pinout, outline, mounting and GPIO map
+    unchanged: a v1.5.0 base still fits a v1.4.0 top);
+  - one entry per change, grouped by block (power, USB, LEDs, layout, silkscreen), each citing the decision (D12) or
+    review finding (F27) behind it. A change that needs something elsewhere says so: firmware, an enclosure, a
+    different solder paste;
+  - a line saying the entries were checked against what the boards say: every netlist and BOM change since the last
+    release (or the board as built) is one of them;
+  - `## Unreleased` on top while the next version is being made, which becomes its section at the release;
+  - a closing section for the versions before the project used pcbkit, pointing at `archive/`.
+
+  `pcbkit changelog` drafts it: what changed in each board since its last release (as its `kicad/` copy has it),
+  since a board named (`--since archive/v1.3.1/board.kicad_pcb`, or a git commit or tag), or, for a board never
+  released, since the commit where its title block first read its version. `--all` adds each release against the one
+  before. Its lines are what changed; the changelog adds why. `--note` on `pcbkit release` is one line kept in the
+  version's releases.toml entry, in place of the bump's reason: what the version is for, pointing at the
+  changelog ("First KiCad version of both boards (CHANGELOG.md, D7-D30)"). releases.toml is written by release and
+  never edited; CHANGELOG.md is written by people and agents.
+- Generators that write a board read its version from its releases.toml rather than keeping their own.
 - A release folder is never rewritten: what was ordered stays in git as it was sent. Beside the fab files and PDFs it
   holds `kicad/`, a frozen copy of the board's KiCad project: the .kicad_pro, every schematic sheet (one from outside
   the board's folder in `kicad/outside/`), the .kicad_pcb, the .kicad_dru and the library tables (not the .kicad_prl,
@@ -91,7 +141,26 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
    changes it leads to need them again: its briefing in `docs/reviews/`, the changes the user accepted as decisions
    in DESIGN.md, its test points on the board, its bench list in PRODUCTION.md under "Bring-up".
 2. `pcbkit erc` clean, the project's netlist assertions pass.
-3. `pcbkit drc --save` with 0 errors, 0 unconnected, 0 parity issues; warnings explained in LAYOUT.md.
+3. `pcbkit drc --save` with 0 errors, 0 unconnected, 0 parity issues; warnings explained in LAYOUT.md. An error
+   that is accepted (a vendor's footprint as it was built, two courtyards closer than KiCad's rule but farther apart
+   than the assembler's minimum) is measured, then given a custom rule in the board's `.kicad_dru`: scoped to the
+   part, its limit just under the value measured, its name and comment saying the part, the value, the rule it
+   breaks and why that is accepted. ESP Candle's base, whose USB-C pads sit 0.244 mm from the connector's own
+   pegs against 0.25 mm, as JLC built v1.3.1:
+
+   ```
+   # Hole clearance inside the USB-C footprint as fabricated on v1.3.1: pads B1 and B12 are 0.244 mm from the
+   # connector's NPTH pegs, against the project's 0.25 mm. JLC built it so (D29).
+   (rule "USBC1: pads B1/B12 0.244 mm from its own pegs, as fabricated"
+     (constraint hole_clearance (min 0.24mm))
+     (condition "A.memberOfFootprint('USBC1') && B.memberOfFootprint('USBC1')"))
+   ```
+
+   DRC then passes, and the part closer than the rule's limit, or any other part closer than the project's, is still
+   an error. The rule is in the board's fingerprint and in each release's `kicad/` copy. A DRC exclusion would also
+   clear it, but it is kept in the .kicad_pro as the marker (its type, items and place), says no value, and comes
+   back when a part moves. Until then `pcbkit release` counts the board as a mockup and names the errors:
+   `mockup (drc 2: 2 hole_clearance (USBC1))`.
 4. `pcbkit check` with nothing unexplained; `pcbkit cleanup --dry-run` reports nothing.
 5. A second opinion from KiCadRoutingTools' checkers (`check_drc.py`, `check_weird.py`, `check_connected.py`) on a
    copy of the board, for via-in-paste, stacked copper and near-open joints.

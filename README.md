@@ -219,9 +219,11 @@ The Gerbers have the mask openings subtracted from the silkscreen; a board that 
 assembly panels with rails, fiducials and tooling holes, and runs DRC on each.
 
 `pcbkit release` is the step before an order. It checks every board, and gives each one that changed since its last
-release the next version, stamped into the title block and the silkscreen, so the KiCad file always says which
-version it is: a minor version (v1.0 to v1.1) when its netlist or BOM changed, a patch (v1.0.1) when only its layout
-did, a major one when you say so (a new pinout, outline or GPIO map). `--dry-run` says which, and what changed. That
+release the next version, stamped into the title blocks of the board and its schematic, so the KiCad files always
+say which version they are, and the silkscreen's `${REVISION}` and `${ISSUE_DATE}` print it: a minor version (v1.0
+to v1.1) when its netlist or BOM changed, a patch (v1.0.1) when only its layout did, a major one when you say so (a
+new pinout, outline or GPIO map). `--dry-run` says which, and what changed; `pcbkit changelog` drafts the project's
+CHANGELOG.md from the same comparison, with the layout's changes too. That
 version's Gerbers, BOMs, placement files and PDFs go into a committed release folder, with a frozen copy of its KiCad
 project that opens beside any other version. A KiCad save that only reshuffles the file, or a schematic note, doesn't
 count as a change: only a different netlist, BOM or fab output does, and zone fills that another KiCad refills within
@@ -318,7 +320,8 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit previews BOARD OUT` | schematic PDF, copper PNGs front and back, hand-assembly map, 1:1 printable PDF, plane views on 4-layer boards, 3-D renders |
 | `pcbkit print BOARD OUT.pdf` | the 1:1 printable PDF alone |
 | `pcbkit fab BOARD OUT [--houses jlcpcb,pcbway] [--placed field:NAME=VALUE] [--no-assembly] [--extra-layers L,..] [--keep-silk-in-mask] [--name N]` | JLC Gerber zip, BOM (one row per LCSC number) and CPL (front-only, back-only and both-sides variants), rotations corrected from the kicad-jlcpcb-tools table; `PLACEMENT-<name>.md`, the checklist for JLC's placement preview (polarised parts, their rotation rules, pad 1 positions); PCBWay's BOM and centroid with `pcbway`. The silkscreen has the mask openings subtracted unless `--keep-silk-in-mask` (legends printed inside a face panel's mask windows) |
-| `pcbkit release [PCB ..] [--patch\|--minor\|--major] [--version X.Y.Z] [--dry-run] [--refresh-parts]` | every board per `pcbkit.toml`: checks; a new version for each changed one (minor when its netlist or BOM changed, patch when only its layout did; `--patch` or `--minor` overrides, `--major` is yours to give), stamped into its KiCad files; its fab files, PDFs, previews and a frozen copy of its KiCad project (`kicad/`) in its release folder; then `pcbkit production`. `--refresh-parts` records a release's hand parts again after the part rules changed |
+| `pcbkit release [PCB ..] [--patch\|--minor\|--major] [--version X.Y.Z] [--dry-run] [--refresh-parts]` | every board per `pcbkit.toml`: checks; a new version for each changed one (minor when its netlist or BOM changed, patch when only its layout did; `--patch` or `--minor` overrides, `--major` is yours to give; a first release whose title block names a version needs `--version`), stamped into its KiCad files (the title blocks, in `date_format`; the silkscreen prints them through `${REVISION}` and `${ISSUE_DATE}`); its fab files, PDFs, previews and a frozen copy of its KiCad project (`kicad/`) in its release folder; then `pcbkit production`. `--refresh-parts` records a release's hand parts again after the part rules changed |
+| `pcbkit changelog [PCB ..] [--since REF\|PATH] [--all]` | what changed in each board, in words, for the project's CHANGELOG.md: the netlist and BOM, then the layout (parts moved, turned or flipped, tracks, vias, zones, outline, silkscreen texts), since its last release, since a board or git revision named, or, never released, since its title block first read its version; `--all` adds each release against the one before |
 | `pcbkit production [--check]` | PRODUCTION.md's overview from the releases, `production/orders/*/order.toml` and `production/stock.toml`; each order's ORDER.md (with the parts to buy for hand assembly) and upload folder; `--check` exits 1 on problems |
 | `pcbkit panel BOARD OUT [--style vcut\|mousebite\|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]` | KiKit assembly panels with rails, tooling holes, fiducials, order-number placeholder, unique per-copy references; DRC on each |
 | `pcbkit jlc --lcsc C25744` | SQL search over konnect's JLCPCB parts cache |
@@ -352,7 +355,7 @@ pcbkit_router/     the router itself, under its own Python (numba, numpy, scipy,
 bench/             corpus.json (the boards a router change is judged on, each at a pinned commit), baseline.json (their results)
 pcbkit/data/       jlc/corrections.csv (rotations, dated where JLC's preview showed them right), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
-templates/project  README/DESIGN/LAYOUT/PRODUCTION skeletons, pcbkit.toml and .gitignore for a new hardware repo
+templates/project  README/DESIGN/LAYOUT/PRODUCTION/CHANGELOG skeletons, pcbkit.toml and .gitignore for a new hardware repo
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested
 docs/              CONVENTIONS.md (how a project is laid out and documented), HARVEST.md (where each piece came from), ROUTER.md (the router's method), images/
 scripts/release.py version bump, check and tag; CHANGELOG.md lists each release, AGENTS.md says how to cut one

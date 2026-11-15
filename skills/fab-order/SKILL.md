@@ -22,7 +22,9 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 
 ## Before the browser
 
-1. The checks in this kit's `docs/CONVENTIONS.md`, "Checks before an order", and the project's PRODUCTION.md.
+1. The checks in this kit's `docs/CONVENTIONS.md`, "Checks before an order", and the project's PRODUCTION.md, and
+   the version's section in the project's CHANGELOG.md, checked against `pcbkit changelog`: what changed in the
+   boards being ordered, and anything a change needs elsewhere (a firmware setting, a part bought by hand).
 2. The files from `pcbkit release`, or from `pcbkit fab` for a quote. Regenerate them after any change to the kit's
    rotation table. Write down the placement count of the files you will upload: `pcbkit fab` prints it for each
    variant; for a release it is the CPL's rows less the header. JLC's BOM page must come to the same total.
@@ -62,6 +64,9 @@ has the fee table.
 ## The PCB form (2026-10)
 
 - Upload the Gerber zip. Check the size and layer count JLC detects against the board.
+- In JLC's Gerber viewer, read the version on the silkscreen: the release's label and date, as `${REVISION}` and
+  `${ISSUE_DATE}` print them from the title block. Text reading `${REVISION}` (a variable KiCad didn't know), vv1.4,
+  or an earlier version means the Gerbers aren't the release's: stop and tell the user.
 - At 4 layers JLC offers no tented vias, so use "Plugged".
 - The order number: JLC offers only "Remove Mark" (the default) or a 2D barcode. "Specify a location" is gone. Keep
   "Remove Mark" wherever a number would show.

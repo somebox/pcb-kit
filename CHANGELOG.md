@@ -16,8 +16,9 @@ as text variables with a changelog.
 - **`pcbkit changelog`: a draft of a project's CHANGELOG.md from its boards.** For each board, what changed in words:
   the netlist and BOM as `pcbkit release` compares them, a part's fields on one line and parts that changed alike
   together ("R4, R5 value 10Ω -> 20Ω, LCSC C17415 -> C17544"), then the layout: parts moved, turned or put on the
-  other side, board-only footprints, the tracks' count and length, vias, zones by net and layer, the outline and the
-  silkscreen texts. Against the last release's `kicad/` copy (or the board at its base commit), `--since` a board
+  other side, board-only footprints, the tracks' count and length, vias, zones (added, removed, reshaped), the
+  outline and the silkscreen texts (added, removed, moved). Against the last release's `kicad/` copy (or the board at
+  its base commit, when that is the release's netlist and BOM), `--since` a board
   (an as-built copy in `archive/`) or a git revision, or, for a board never released, the commit where its title
   block first read the version it reads; `--all` adds each release against the one before. On espcandle-pcb it
   gives the 35 netlist and BOM changes of the top since the board as converted from v1.4.0 (`c79678c`) and the 68
@@ -202,7 +203,7 @@ as text variables with a changelog.
   has none. It stamps the release's date even when the label is already right, and a board unchanged since its
   release gets that release's stamps where a file lacks them. It refuses a board whose silkscreen, copper or mask
   says `v${REVISION}` (prints vv1.0) or `${CURRENT_DATE}` (the plot's day, so no two runs make the same Gerbers), and
-  says when a text has the version typed in. The fab fingerprint, the masked source fingerprint and the silkscreen
+  says when a text has the version typed in; a board already released with one stays current, with a warning. The fab fingerprint, the masked source fingerprint and the silkscreen
   check after stamping were checked with variable texts: DRC measures them as KiCad fills them in. A title block
   without a rev or date gets one in the neutral copy the fab fingerprint is made from, as stamping gives it.
 - **A first release needs `--version` when the title block names a version** (`v1.4`, `1.3.1`, `2.0`): boards of it

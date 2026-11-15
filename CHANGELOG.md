@@ -17,7 +17,9 @@ as text variables with a changelog.
   the netlist and BOM as `pcbkit release` compares them, a part's fields on one line and parts that changed alike
   together ("R4, R5 value 10Ω -> 20Ω, LCSC C17415 -> C17544"), then the layout: parts moved, turned or put on the
   other side, board-only footprints, the tracks' count and length, vias, zones (added, removed, reshaped), the
-  outline and the silkscreen texts (added, removed, moved). Against the last release's `kicad/` copy (or the board at
+  outline, the silkscreen texts (added, removed, moved), a part's own texts moved on it (references placed by hand)
+  and a title or company that `${TITLE}` or `${COMPANY}` prints; nets by name, so KiCad renumbering them is no
+  change. Against the last release's `kicad/` copy (or the board at
   its base commit, when that is the release's netlist and BOM), `--since` a board
   (an as-built copy in `archive/`) or a git revision, or, for a board never released, the commit where its title
   block first read the version it reads; `--all` adds each release against the one before. On espcandle-pcb it

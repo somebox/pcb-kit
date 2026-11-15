@@ -153,7 +153,7 @@ def history(project, pcb):
             out += [title, ""] + ([note, ""] if note else []) + [f"- nothing to compare with: {was if old is None else now}",
                                                                ""]
             continue
-        out += section(title + f" (since {rs[i - 1]['label']}{was})", *changes(old, new), note=note)
+        out += section(title + f"{now} (since {rs[i - 1]['label']}{was})", *changes(old, new), note=note)
     return out
 
 

@@ -280,10 +280,20 @@ def source_fingerprint(pcb, settings=""):
 
 
 def preview_source(pcb):
-    """What previews are made from: the board and every schematic sheet, a sha1 each (the stamps included, since the
-    previews show them). A previews folder keeps it as SOURCE.txt."""
-    return "".join(f"{hashlib.sha1(open(f, 'rb').read()).hexdigest()}  {os.path.basename(f)}\n"
-                   for f in design_files(pcb))
+    """What previews are made from: the board and every schematic sheet beside it, then every other sheet under its
+    root schematic (in a subfolder, or outside the folder), a sha1 each (the stamps included, since the previews show
+    them). A previews folder keeps it as SOURCE.txt."""
+    from . import freeze
+    files = design_files(pcb)
+    root = os.path.splitext(pcb)[0] + ".kicad_sch"
+    beside = {os.path.abspath(f) for f in files}
+    under = sorted(p for p in freeze.sheets(root)[0] if p not in beside) if os.path.exists(root) else []
+
+    def sha(f):
+        with open(f, "rb") as fh:
+            return hashlib.sha1(fh.read()).hexdigest()
+    return "".join(f"{sha(f)}  {os.path.basename(f)}\n" for f in files) + \
+        "".join(f"{sha(f)}  {os.path.relpath(f, os.path.dirname(os.path.abspath(pcb)))}\n" for f in under)
 
 
 def _zip_files(path):
@@ -487,16 +497,32 @@ def _drawn(node, drop=()):
                       for x in node if not (isinstance(x, list) and x and x[0] in ("uuid", "tstamp") + drop)])
 
 
+def _masked(s):
+    return re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", s))
+
+
+def _net_named(node, codes):
+    """A track or via with its (net 3) as (net "GND"): KiCad 6 to 9 number the nets anew when one is added."""
+    return [["net", codes.get(str(x[1]), x[1])] if isinstance(x, list) and len(x) == 2 and x[0] == "net" else x
+            for x in node]
+
+
 def layout(pcb, text=None):
     """What a board's layout is made of, to say what changed (layout_changes): parts, {reference: (x, y, angle, side,
-    board only)}; tracks and their length in mm (segments and arcs); vias; zones, ("<net> on <layers>", the zone as
-    drawn: outline and settings, not its fill); the outline (its Edge.Cuts drawings, without their uuids); and the
-    silkscreen texts, (the text with a version or ISO date typed into it masked, its place, layer and font)."""
+    board only)}; tracks and their length in mm (segments and arcs); vias; where the tracks and vias are (a hash, by
+    net name); zones, ("<net> on <layers>", the zone as drawn: outline and settings, not its fill or net code); the
+    outline (its Edge.Cuts drawings, without their uuids); the silkscreen texts, (the text with a version or ISO date
+    typed into it masked, its place, layer and font); each footprint's shown silkscreen texts, as drawn in the
+    footprint's frame; and the title and company, with which of them the board's own texts print."""
     if text is None:
         with open(pcb, encoding="utf-8") as fh:
             text = fh.read()
     tree = sexp.parse(text)
-    out = dict(parts={}, tracks=0, length=0.0, vias=0, zones=[], outline=[], silk=[])
+    out = dict(parts={}, tracks=0, length=0.0, vias=0, zones=[], outline=[], silk=[], fp_silk={},
+               title=(title_field(text, "title"), title_field(text, "company")),
+               prints=sorted(k for k in ("TITLE", "COMPANY") if any("${%s}" % k in t for t, _ in plotted_texts(text))))
+    codes = {str(x[1]): str(x[2]) for x in tree[1:] if isinstance(x, list) and len(x) > 2 and x[0] == "net"} \
+        if isinstance(tree, list) else {}
     copper = []                        # where each track and via is, to tell routing moved from routing the same
     for c in tree[1:] if isinstance(tree, list) else []:
         if not isinstance(c, list) or not c:
@@ -504,7 +530,7 @@ def layout(pcb, text=None):
         head, layer = c[0], _child(c, "layer")
         layer = str(layer[1]) if layer and len(layer) > 1 else ""
         if head in ("segment", "arc", "via"):
-            copper.append(sexp.dump([x for x in c if not (isinstance(x, list) and x and x[0] in ("uuid", "tstamp"))]))
+            copper.append(_drawn(_net_named(c, codes)))
         if head in ("footprint", "module"):
             ref = next((str(x[2]) for x in c if isinstance(x, list) and len(x) > 2 and x[0] in ("property", "fp_text")
                         and x[1] in ("Reference", "reference")), "")
@@ -518,6 +544,9 @@ def layout(pcb, text=None):
             out["parts"][key] = (round(float(at[1]), 3), round(float(at[2]), 3),
                                  round(float(at[3]) % 360 if len(at) > 3 else 0.0, 2),
                                  "back" if layer.startswith("B.") else "front", board_only)
+            out["fp_silk"][key] = sorted(_masked(_drawn(x)) for x in c if isinstance(x, list) and x[:1] in
+                                         (["property"], ["fp_text"], ["fp_text_box"]) and not _hidden(x) and
+                                         str((_child(x, "layer") or ["", ""])[1]).endswith(".SilkS"))
         elif head == "segment":
             out["tracks"] += 1
             out["length"] += math.hypot(*(p - q for p, q in zip(_xy(_child(c, "end")), _xy(_child(c, "start")))))
@@ -531,12 +560,12 @@ def layout(pcb, text=None):
             name = str(net[-1]) if net and len(net) > 1 and not str(net[-1]).isdigit() else ""
             layers = _child(c, "layers") or _child(c, "layer") or []
             out["zones"].append((f"{name or 'no net'} on {', '.join(str(x) for x in layers[1:])}",
-                                 _drawn(c, ("filled_polygon", "fill_segments"))))
+                                 _drawn(c, ("filled_polygon", "fill_segments", "net", "net_name"))))
         elif head.startswith("gr_") and layer == "Edge.Cuts":
             out["outline"].append(sexp.dump([x for x in c if not (isinstance(x, list) and x and x[0] in
                                                                    ("uuid", "tstamp"))]))
         elif head in ("gr_text", "gr_text_box") and layer.endswith(".SilkS") and len(c) > 1:
-            out["silk"].append((re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", str(c[1]))), _drawn(c[:1] + c[2:])))
+            out["silk"].append((_masked(str(c[1])), _drawn(c[:1] + c[2:])))
     out["length"] = round(out["length"], 1)
     out["copper"] = hashlib.sha1("\n".join(sorted(copper)).encode()).hexdigest()
     out["zones"].sort()
@@ -595,6 +624,15 @@ def layout_changes(old, new):
     out += [f"silkscreen adds {_quote(t)}" + (f" (x{m - n})" if m - n > 1 else "") for t, n, m, _ in silk if m > n]
     out += [f"silkscreen removes {_quote(t)}" + (f" (x{n - m})" if n - m > 1 else "") for t, n, m, _ in silk if n > m]
     out += [f"silkscreen moves or restyles {_quote(t)}" for t, n, m, same in silk if n == m and not same]
+    fa, fb = old.get("fp_silk", {}), new.get("fp_silk", {})
+    texts = [r for r in fb if r in fa and fa[r] != fb[r]]
+    if texts:
+        out.append(f"moves or restyles the silkscreen texts of {len(texts)} part{'s' * (len(texts) > 1)}: "
+                   f"{_refs(texts)}")
+    for i, k in enumerate(("TITLE", "COMPANY")):
+        if k in new.get("prints", []) and old["title"][i] != new["title"][i]:
+            out.append(f"silkscreen prints another {k.lower()} (${{{k}}}): {_quote(old['title'][i])} -> "
+                       f"{_quote(new['title'][i])}")
     return out
 
 

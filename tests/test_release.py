@@ -278,6 +278,16 @@ class Stamp(unittest.TestCase):
         # stamped again with the same version and date, nothing changes
         self.assertEqual(V.stamp(self.pcb, "v1.1", "v1.1", "11.2026", "2026-11-15"), [])
 
+    def test_previews_are_of_every_sheet_shown(self):
+        """The previews' source lists the sheets beside the board as before, then the other sheets under the root
+        (a shared one here), so a stamp or edit there makes the previews stale."""
+        src = V.preview_source(self.pcb)
+        names = [line.split("  ", 1)[1] for line in src.splitlines()]
+        self.assertEqual(names, ["demo.kicad_pcb", "demo.kicad_sch", "io.kicad_sch", "power.kicad_sch",
+                                 os.path.join("..", "shared", "x.kicad_sch")])
+        write(self.shared, read(self.shared).replace('(rev "v1.0")', '(rev "v1.1")'))
+        self.assertNotEqual(V.preview_source(self.pcb), src)
+
     def test_a_board_already_released_takes_no_title(self):
         """Restamping a released board gives its files the release's stamps, not the other's title and company,
         which would change its source fingerprint."""
@@ -340,6 +350,40 @@ class Layout(unittest.TestCase):
         self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, refilled)), [])
         one = changed.replace('\t(gr_text "LOGO" (at 1 9) (layer "B.SilkS"))\n', "")
         self.assertEqual(V.layout_changes(V.layout(None, changed), V.layout(None, one)), ["silkscreen removes 'LOGO'"])
+
+    def test_net_codes_renumbered_are_no_change(self):
+        """KiCad 6 to 9 number nets anew when one is added: the tracks, vias and zones are compared by net name."""
+        old = ('(kicad_pcb (version 20221018)\n  (net 0 "")\n  (net 1 "GND")\n  (net 2 "VIN")\n'
+               '  (segment (start 0 0) (end 5 0) (width 0.25) (layer "F.Cu") (net 2) (tstamp "s1"))\n'
+               '  (via (at 5 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1) (tstamp "v1"))\n'
+               '  (zone (net 1) (net_name "GND") (layer "B.Cu") (tstamp "z1") (polygon (pts (xy 0 0) (xy 9 9))))\n)\n')
+        new = (old.replace('(net 1 "GND")\n  (net 2 "VIN")', '(net 1 "VIN")\n  (net 2 "GND")\n  (net 3 "OUT")')
+               .replace("(net 2) (tstamp", "(net @) (tstamp").replace("(net 1) (tstamp", "(net 2) (tstamp")
+               .replace("(net @)", "(net 1)").replace('(net 1) (net_name "GND")', '(net 2) (net_name "GND")'))
+        self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, new)), [])
+        moved = new.replace("(start 0 0) (end 5 0)", "(start 0 1) (end 5 1)")
+        self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, moved)),
+                         ["tracks or vias moved (as many, as long)"])
+
+    def test_footprint_texts_and_the_title_printed(self):
+        """A reference moved on its part, not with it, is silkscreen too (a hidden field isn't); a title block's
+        title is layout only where a board text prints it."""
+        a = LAYOUT_A.replace('(property "Reference" "R2" (at 0 0) (layer "F.SilkS"))',
+                             '(property "Reference" "R2" (at 0 0) (layer "F.SilkS"))'
+                             ' (property "Value" "10k" (at 0 1) (layer "F.Fab"))'
+                             ' (property "LCSC" "C25804" (at 0 2) (layer "F.SilkS") (hide yes))')
+        b = (a.replace('"Reference" "R1" (at 0 0)', '"Reference" "R1" (at 0 -1.2)')
+             .replace('"Value" "10k" (at 0 1)', '"Value" "10k" (at 0 3)')
+             .replace('"C25804" (at 0 2)', '"C25804" (at 0 5)'))
+        self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, b)),
+                         ["moves or restyles the silkscreen texts of 1 part: R1"])
+        titled = a.replace("(version 20250114)", '(version 20250114)\n\t(title_block (title "demo") (rev "v1.0"))')
+        retitled = titled.replace('(title "demo")', '(title "Demo board")')
+        self.assertEqual(V.layout_changes(V.layout(None, titled), V.layout(None, retitled)), [])
+        printed = titled.replace('"DEMO v1.0"', '"${TITLE} v1.0"')
+        self.assertEqual(V.layout_changes(V.layout(None, printed),
+                                          V.layout(None, printed.replace('(title "demo")', '(title "Demo board")'))),
+                         ["silkscreen prints another title (${TITLE}): 'demo' -> 'Demo board'"])
 
     def test_a_tracks_arc_has_its_length(self):
         arc = LAYOUT_A.replace("\t(via", '\t(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu"))\n\t(via')
@@ -631,6 +675,7 @@ def draw_board(path):
         fp.SetReference(ref)
         fp.SetValue(value)
         fp.SetField("LCSC", lcsc)
+        next(f for f in fp.GetFields() if f.GetName() == "LCSC").SetVisible(False)    # as a library part has it
         fp.SetAttributes(pcbnew.FP_SMD)
         fp.SetPosition(pcbnew.VECTOR2I(mm(x), mm(10)))
         for i, net in enumerate(pins):

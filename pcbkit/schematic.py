@@ -21,6 +21,17 @@ numbered from `base`. Harvested from the projects' builder.py; the sign, siebenu
 straight, L or Z run between them is clear of every symbol, text, other pin and other wire, it is drawn as a wire,
 and the net is named once, on the wire. Pins it can't reach keep their labels, so the netlist is the same either
 way; `pcbkit sch-lint` counts what was wired. Place the parts of a block so their pins line up and the wires follow.
+
+Placing by pin, so they do line up (pin positions are read from the symbol libraries, before anything is placed):
+
+    u = part("U5", "Regulator_Switching:TLV62569DBV", ..., x=200.66, y=165.1, pins={...})
+    sch.pin(u, "3")                                   # where U5's SW pin ends, on the sheet
+    sch.put(l2, "1", sch.step(sch.pin(u, "3"), "right", 7.62), toward="right")   # L2 in line with it, body to the right
+    end = sch.chain(sch.step(sch.pin(j, "2"), "right"), [f1, q5], toward="right")   # fuse, then FET, in series
+    sch.put(r9, "1", sch.step(sch.pin(r8, "2"), "down"), toward="down")          # a divider, one under the other
+
+`put` turns the part so its body lies `toward` that side of the pin and moves it so the pin lands on the point.
+`chain` does that for parts in series, each entering by the pin that shares a net with the part before.
 """
 import os
 import re
@@ -66,6 +77,138 @@ def P2(ref, lib, val, fp, lcsc, x, y, p1, p2, rot=0, fields=None, mpn=None):
     if mpn:
         f["MPN"] = mpn
     return dict(ref=ref, lib=lib, val=val, fp=fp, x=x, y=y, rot=rot, lcsc=lcsc, fields=f, pins={"1": p1, "2": p2})
+
+
+DIRS = {"right": (1, 0), "left": (-1, 0), "up": (0, -1), "down": (0, 1)}  # on the sheet, y grows downwards
+_GEOMETRY = {}
+
+
+def _library(nick):
+    """The file (or KiCad 10 directory) of a symbol library: the sheet folder's sym-lib-table first, then KiCad's own."""
+    from . import sexp
+    from .kicad import KICAD_SYMBOLS
+    table = os.path.join(P, "sym-lib-table")
+    if P and os.path.exists(table):
+        with open(table, encoding="utf-8") as f:
+            for lib in sexp.find(sexp.parse(f.read()), "lib"):
+                if sexp.first(lib, "name")[1] == nick:
+                    return os.path.normpath(sexp.first(lib, "uri")[1].replace("${KIPRJMOD}", P.rstrip("/")))
+    for ext in (".kicad_sym", ".kicad_symdir"):
+        if os.path.exists(os.path.join(KICAD_SYMBOLS, nick + ext)):
+            return os.path.join(KICAD_SYMBOLS, nick + ext)
+    raise FileNotFoundError("symbol library %r: not in %s nor in %s" % (nick, table, KICAD_SYMBOLS))
+
+
+def _symbol(path, name):
+    """One symbol of a library, parsed: only its own text is read, the stock libraries are megabytes."""
+    from . import sexp
+    if os.path.isdir(path):
+        path = os.path.join(path, name + ".kicad_sym")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    m = re.search(r'^\s*\(symbol "%s"\s' % re.escape(name), text, re.M)
+    if not m:
+        raise KeyError("symbol %r is not in %s" % (name, path))
+    i = start = text.index("(", m.start())
+    depth, quoted = 0, False
+    while True:
+        ch = text[i]
+        if quoted:
+            i += ch == "\\"
+            quoted = ch != '"'
+        elif ch == '"':
+            quoted = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if not depth:
+                break
+        i += 1
+    sym = sexp.parse(text[start:i + 1])
+    parent = sexp.first(sym, "extends")
+    return _symbol(path, parent[1]) if parent else sym
+
+
+def geometry(lib_id, unit=1):
+    """({pin: (x, y)}, [(x, y), ...] of the drawing) of a library symbol, in the library's own coordinates (y up)."""
+    if (P, lib_id, unit) not in _GEOMETRY:
+        from .checks.sch_lint import _lib_symbols
+        nick, name = lib_id.split(":", 1)
+        pins, pts = {}, []
+        subs, = _lib_symbols(["lib", ["lib_symbols", _symbol(_library(nick), name)]]).values()  # a parent's, if derived
+        for u, style, gp, pn in subs:
+            if u in (0, unit) and style in (0, 1):
+                pts += gp
+                pins.update({num: (x, y) for num, x, y in pn})
+        _GEOMETRY[(P, lib_id, unit)] = (pins, pts)
+    return _GEOMETRY[(P, lib_id, unit)]
+
+
+def _offsets(c, rot=None):
+    """Sheet offsets from the part's origin: ({pin: (dx, dy)}, (dx, dy) of the middle of its drawing and pins)."""
+    from .checks.sch_lint import apply, transform
+    m = transform(c.get("rot", 0) if rot is None else rot, c.get("mirror"))
+    pins, pts = geometry(c["lib"], c.get("unit", 1))
+    off = {n: apply(m, x, -y) for n, (x, y) in pins.items()}
+    allp = [apply(m, x, -y) for x, y in pts] + list(off.values())
+    mid = ((min(p[0] for p in allp) + max(p[0] for p in allp)) / 2, (min(p[1] for p in allp) + max(p[1] for p in allp)) / 2)
+    return off, mid
+
+
+def pins(c):
+    """{pin: (x, y)} on the sheet for a component dict, from its lib, x, y, rot, mirror and unit."""
+    return {n: (round(c["x"] + dx, 2), round(c["y"] + dy, 2)) for n, (dx, dy) in _offsets(c)[0].items()}
+
+
+def pin(c, n):
+    return pins(c)[str(n)]
+
+
+def step(point, toward, d=5.08):
+    """The point d mm from `point` towards "right", "left", "up" or "down"."""
+    dx, dy = DIRS[toward]
+    return (round(point[0] + d * dx, 2), round(point[1] + d * dy, 2))
+
+
+def put(c, n, at, toward=None):
+    """Move component c so its pin n lands on `at`. With `toward`, first turn it so the rest of the part lies on
+    that side of the pin: a resistor put by pin 1 toward "down" hangs below the point. Returns c."""
+    n = str(n)
+    if toward:
+        dx, dy = DIRS[toward]
+
+        def along(rot):
+            off, mid = _offsets(c, rot)
+            return (mid[0] - off[n][0]) * dx + (mid[1] - off[n][1]) * dy
+        c["rot"] = max((0, 90, 180, 270), key=lambda rot: (round(along(rot), 3), -rot))
+    off = _offsets(c)[0][n]
+    c["x"], c["y"] = round(at[0] - off[0], 2), round(at[1] - off[1], 2)
+    return c
+
+
+def chain(at, comps, toward="right", gap=5.08):
+    """Parts in series from `at`, each `gap` mm after the one before, so build(wire=...) joins them with straight
+    wires. A two-pin part enters by the pin that shares a net with the part before it (the first: the pin that
+    doesn't share one with the second, else pin 1) and leaves by the other; give (c, pin_in, pin_out) for any other
+    part. Returns where the last part's leaving pin ends."""
+    items = [(c, None, None) if isinstance(c, dict) else tuple(c) for c in comps]
+    out = at
+    for i, (c, pin_in, pin_out) in enumerate(items):
+        if pin_in is None:
+            names = sorted(c["pins"])
+            assert len(names) == 2, "%s has %d pins: give (part, pin_in, pin_out)" % (c["ref"], len(names))
+            if i:
+                before = set(items[i - 1][0]["pins"].values())
+                shared = [n for n in names if c["pins"][n] in before]
+            else:
+                after = set(items[1][0]["pins"].values()) if len(items) > 1 else set()
+                shared = [n for n in names if c["pins"][n] not in after]
+            pin_in = shared[0] if len(shared) == 1 else names[0]
+            pin_out = [n for n in names if n != pin_in][0]
+        put(c, pin_in, at if not i else step(out, toward, gap), toward)
+        out = pin(c, pin_out)
+    return out
 
 
 WIRE_PINS = 6  # the largest local net build(wire=...) draws; a wider fan-out keeps its labels

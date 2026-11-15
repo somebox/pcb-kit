@@ -8,6 +8,16 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **Placing schematic parts by pin: `pcbkit.schematic.pin`, `put`, `step` and `chain`.** A sheet script gave every
+  part an absolute x, y, so a part ended up wherever there was room, away from the pin it works with. `pin(c, n)` is
+  where a component's pin ends on the sheet, read from the symbol library (KiCad's, or the project's through the
+  sheet folder's sym-lib-table) before anything is placed; `put(c, n, point, toward="down")` turns the part so its
+  body lies on that side of the pin and lands the pin on the point; `step(point, "right", 7.62)` is a point beside
+  another; `chain(point, [f1, q5], toward="right")` sets parts in series, each entered by the pin that shares a
+  net with the one before. Pins that line up are what `build(wire=...)` joins with a straight wire. The predicted
+  positions match konnect's placement for all 889 pins of the esp32-s3-ha-node and siebenuhr sheets. Five `put`
+  calls on a copy of ha-node's power sheet (the buck's boot capacitor, catch diode and inductor on the switch pin's
+  row; the CC pull-downs on their pins) take it to 12 of 13 small local nets wired, netlist unchanged.
 - **`pcbkit.schematic.build(..., wire=25.4)` draws small local nets as wires.** Without it every pin of a local net
   gets a label, and a feedback divider or a boot capacitor reads as parts with no visible connection. With it, two
   pins of a net (2 to 6 pins, not power, hierarchical or global) within that many mm are joined by a straight, L or

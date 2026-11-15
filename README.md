@@ -340,7 +340,8 @@ Library use from a project script:
 
 ```python
 from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect;
-                                             # sch.build(..., wire=25.4) draws small local nets as wires, not labels
+                                             # sch.build(..., wire=25.4) draws small local nets as wires, not labels;
+                                             # sch.pin/put/step/chain place a part by one of its pins
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box

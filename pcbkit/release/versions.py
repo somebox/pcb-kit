@@ -498,13 +498,33 @@ def _drawn(node, drop=()):
 
 
 def _masked(s):
-    return re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", s))
+    """A text with the version typed into it and its dates masked, as release stamps them; any other text as it is."""
+    return re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", s)) if re.search(LABEL_IN_TEXT, s) else s
 
 
 def _net_named(node, codes):
     """A track or via with its (net 3) as (net "GND"): KiCad 6 to 9 number the nets anew when one is added."""
-    return [["net", codes.get(str(x[1]), x[1])] if isinstance(x, list) and len(x) == 2 and x[0] == "net" else x
-            for x in node]
+    return [["net", codes.get(str(x[1]), x[1])] if isinstance(x, list) and len(x) == 2 and x[0] == "net"
+            and isinstance(x[1], sexp.Sym) else x for x in node]
+
+
+def _net_name(node, codes):
+    """A zone's or pad's net by name: (net_name "GND"), (net "GND"), or a bare code through the board's net table; a
+    quoted name that is a number ("5") is a name."""
+    net = _child(node, "net_name") or _child(node, "net")
+    v = net[-1] if net and len(net) > 1 else None
+    return codes.get(str(v), "") if isinstance(v, sexp.Sym) else str(v) if v is not None else ""
+
+
+def _in_frame(node, angle):
+    """A footprint's pad or text with its angle in the footprint's frame: the file writes it turned with the part."""
+    out = []
+    for x in node:
+        if isinstance(x, list) and x[:1] == ["at"] and len(x) >= 3:
+            a = float(x[3]) if len(x) > 3 and not isinstance(x[3], list) and str(x[3]) not in ("unlocked",) else 0.0
+            x = ["at", x[1], x[2], sexp.Sym(f"{round((a - angle) % 360, 2):g}")] + x[4:]
+        out.append(x)
+    return out
 
 
 def layout(pcb, text=None):
@@ -518,7 +538,7 @@ def layout(pcb, text=None):
         with open(pcb, encoding="utf-8") as fh:
             text = fh.read()
     tree = sexp.parse(text)
-    out = dict(parts={}, tracks=0, length=0.0, vias=0, zones=[], outline=[], silk=[], fp_silk={},
+    out = dict(parts={}, tracks=0, length=0.0, vias=0, zones=[], outline=[], silk=[], fp_silk={}, pads={},
                title=(title_field(text, "title"), title_field(text, "company")),
                prints=sorted(k for k in ("TITLE", "COMPANY") if any("${%s}" % k in t for t, _ in plotted_texts(text))))
     codes = {str(x[1]): str(x[2]) for x in tree[1:] if isinstance(x, list) and len(x) > 2 and x[0] == "net"} \
@@ -544,9 +564,13 @@ def layout(pcb, text=None):
             out["parts"][key] = (round(float(at[1]), 3), round(float(at[2]), 3),
                                  round(float(at[3]) % 360 if len(at) > 3 else 0.0, 2),
                                  "back" if layer.startswith("B.") else "front", board_only)
-            out["fp_silk"][key] = sorted(_masked(_drawn(x)) for x in c if isinstance(x, list) and x[:1] in
-                                         (["property"], ["fp_text"], ["fp_text_box"]) and not _hidden(x) and
-                                         str((_child(x, "layer") or ["", ""])[1]).endswith(".SilkS"))
+            turn = float(at[3]) if len(at) > 3 else 0.0
+            out["fp_silk"][key] = sorted(_masked(_drawn(_in_frame(x, turn))) for x in c if isinstance(x, list) and
+                                         x[:1] in (["property"], ["fp_text"], ["fp_text_box"]) and not _hidden(x)
+                                         and str((_child(x, "layer") or ["", ""])[1]).endswith(".SilkS"))
+            # the pads and holes as the part has them, without their nets (the circuit says those)
+            out["pads"][key] = (str(c[1]), sorted(_drawn(_in_frame(x, turn), ("net", "pinfunction", "pintype"))
+                                                  for x in c if isinstance(x, list) and x[:1] == ["pad"]))
         elif head == "segment":
             out["tracks"] += 1
             out["length"] += math.hypot(*(p - q for p, q in zip(_xy(_child(c, "end")), _xy(_child(c, "start")))))
@@ -556,8 +580,7 @@ def layout(pcb, text=None):
         elif head == "via":
             out["vias"] += 1
         elif head == "zone":
-            net = _child(c, "net_name") or _child(c, "net")
-            name = str(net[-1]) if net and len(net) > 1 and not str(net[-1]).isdigit() else ""
+            name = _net_name(c, codes)
             layers = _child(c, "layers") or _child(c, "layer") or []
             out["zones"].append((f"{name or 'no net'} on {', '.join(str(x) for x in layers[1:])}",
                                  _drawn(c, ("filled_polygon", "fill_segments", "net", "net_name"))))
@@ -624,6 +647,10 @@ def layout_changes(old, new):
     out += [f"silkscreen adds {_quote(t)}" + (f" (x{m - n})" if m - n > 1 else "") for t, n, m, _ in silk if m > n]
     out += [f"silkscreen removes {_quote(t)}" + (f" (x{n - m})" if n - m > 1 else "") for t, n, m, _ in silk if n > m]
     out += [f"silkscreen moves or restyles {_quote(t)}" for t, n, m, same in silk if n == m and not same]
+    pa, pb = old.get("pads", {}), new.get("pads", {})
+    pads = [r for r in pb if r in pa and pa[r][0] == pb[r][0] and pa[r][1] != pb[r][1]]   # the same footprint name
+    if pads:
+        out.append(f"changes the pads or holes of {len(pads)} part{'s' * (len(pads) > 1)}: {_refs(pads)}")
     fa, fb = old.get("fp_silk", {}), new.get("fp_silk", {})
     texts = [r for r in fb if r in fa and fa[r] != fb[r]]
     if texts:
@@ -868,10 +895,10 @@ def sheets_to_stamp(pcb):
     root = os.path.splitext(pcb)[0] + ".kicad_sch"
     if not os.path.exists(root):
         return []
-    folder = os.path.dirname(os.path.abspath(pcb))
+    folder = os.path.realpath(os.path.dirname(os.path.abspath(pcb)))
     place, _, _ = freeze.sheets(root)
-    return sorted(p for p in place if p != os.path.abspath(root) and not os.path.relpath(p, folder).startswith("..")
-                  and title_block(_read(p)))
+    return sorted(p for p in place if os.path.realpath(p) != os.path.realpath(root)
+                  and not os.path.relpath(os.path.realpath(p), folder).startswith("..") and title_block(_read(p)))
 
 
 def stamp(pcb, old_label, new_label, date, text_date=None, dry=False, fill=True):
@@ -915,9 +942,10 @@ def stamp(pcb, old_label, new_label, date, text_date=None, dry=False, fill=True)
     return [path for path, _ in edits]
 
 
-def locked(pcb):
-    """KiCad has the board's folder open (its lock files)."""
-    return sorted(glob.glob(os.path.join(os.path.dirname(pcb), "~*.lck")))
+def locked(pcb, files=()):
+    """KiCad has the board's folder open, or the folder of one of files (a sheet in a subfolder): their lock files."""
+    dirs = {os.path.dirname(os.path.abspath(f)) for f in [pcb, *files]}
+    return sorted(x for d in dirs for x in glob.glob(os.path.join(d, "~*.lck")))
 
 
 # ---- releases.toml --------------------------------------------------------------------------------------------------

@@ -265,9 +265,10 @@ def restamp(pcb, profile, before, old_label, new_label, date, text_date=None, fi
     """Stamp new_label and the date into the board and its schematic (V.stamp); None, or why not. Nothing to change
     is no change. DRC again when the board changed: no new errors, no more silkscreen findings."""
     pcb_path = pcb["abspath"]
-    if not V.stamp(pcb_path, old_label, new_label, date, text_date, dry=True, fill=fill):
+    files = V.stamp(pcb_path, old_label, new_label, date, text_date, dry=True, fill=fill)
+    if not files:
         return None
-    lock = V.locked(pcb_path)
+    lock = V.locked(pcb_path, files)
     if lock:
         return "open in KiCad (" + " ".join(os.path.basename(x) for x in lock) + ")"
     if pcb_path not in V.stamp(pcb_path, old_label, new_label, date, text_date, fill=fill):

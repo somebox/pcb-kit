@@ -288,6 +288,24 @@ class Stamp(unittest.TestCase):
         write(self.shared, read(self.shared).replace('(rev "v1.0")', '(rev "v1.1")'))
         self.assertNotEqual(V.preview_source(self.pcb), src)
 
+    def test_a_sheet_linked_from_outside_is_not_stamped(self):
+        """A sheet in the board's folder that is a link to a shared one is the shared one: left alone."""
+        os.symlink(self.shared, os.path.join(self.dir, "link.kicad_sch"))
+        root = os.path.join(self.dir, "demo.kicad_sch")
+        write(root, schematic(uid(1), [(uid(11), "power.kicad_sch", "2"), (uid(14), "link.kicad_sch", "3")]))
+        shared = read(self.shared)
+        self.assertEqual([os.path.basename(f) for f in V.sheets_to_stamp(self.pcb)], ["power.kicad_sch"])
+        V.stamp(self.pcb, "v1.0", "v1.1", "2026-11-15")
+        self.assertEqual(read(self.shared), shared)
+
+    def test_a_sheet_open_in_a_subfolder_is_a_lock(self):
+        sub = os.path.join(self.dir, "sheets")
+        os.makedirs(sub)
+        write(os.path.join(sub, "~power.kicad_sch.lck"), "{}\n")
+        self.assertEqual(V.locked(self.pcb), [])
+        self.assertEqual([os.path.basename(f) for f in V.locked(self.pcb, [os.path.join(sub, "power.kicad_sch")])],
+                         ["~power.kicad_sch.lck"])
+
     def test_a_board_already_released_takes_no_title(self):
         """Restamping a released board gives its files the release's stamps, not the other's title and company,
         which would change its source fingerprint."""
@@ -301,7 +319,7 @@ LAYOUT_A = """(kicad_pcb (version 20250114)
 	(gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts") (uuid "a"))
 	(gr_text "DEMO v1.0" (at 5 5) (layer "F.SilkS"))
 	(footprint "demo:R_0603" (layer "F.Cu") (at 8 10) (property "Reference" "R1" (at 0 0) (layer "F.SilkS")))
-	(footprint "demo:R_0603" (layer "F.Cu") (at 16 10 90) (property "Reference" "R2" (at 0 0) (layer "F.SilkS")))
+	(footprint "demo:R_0603" (layer "F.Cu") (at 16 10 90) (property "Reference" "R2" (at 0 0 90) (layer "F.SilkS")))
 	(footprint "demo:J" (layer "F.Cu") (at 24 10) (property "Reference" "J1" (at 0 0) (layer "F.SilkS")))
 	(footprint "demo:Logo" (layer "F.Cu") (at 2 2) (attr board_only)
 		(property "Reference" "G1" (at 0 0) (layer "F.SilkS")))
@@ -316,6 +334,7 @@ class Layout(unittest.TestCase):
     """layout_changes() and the changelog's grouping, on boards written out by hand."""
     def test_what_moved(self):
         new = (LAYOUT_A.replace("(at 8 10)", "(at 9 10)").replace("(at 16 10 90)", "(at 16 10 180)")
+               .replace('"R2" (at 0 0 90)', '"R2" (at 0 0 180)')                    # KiCad turns its texts too
                .replace('"demo:J" (layer "F.Cu")', '"demo:J" (layer "B.Cu")')
                .replace('(end 30 20)', '(end 32 20)').replace('"DEMO v1.0"', '"DEMO v1.1"')
                .replace("\t(zone", '\t(via (at 14 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "GND"))\n'
@@ -368,8 +387,8 @@ class Layout(unittest.TestCase):
     def test_footprint_texts_and_the_title_printed(self):
         """A reference moved on its part, not with it, is silkscreen too (a hidden field isn't); a title block's
         title is layout only where a board text prints it."""
-        a = LAYOUT_A.replace('(property "Reference" "R2" (at 0 0) (layer "F.SilkS"))',
-                             '(property "Reference" "R2" (at 0 0) (layer "F.SilkS"))'
+        a = LAYOUT_A.replace('(property "Reference" "R2" (at 0 0 90) (layer "F.SilkS"))',
+                             '(property "Reference" "R2" (at 0 0 90) (layer "F.SilkS"))'
                              ' (property "Value" "10k" (at 0 1) (layer "F.Fab"))'
                              ' (property "LCSC" "C25804" (at 0 2) (layer "F.SilkS") (hide yes))')
         b = (a.replace('"Reference" "R1" (at 0 0)', '"Reference" "R1" (at 0 -1.2)')
@@ -384,6 +403,24 @@ class Layout(unittest.TestCase):
         self.assertEqual(V.layout_changes(V.layout(None, printed),
                                           V.layout(None, printed.replace('(title "demo")', '(title "Demo board")'))),
                          ["silkscreen prints another title (${TITLE}): 'demo' -> 'Demo board'"])
+
+    def test_pads_holes_and_quoted_net_names(self):
+        """A part's pads and holes as it has them, its nets aside, and turned with it; a zone's net quoted as a
+        number is a name; a date in a text without a version is the text's own."""
+        pads = ('(pad "1" smd rect (at -0.8 0 90) (size 0.8 0.9) (layers "F.Cu") (net "VIN"))'
+                ' (pad "" np_thru_hole circle (at 0 0 90) (size 1 1) (drill 1) (layers "*.Cu"))')
+        a = LAYOUT_A.replace('"R2" (at 0 0 90) (layer "F.SilkS"))', '"R2" (at 0 0 90) (layer "F.SilkS")) ' + pads)
+        a = a.replace('(zone (net "GND")', '(zone (net "5")').replace('"DEMO v1.0"', '"CALIBRATED 2026-11-01"')
+        b = (a.replace("(size 0.8 0.9)", "(size 0.9 0.9)").replace("(drill 1)", "(drill 1.1)")
+             .replace('(net "VIN"))', '(net "OUT"))').replace('(zone (net "5")', '(zone (net "6")')
+             .replace("2026-11-01", "2026-11-02"))
+        self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, b)),
+                         ["removes a zone: 5 on F.Cu, B.Cu", "adds a zone: 6 on F.Cu, B.Cu",
+                          "silkscreen adds 'CALIBRATED 2026-11-02'", "silkscreen removes 'CALIBRATED 2026-11-01'",
+                          "changes the pads or holes of 1 part: R2"])
+        turned = (a.replace("(at 16 10 90)", "(at 16 10 180)").replace("(at 0 0 90)", "(at 0 0 180)")
+                  .replace("(at -0.8 0 90)", "(at -0.8 0 180)"))
+        self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, turned)), ["turns R2 90 -> 180"])
 
     def test_a_tracks_arc_has_its_length(self):
         arc = LAYOUT_A.replace("\t(via", '\t(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu"))\n\t(via')

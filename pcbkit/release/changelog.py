@@ -150,8 +150,8 @@ def history(project, pcb):
             continue
         (old, was), (new, now) = _copy(project, pcb, rs[i - 1]), _copy(project, pcb, r)
         if old is None or new is None:
-            out += [title, ""] + ([note, ""] if note else []) + [f"- nothing to compare with: {was if old is None else now}",
-                                                               ""]
+            why = was if old is None else now
+            out += [title, ""] + ([note, ""] if note else []) + [f"- nothing to compare with: {why}", ""]
             continue
         out += section(title + f"{now} (since {rs[i - 1]['label']}{was})", *changes(old, new), note=note)
     return out

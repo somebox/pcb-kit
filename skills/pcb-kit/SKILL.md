@@ -15,6 +15,7 @@ kicad-cli takes it from `pcbkit.kicad.KICAD_CLI` too, not from `/Applications/Ki
 | Situation | Command |
 | --- | --- |
 | Is the schematic legal? | `pcbkit erc boards/x/x.kicad_sch` |
+| Does the schematic read well? | `pcbkit sch-lint boards/x/x.kicad_sch` (every sheet below it): texts on top of each other or on another symbol, wires through text, a reference or value far from its part, and small local nets (2 to 4 pins, not leaving the sheet) joined by labels where a wire would show the circuit. `--summary` for the counts per sheet. Then open the sheet in `docs/previews/<board>/schematic.pdf` and look: the check estimates text sizes |
 | Is the schematic what we meant? | run the project's netlist assertions (built on `pcbkit.checks.netlist.Netlist`); `pcbkit nets SCH NET...` to look |
 | Is the board clean? | `pcbkit drc BOARD --save` (refills zones and writes the board back; 0 errors, 0 unconnected, 0 parity) |
 | Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds, courtyards), `pcbkit cleanup BOARD --dry-run` (after a scripted route: `--dangling` too) |

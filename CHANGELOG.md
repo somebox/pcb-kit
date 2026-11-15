@@ -7,6 +7,17 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Added
+- **`pcbkit sch-lint`: how a schematic reads, measured from the files.** ERC says a schematic is legal; this lists
+  what makes it hard to read: two texts on top of each other, a text across another symbol, a wire through a text
+  or through the middle of a symbol, a reference or value more than 5 mm from its part, a part off the page, a sheet
+  with no title. And it counts each sheet's small local nets (two to four pins, no global or hierarchical label):
+  wired, joined by labels between pins within 25 mm (`label-hop`: draw the wire) or further apart (`label-island`:
+  the part sits away from what it works with). It reads the root and every sheet below it with pcbkit's parser, so
+  it needs neither KiCad nor konnect; text sizes are estimated, and it exits 0 unless `--strict`. On the generated
+  sheets of four projects most small local nets are joined by labels (siebenuhr's mcu sheet: 0 wired, 40 by label).
+  The reading rules come from [modular-schematic-layout](https://github.com/Ausanx/modular-schematic-layout).
+
 ### Changed
 - **More JLC rotations from the preview (2026-11-15).** KiCad's `TSOT-23-6` gets -90 like its SOT-23-6, which it is
   laid out as: it matched the never-checked `^TSOT-23` (+180), a quarter turn off for an LMR51625. Two part rules

@@ -378,6 +378,12 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
                               str(last["date"]), fill=False)
                 said = f"{what}: " + (f"not stamped, {why}" if why else f"stamped {last['label']}")
             r["note"] = "; ".join(x for x in (r.get("note"), said) if x)
+        # released before pcbkit refused them, or since: its next release will be refused, and the files it would
+        # make now can differ from the release's (${CURRENT_DATE})
+        with open(pcb_path, encoding="utf-8") as fh:
+            wrong = V.label_problems(fh.read(), on_board)[0]
+        if wrong:
+            r["note"] = "; ".join(x for x in (r.get("note"), "warning: " + "; ".join(wrong)) if x)
         if project.release["previews"] and not dry and not previews_current(project.previews_dir(pcb), pcb_path):
             r["previews"] = make_previews(project, pcb, pcb_path)
             V.update_last(rdir, key, previews=hashlib.sha1(V.preview_source(pcb_path).encode()).hexdigest())
@@ -413,10 +419,15 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
     if dry:
         return dict(state="would release", version=new, label=lab, checks=c, note=said)
     day = V.today()
+    with open(pcb_path, encoding="utf-8") as fh:
+        unstamped = V.neutral(fh.read())
     stuck = restamp(pcb, profile, c, old_label, lab, V.date_text(day, project.release["date_format"]),
                     day.isoformat())
     if stuck:
         return dict(state="not released: " + stuck, checks=c)
+    with open(pcb_path, encoding="utf-8") as fh:
+        if V.neutral(fh.read()) != unstamped:      # it took the schematic's title or company, which ${TITLE} prints
+            ffp = fab_fingerprint(project, pcb_path, profile)
     entry = dict(version=new, label=lab, date=day, source=source_key(project, pcb), fab=ffp, circuit=cfp,
                  equivalent=[], base_commit=git(project, "rev-parse", "--short", "HEAD"), note=note or why,
                  parts=production.board_parts(project, pcb), parts_inputs=production.hand_inputs(project, pcb))

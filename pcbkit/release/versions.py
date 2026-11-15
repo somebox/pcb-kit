@@ -480,11 +480,18 @@ def _child(node, key):
     return next((c for c in node if isinstance(c, list) and c and c[0] == key), None)
 
 
+def _drawn(node, drop=()):
+    """An item as drawn, to compare: the file's S-expression without its uuid and the children named in drop; a
+    zone's (fill yes ...) without the yes, which says whether it was filled when saved."""
+    return sexp.dump([[y for y in x if y != "yes"] if isinstance(x, list) and x[:1] == ["fill"] else x
+                      for x in node if not (isinstance(x, list) and x and x[0] in ("uuid", "tstamp") + drop)])
+
+
 def layout(pcb, text=None):
     """What a board's layout is made of, to say what changed (layout_changes): parts, {reference: (x, y, angle, side,
-    board only)}; tracks and their length in mm (segments and arcs); vias; zones, "<net> on <layers>" each; the
-    outline (its Edge.Cuts drawings, without their uuids); and the silkscreen texts, a version or ISO date typed
-    into one masked."""
+    board only)}; tracks and their length in mm (segments and arcs); vias; zones, ("<net> on <layers>", the zone as
+    drawn: outline and settings, not its fill); the outline (its Edge.Cuts drawings, without their uuids); and the
+    silkscreen texts, (the text with a version or ISO date typed into it masked, its place, layer and font)."""
     if text is None:
         with open(pcb, encoding="utf-8") as fh:
             text = fh.read()
@@ -523,12 +530,13 @@ def layout(pcb, text=None):
             net = _child(c, "net_name") or _child(c, "net")
             name = str(net[-1]) if net and len(net) > 1 and not str(net[-1]).isdigit() else ""
             layers = _child(c, "layers") or _child(c, "layer") or []
-            out["zones"].append(f"{name or 'no net'} on {', '.join(str(x) for x in layers[1:])}")
+            out["zones"].append((f"{name or 'no net'} on {', '.join(str(x) for x in layers[1:])}",
+                                 _drawn(c, ("filled_polygon", "fill_segments"))))
         elif head.startswith("gr_") and layer == "Edge.Cuts":
             out["outline"].append(sexp.dump([x for x in c if not (isinstance(x, list) and x and x[0] in
                                                                    ("uuid", "tstamp"))]))
         elif head in ("gr_text", "gr_text_box") and layer.endswith(".SilkS") and len(c) > 1:
-            out["silk"].append(re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", str(c[1]))))
+            out["silk"].append((re.sub(DATE, "#", re.sub(LABEL_IN_TEXT, "v#", str(c[1]))), _drawn(c[:1] + c[2:])))
     out["length"] = round(out["length"], 1)
     out["copper"] = hashlib.sha1("\n".join(sorted(copper)).encode()).hexdigest()
     out["zones"].sort()
@@ -540,13 +548,6 @@ def layout(pcb, text=None):
 def _refs(refs, most=8):
     refs = sorted(refs, key=_natural)
     return ", ".join(refs[:most]) + (f" and {len(refs) - most} more" if len(refs) > most else "")
-
-
-def _counted(items):
-    out = {}
-    for x in items:
-        out[x] = out.get(x, 0) + 1
-    return out
 
 
 def layout_changes(old, new):
@@ -581,20 +582,27 @@ def layout_changes(old, new):
     if (old["tracks"], old["length"], old["vias"]) == (new["tracks"], new["length"], new["vias"]) and \
             old.get("copper") != new.get("copper"):
         out.append("tracks or vias moved (as many, as long)")
-    za, zb = _counted(old["zones"]), _counted(new["zones"])
-    for z in sorted(set(za) | set(zb)):
-        if zb.get(z, 0) > za.get(z, 0):
-            out.append(f"adds a zone: {z}" + (f" (x{zb[z] - za.get(z, 0)})" if zb[z] - za.get(z, 0) > 1 else ""))
-        elif za.get(z, 0) > zb.get(z, 0):
-            out.append(f"removes a zone: {z}" + (f" (x{za[z] - zb.get(z, 0)})" if za[z] - zb.get(z, 0) > 1 else ""))
+    for z, n, m, same in _by_name(old["zones"], new["zones"]):
+        if m > n:
+            out.append(f"adds a zone: {z}" + (f" (x{m - n})" if m - n > 1 else ""))
+        elif n > m:
+            out.append(f"removes a zone: {z}" + (f" (x{n - m})" if n - m > 1 else ""))
+        elif not same:
+            out.append(f"changes a zone: {z} (its outline or settings)")
     if old["outline"] != new["outline"]:
         out.append("the outline (Edge.Cuts) changed")
-    sa, sb = _counted(old["silk"]), _counted(new["silk"])
-    for t in sorted(set(sb) - set(sa)):
-        out.append(f"silkscreen adds {_quote(t)}")
-    for t in sorted(set(sa) - set(sb)):
-        out.append(f"silkscreen removes {_quote(t)}")
+    silk = list(_by_name(old["silk"], new["silk"]))
+    out += [f"silkscreen adds {_quote(t)}" + (f" (x{m - n})" if m - n > 1 else "") for t, n, m, _ in silk if m > n]
+    out += [f"silkscreen removes {_quote(t)}" + (f" (x{n - m})" if n - m > 1 else "") for t, n, m, _ in silk if n > m]
+    out += [f"silkscreen moves or restyles {_quote(t)}" for t, n, m, same in silk if n == m and not same]
     return out
+
+
+def _by_name(old, new):
+    """Items as (name, how drawn) pairs, by name: (name, how many before, how many now, drawn the same)."""
+    for name in sorted({k for k, _ in old} | {k for k, _ in new}):
+        a, b = sorted(d for k, d in old if k == name), sorted(d for k, d in new if k == name)
+        yield name, len(a), len(b), a == b
 
 
 # ---- git -------------------------------------------------------------------------------------------------------------

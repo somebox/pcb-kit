@@ -323,6 +323,24 @@ class Layout(unittest.TestCase):
         self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, LAYOUT_A.replace("v1.0", "v2.3"))),
                          [])
 
+    def test_zones_and_silkscreen_as_drawn(self):
+        """A zone's outline or settings, and a text's place, side or font, are layout too; a second copy of a text
+        is one more; a zone refilled (its fill flag, its filled polygons) is not a change."""
+        zone = '(zone (net "GND") (layers "F.Cu" "B.Cu") (uuid "z1"))'
+        a = LAYOUT_A.replace(zone, '(zone (net "GND") (layers "F.Cu" "B.Cu") (uuid "z1") (fill (thermal_gap 0.5))'
+                                   ' (polygon (pts (xy 0 0) (xy 5 0) (xy 5 5))))')
+        logos = '\t(gr_text "LOGO" (at 1 1) (layer "B.SilkS"))\n\t(gr_text "LOGO" (at 1 9) (layer "B.SilkS"))\n'
+        changed = (a.replace("(xy 5 5)", "(xy 6 6)").replace('"DEMO v1.0" (at 5 5)', '"DEMO v1.0" (at 6 5)')
+                   .replace("\t(segment", logos + "\t(segment"))
+        self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, changed)),
+                         ["changes a zone: GND on F.Cu, B.Cu (its outline or settings)", "silkscreen adds 'LOGO' (x2)",
+                          "silkscreen moves or restyles 'DEMO v#'"])
+        refilled = a.replace("(fill (thermal_gap 0.5))", '(fill yes (thermal_gap 0.5)) (filled_polygon (layer "F.Cu")'
+                                                         ' (pts (xy 0 0) (xy 4 0) (xy 4 4)))')
+        self.assertEqual(V.layout_changes(V.layout(None, a), V.layout(None, refilled)), [])
+        one = changed.replace('\t(gr_text "LOGO" (at 1 9) (layer "B.SilkS"))\n', "")
+        self.assertEqual(V.layout_changes(V.layout(None, changed), V.layout(None, one)), ["silkscreen removes 'LOGO'"])
+
     def test_a_tracks_arc_has_its_length(self):
         arc = LAYOUT_A.replace("\t(via", '\t(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu"))\n\t(via')
         self.assertAlmostEqual(V.layout(None, arc)["length"], round(6.4 + math.pi, 1))
@@ -1051,6 +1069,70 @@ class Release(unittest.TestCase):
         shutil.copy(os.path.join(root, "releases", "demo", "v1.0", "kicad", "demo.kicad_pcb"), built)
         self.assertIn("### demo, since archive/demo-as-built.kicad_pcb\n\nCircuit (netlist and BOM):\n"
                       "- R1 value 10k -> 4.7k\n", changelog(root, "--since", built))
+
+    def test_a_current_board_with_a_label_problem_is_warned(self):
+        """Released before pcbkit refused v${REVISION}: still current, and the line says what its next release will
+        be refused for."""
+        from pcbkit.config import Project
+        from pcbkit.release import release as R
+        root = self.project("current-vv")
+        edit(root, silk_text("v${REVISION}"))
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            project = Project()
+            src = R.source_key(project, project.pcb("demo"))
+        finally:
+            os.chdir(cwd)
+        rs = entries(root)
+        rs[-1]["source"] = src
+        tomlw.dump({"key": "demo", "release": rs}, os.path.join(root, "releases", "demo", "releases.toml"))
+        self.assertIn("current v1.0 (1.0.0): warning: F.SilkS text 'v${REVISION}' would print vv",
+                      release(root, "--dry-run"))
+
+    def test_the_fab_fingerprint_is_of_the_board_as_stamped(self):
+        """A board without a title takes the schematic's when stamped; ${TITLE} then prints it, so the fab
+        fingerprint recorded is made after the stamp."""
+        from pcbkit.config import Project
+        from pcbkit.release import release as R
+        root = self.fresh("title")
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        write(board, re.sub(r'\n\t*\(title "demo"\)', "", read(board)))
+        edit(root, silk_text("${TITLE} ${REVISION}"))
+        self.assertEqual(V.title_field(read(board), "title"), "")
+        release(root, "--version", "1.0.0")
+        self.assertEqual(V.title_field(read(board), "title"), "demo")
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            project = Project()
+            pcb = project.pcb("demo")
+            self.assertEqual(entries(root)[0]["fab"], R.fab_fingerprint(project, board, pcb["profile"]))
+        finally:
+            os.chdir(cwd)
+
+    def test_the_changelog_checks_a_releases_base_commit(self):
+        """Without a kicad/ copy, the board at the release's base commit stands in only when it is the release's
+        netlist and BOM."""
+        root = self.project("base-commit")
+        shutil.rmtree(os.path.join(root, "releases", "demo", "v1.0", "kicad"))
+        git(root, "init", "-q", "-b", "main")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "as released")
+        same = git(root, "rev-parse", "--short", "HEAD")
+        edit(root, value("R1", "4.7k"))
+        git(root, "commit", "-q", "-am", "R1 changed, not released")
+        other = git(root, "rev-parse", "--short", "HEAD")
+        path = os.path.join(root, "releases", "demo", "releases.toml")
+        for base, said in ((same, f"### demo, since v1.0 (2026-11-01) as at its base commit {same} (the same "
+                                  "netlist and BOM; the layout as committed then)\n\nCircuit (netlist and BOM):\n"
+                                  "- R1 value 10k -> 4.7k\n"),
+                           (other, f"- nothing to compare with: v1.0 has no kicad/ copy, and the board at its base "
+                                   f"commit {other} isn't its netlist and BOM: --since a board or git revision\n")):
+            rs = entries(root)
+            rs[-1]["base_commit"] = base
+            tomlw.dump({"key": "demo", "release": rs}, path)
+            self.assertIn(said, changelog(root))
 
 
 if __name__ == "__main__":

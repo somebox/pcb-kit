@@ -32,12 +32,20 @@ def _read(path):
 
 
 def _copy(project, pcb, entry):
-    """A release's board as its kicad/ copy has it, or as git had it at the release's base commit; None if neither."""
+    """A release's board, (its text, how it was found) or (None, why not): its kicad/ copy, or else the board at the
+    release's base commit, but only when that board's netlist and BOM are the release's (the commit is the HEAD the
+    release was made on, and the board may have changed after it, uncommitted)."""
     copy = os.path.join(project.release_dir(pcb), entry["label"], "kicad", os.path.basename(pcb["path"]))
     if os.path.exists(copy):
-        return _read(copy)
+        return _read(copy), ""
     base = entry.get("base_commit")
-    return V.git_text(os.path.join(project.root, pcb["path"]), base) if base else None
+    text = V.git_text(os.path.join(project.root, pcb["path"]), base) if base else None
+    if text is None:
+        return None, f"{entry['label']} has no kicad/ copy and no base commit in git"
+    if not entry.get("circuit") or V.circuit_fingerprint(V.circuit(None, text)) != entry["circuit"]:
+        return None, (f"{entry['label']} has no kicad/ copy, and the board at its base commit {base} "
+                      + ("isn't its netlist and BOM" if entry.get("circuit") else "can't be checked against it"))
+    return text, f" as at its base commit {base} (the same netlist and BOM; the layout as committed then)"
 
 
 def baseline(project, pcb, since=None):
@@ -52,9 +60,9 @@ def baseline(project, pcb, since=None):
             (None, f"--since {since}: neither a file nor a git revision that has {os.path.basename(path)}")
     last = V.current(project.release_dir(pcb))
     if last:
-        text = _copy(project, pcb, last)
-        return (text, f"{last['label']} ({last['date']})") if text is not None else \
-            (None, f"{last['label']} has no kicad/ copy and no base commit in git: --since a board or git revision")
+        text, how = _copy(project, pcb, last)
+        return (text, f"{last['label']} ({last['date']}){how}") if text is not None else \
+            (None, how + ": --since a board or git revision")
     rev = V.title_rev(_read(path))
     origin = V.rev_origin(path, rev)
     text = V.git_text(path, origin[0]) if origin else None
@@ -140,12 +148,12 @@ def history(project, pcb):
         if i == 0:
             out += [title, ""] + ([note, ""] if note else []) + ["- first release", ""]
             continue
-        old, new = _copy(project, pcb, rs[i - 1]), _copy(project, pcb, r)
+        (old, was), (new, now) = _copy(project, pcb, rs[i - 1]), _copy(project, pcb, r)
         if old is None or new is None:
-            out += [title, ""] + ([note, ""] if note else []) + \
-                [f"- {rs[i - 1]['label'] if old is None else r['label']} has no kicad/ copy to compare with", ""]
+            out += [title, ""] + ([note, ""] if note else []) + [f"- nothing to compare with: {was if old is None else now}",
+                                                               ""]
             continue
-        out += section(title + f" (since {rs[i - 1]['label']})", *changes(old, new), note=note)
+        out += section(title + f" (since {rs[i - 1]['label']}{was})", *changes(old, new), note=note)
     return out
 
 

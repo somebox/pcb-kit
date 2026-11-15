@@ -122,6 +122,13 @@ On 2026-11-08: a WSON-6 TVS a quarter turn out and a SOT-583-8 buck half a turn 
 polymer capacitor (C46550459) half a turn, its + on the - pad: the CP_Elec rule's 180 was wrong for that part. The
 new rules, and the ones the viewer showed right that day, are dated 2026-11-08.
 
+On 2026-11-15 (ESP Candle): four parts a quarter turn out, all on KiCad's own footprints, under rules checked on other
+parts. An LMR51625 on TSOT-23-6 matched the never-checked `^TSOT-23` (+180), though KiCad lays TSOT-23-6 out as its
+SOT-23-6 (-90); a TPS2116 (C3235557) on SOT-583-8 under the rule checked on a buck; and two BCR421UW6Q (C154739) on
+SOT-23-6, whose JLC footprint lies a quarter turn from the part that rule was checked on. A rule seen right for one part
+is right for its package only as JLC draws that part: check every part under it, not one per rule. The new rows are dated
+2026-11-15.
+
 ## Parts for hand assembly (LCSC)
 
 - Use the cart the user named. Put the designators in each line's "Customer #".

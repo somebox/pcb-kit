@@ -3,7 +3,7 @@
   python3 tests/test_jlc_rotations.py
 
 No pcbnew needed: `correction` only reads a footprint's reference, value and footprint name. The cases are parts JLC's
-placement preview showed out on 2026-11-08, and the rules that keep EasyEDA's footprints (already in JLC's
+placement preview showed out on 2026-11-08 and 2026-11-15, and the rules that keep EasyEDA's footprints (already in JLC's
 orientation) from being turned.
 """
 import os
@@ -53,6 +53,22 @@ class Corrections(unittest.TestCase):
         self.assertEqual((r[0], r[1], r[4], r[5]), ("C46550459", 0, "LCSC", "^CP_Elec_6.3x7.7"))
         other = self.rule("CP_Elec_6.3x7.7", "C0", ref="C35", value="470uF 10V")
         self.assertEqual((other[0], other[1]), ("^CP_Elec_6.3x7.7", 180))
+
+    def test_tsot23_6_turns_as_sot23_6(self):
+        # KiCad's TSOT-23-6 has SOT-23-6's pad layout; the older ^TSOT-23 row (+180) put an LMR51625 a quarter turn out
+        r = self.rule("TSOT-23-6", "C44991044", value="LMR51625YDDCR")
+        self.assertEqual((r[0], r[1], r[4]), ("^TSOT-23-6(_HandSoldering)?$", -90, "footprint"))
+
+    def test_tps2116_on_kicads_sot583(self):
+        # JLC's footprint for the TPS2116DRLR lies a quarter turn from the buck the ^SOT-583-8$ row was checked on
+        r = self.rule("SOT-583-8", "C3235557", value="TPS2116DRLR")
+        self.assertEqual((r[0], r[1], r[4], r[5]), ("C3235557", -90, "LCSC", "^SOT-583-8$"))
+
+    def test_bcr421uw6q_on_kicads_sot23_6(self):
+        r = self.rule("SOT-23-6", "C154739", value="BCR421UW6Q-7")
+        self.assertEqual((r[0], r[1], r[4], r[5]), ("C154739", 180, "LCSC", "^SOT-23-6(_Handsoldering)?$"))
+        other = self.rule("SOT-23-6", "C0")
+        self.assertEqual((other[0], other[1]), ("^SOT-23-6(_Handsoldering)?$", -90))
 
     def test_part_rule_needs_a_package_rule(self):
         # an LCSC row does nothing for a footprint no rule matches

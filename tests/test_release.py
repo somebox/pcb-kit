@@ -1,15 +1,19 @@
-"""pcbkit release on a fixture project: which part of the version a change bumps, and the KiCad copy in each release.
+"""pcbkit release on a fixture project: which part of the version a change bumps, the KiCad copy in each release, the
+version and date as text variables, and the changelog drafted from the boards.
 
   python3 tests/test_release.py     # re-runs itself under KiCad's Python when pcbnew is not importable
 
 The fixture is one board drawn in pcbnew (two resistors and a capacitor, a track, a 3-D model and a library table
 that reach ../../lib/), a root schematic with a sheet in a subfolder, and a pcbkit.toml that releases it without
 ERC or DRC (the fixture tests the versions, not the design) and without previews or production. It is released once
-as v1.0; each case changes a copy of that project and runs pcbkit release on it.
+as v1.0, dated 2026-11-01 as its title block is; each case changes a copy of that project and runs pcbkit release on
+it.
 """
 import contextlib
+import datetime
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -155,6 +159,183 @@ class BoardFile(unittest.TestCase):
             write(b, board([("R01", "4.7k"), ("R1", "10k")]))
             self.assertEqual(V.circuit(a), V.circuit(b))
             self.assertEqual(V.circuit_fingerprint(V.circuit(a)), V.circuit_fingerprint(V.circuit(b)))
+
+
+LABELS = """(kicad_pcb (version 20250114) (generator "pcbnew")
+	(paper "A4")
+	(title_block (title "demo") (rev "v1.0"))
+	(gr_text "${REVISION} ${ISSUE_DATE}" (at 1 1) (layer "F.SilkS"))
+	(gr_text "v${REVISION}" (at 1 2) (layer "B.SilkS"))
+	(gr_text "${CURRENT_DATE}" (at 1 3) (layer "F.SilkS"))
+	(gr_text "drawn ${CURRENT_DATE}" (at 1 4) (layer "Cmts.User"))
+	(gr_text "DEMO v1.0 2026-10-01" (at 1 5) (layer "F.SilkS"))
+	(footprint "demo:Logo" (layer "F.Cu") (at 0 0)
+		(property "Reference" "G1" (at 0 0) (layer "F.SilkS") (hide yes))
+		(property "Rev" "V${REVISION}" (at 0 0) (layer "F.SilkS") (hide yes))
+		(fp_text user "${CURRENT_DATE}" (at 0 0) (layer "B.Cu")))
+)
+"""
+
+
+class Labels(unittest.TestCase):
+    """The version and date on the board as KiCad's text variables, ${REVISION} and ${ISSUE_DATE}: what release
+    refuses, what it masks and stamps, and the date format."""
+    def test_what_would_print_wrong(self):
+        errors, typed = V.label_problems(LABELS, "v1.0")
+        self.assertEqual(len(errors), 3, errors)
+        self.assertIn("B.SilkS text 'v${REVISION}' would print vv", errors[0])
+        self.assertIn("F.SilkS text '${CURRENT_DATE}' prints the day the Gerbers are made", errors[1])
+        self.assertIn("B.Cu text '${CURRENT_DATE}'", errors[2])            # a footprint's text on copper too
+        self.assertEqual(typed, ["'DEMO v1.0 2026-10-01'"])                # Cmts.User and hidden fields don't plot
+        # a rev without a minor ("v3") is still the version typed in, as a word
+        self.assertEqual(V.label_problems('(kicad_pcb (gr_text "MODULE v3  2026-09" (layer "F.SilkS")))', "v3"),
+                         ([], ["'MODULE v3  2026-09'"]))
+
+    def test_variables_are_neither_masked_nor_rewritten(self):
+        board = LABELS.replace('(rev "v1.0")', '(date "2026-10-01") (rev "v1.0")')
+        masked = V.mask(board)
+        self.assertIn('(gr_text "${REVISION} ${ISSUE_DATE}"', masked)
+        self.assertIn('(title_block (title "demo"))', masked)
+        self.assertIn('(gr_text "DEMO v# #"', masked)
+        n = V.neutral(board)
+        self.assertIn('(title_block (title "demo") (date "2000-01-01") (rev "v0.0"))', n)
+        self.assertIn('(gr_text "${REVISION} ${ISSUE_DATE}"', n)
+        # a block without a date gets one, as stamping gives it, so ${ISSUE_DATE} plots the same before and after
+        self.assertIn('(title_block (title "demo") (date "2000-01-01") (rev "v0.0"))', V.neutral(LABELS))
+        self.assertEqual(V.mask(V.neutral(LABELS)), V.mask(LABELS))
+        # as a release stamped it: the title block's date as written, ISO in a text with the label typed in
+        n = V.neutral(board, "v1.1", "11.2026", "2026-11-15")
+        self.assertIn('(date "11.2026") (rev "v1.1")', n)
+        self.assertIn('"DEMO v1.1 2026-11-15"', n)
+
+    def test_date_format(self):
+        self.assertEqual(V.date_text(datetime.date(2026, 11, 5), "%m.%Y"), "11.2026")
+        self.assertEqual(V.date_text("2026-11-05"), "2026-11-05")
+        self.assertEqual(V.check_date_format("%m.%Y"), "%m.%Y")
+        for bad in ("%m", '"%Y"', "%Y\\%m"):
+            with self.assertRaises(SystemExit):
+                V.check_date_format(bad)
+
+    def test_drc_errors_name_their_parts(self):
+        from pcbkit.release import release as R
+        hole = {"severity": "error", "type": "hole_clearance",
+                "items": [{"description": "PTH pad B1 [GND] of USBC1"}, {"description": "NPTH pad of USBC1"}]}
+        self.assertEqual(R.drc_errors([hole, dict(hole), {"severity": "warning", "type": "silk_overlap", "items": []},
+                                       {"severity": "error", "type": "clearance", "items": []}]),
+                         ["1 clearance", "2 hole_clearance (USBC1)"])
+
+    def test_a_first_release_adopts_only_a_draft(self):
+        self.assertTrue(all(V.names_version(r) for r in ("v1.4", "1.3.1", "2.0", "v3")))
+        self.assertFalse(any(V.names_version(r) for r in ("0.1-draft", "3.0-draft", "", "rev A")))
+
+
+class Stamp(unittest.TestCase):
+    """stamp() on a board and its sheets: the title blocks, the sheets that have one of their own, nothing else."""
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = os.path.join(tmp.name, "boards", "demo")
+        os.makedirs(self.dir)
+        os.makedirs(os.path.join(tmp.name, "boards", "shared"))
+        self.pcb = os.path.join(self.dir, "demo.kicad_pcb")
+        write(self.pcb, LABELS.replace('(title "demo")', '(title "Demo \\"board\\"") (company "ACME")')
+              .replace('(gr_text "v${REVISION}" (at 1 2) (layer "B.SilkS"))\n', ""))
+        block = '\t(title_block\n\t\t(title "Power")\n\t\t(date "2026-10-01")\n\t\t(rev "v1.0")\n\t)\n'
+        write(os.path.join(self.dir, "demo.kicad_sch"), schematic(uid(1), [(uid(11), "power.kicad_sch", "2"),
+                                                                         (uid(12), "io.kicad_sch", "3"),
+                                                                         (uid(13), "../shared/x.kicad_sch", "4")]))
+        write(os.path.join(self.dir, "power.kicad_sch"),
+              schematic(uid(2), at=f"/{uid(1)}/{uid(11)}").replace('\t(paper "A4")\n', '\t(paper "A4")\n' + block))
+        write(os.path.join(self.dir, "io.kicad_sch"), schematic(uid(3), at=f"/{uid(1)}/{uid(12)}"))
+        self.shared = os.path.join(tmp.name, "boards", "shared", "x.kicad_sch")
+        write(self.shared, schematic(uid(4), at=f"/{uid(1)}/{uid(13)}").replace('\t(paper "A4")\n',
+                                                                                '\t(paper "A4")\n' + block))
+
+    def test_the_title_blocks_and_nothing_else(self):
+        before = {f: read(self.dir, f) for f in os.listdir(self.dir)}
+        shared = read(self.shared)
+        self.assertEqual(sorted(os.path.basename(f) for f in V.stamp(self.pcb, "v1.0", "v1.1", "11.2026",
+                                                                     "2026-11-15", dry=True)),
+                         ["demo.kicad_pcb", "demo.kicad_sch", "power.kicad_sch"])
+        self.assertEqual({f: read(self.dir, f) for f in os.listdir(self.dir)}, before)      # dry: nothing written
+        V.stamp(self.pcb, "v1.0", "v1.1", "11.2026", "2026-11-15")
+        pcb = read(self.pcb)
+        self.assertIn('(title_block (title "Demo \\"board\\"") (date "11.2026") (company "ACME") (rev "v1.1"))', pcb)
+        self.assertIn('(gr_text "${REVISION} ${ISSUE_DATE}"', pcb)          # KiCad fills it when it plots
+        self.assertIn('(gr_text "DEMO v1.1 2026-11-15"', pcb)               # typed in: label and ISO date
+        # the root schematic had no title block: it gets the board's title and company with the version
+        root = read(self.dir, "demo.kicad_sch")
+        self.assertIn('(title_block\n\t\t(title "Demo \\"board\\"")\n\t\t(date "11.2026")\n\t\t(rev "v1.1")\n'
+                      '\t\t(company "ACME")\n\t)', root)
+        self.assertEqual(V.title_field(root, "title"), 'Demo "board"')
+        # a sheet with a title block of its own keeps its title and gets the version; one without stays without;
+        # a shared sheet from outside the folder is left alone
+        power = read(self.dir, "power.kicad_sch")
+        self.assertIn('(title "Power")\n\t\t(date "11.2026")\n\t\t(rev "v1.1")', power)
+        self.assertEqual(read(self.dir, "io.kicad_sch"), before["io.kicad_sch"])
+        self.assertEqual(read(self.shared), shared)
+        self.assertEqual(V.mask(power), V.mask(before["power.kicad_sch"]))
+        # stamped again with the same version and date, nothing changes
+        self.assertEqual(V.stamp(self.pcb, "v1.1", "v1.1", "11.2026", "2026-11-15"), [])
+
+    def test_a_board_already_released_takes_no_title(self):
+        """Restamping a released board gives its files the release's stamps, not the other's title and company,
+        which would change its source fingerprint."""
+        V.stamp(self.pcb, "v1.0", "v1.0", "2026-10-01", fill=False)
+        root = read(self.dir, "demo.kicad_sch")
+        self.assertEqual([V.title_field(root, k) for k in ("title", "date", "rev", "company")],
+                         ["", "2026-10-01", "v1.0", ""])
+
+
+LAYOUT_A = """(kicad_pcb (version 20250114)
+	(gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts") (uuid "a"))
+	(gr_text "DEMO v1.0" (at 5 5) (layer "F.SilkS"))
+	(footprint "demo:R_0603" (layer "F.Cu") (at 8 10) (property "Reference" "R1" (at 0 0) (layer "F.SilkS")))
+	(footprint "demo:R_0603" (layer "F.Cu") (at 16 10 90) (property "Reference" "R2" (at 0 0) (layer "F.SilkS")))
+	(footprint "demo:J" (layer "F.Cu") (at 24 10) (property "Reference" "J1" (at 0 0) (layer "F.SilkS")))
+	(footprint "demo:Logo" (layer "F.Cu") (at 2 2) (attr board_only)
+		(property "Reference" "G1" (at 0 0) (layer "F.SilkS")))
+	(segment (start 8.8 10) (end 15.2 10) (width 0.25) (layer "F.Cu") (net "OUT") (uuid "s1"))
+	(via (at 12 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "GND") (uuid "v1"))
+	(zone (net "GND") (layers "F.Cu" "B.Cu") (uuid "z1"))
+)
+"""
+
+
+class Layout(unittest.TestCase):
+    """layout_changes() and the changelog's grouping, on boards written out by hand."""
+    def test_what_moved(self):
+        new = (LAYOUT_A.replace("(at 8 10)", "(at 9 10)").replace("(at 16 10 90)", "(at 16 10 180)")
+               .replace('"demo:J" (layer "F.Cu")', '"demo:J" (layer "B.Cu")')
+               .replace('(end 30 20)', '(end 32 20)').replace('"DEMO v1.0"', '"DEMO v1.1"')
+               .replace("\t(zone", '\t(via (at 14 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "GND"))\n'
+                                   '\t(zone (net "VIN") (layers "In1.Cu"))\n\t(zone'))
+        logo = '\t(footprint "demo:Logo"'
+        new = new.replace(logo, logo + ' (layer "F.Cu") (at 3 3) (attr board_only) (property "Reference" "G2" (at 0 0) '
+                                       '(layer "F.SilkS")))\n' + logo)
+        self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, new)),
+                         ["moves 1 part: R1", "turns R2 90 -> 180", "puts J1 on the back", "adds the board-only G2",
+                          "vias 1 -> 2", "adds a zone: VIN on In1.Cu", "the outline (Edge.Cuts) changed"])
+        # a version typed into the silkscreen is no change; a track moved the same length is one
+        moved = LAYOUT_A.replace("(start 8.8 10) (end 15.2 10)", "(start 8.8 10.1) (end 15.2 10.1)")
+        self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, moved)),
+                         ["tracks or vias moved (as many, as long)"])
+        self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, LAYOUT_A.replace("v1.0", "v2.3"))),
+                         [])
+
+    def test_a_tracks_arc_has_its_length(self):
+        arc = LAYOUT_A.replace("\t(via", '\t(arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "F.Cu"))\n\t(via')
+        self.assertAlmostEqual(V.layout(None, arc)["length"], round(6.4 + math.pi, 1))
+
+    def test_the_changelog_groups_parts_that_changed_alike(self):
+        from pcbkit.release import changelog
+        self.assertEqual(changelog.grouped(["R4 value 10 -> 20", "R4 LCSC C1 -> C2", "R5 value 10 -> 20",
+                                            "R5 LCSC C1 -> C2", "R6 value 10 -> 20", "adds C6 (100n, C_0402, C1525)",
+                                            "adds C7 (100n, C_0402, C1525)", "adds C8 (1u, C_0402, C52923)",
+                                            "R7 DNP", "removes R10", "removes R9", "net 5V gains C6.1"]),
+                         ["R4, R5 value 10 -> 20, LCSC C1 -> C2", "R6 value 10 -> 20",
+                          "adds C6, C7 (100n, C_0402, C1525)", "adds C8 (1u, C_0402, C52923)", "R7 DNP",
+                          "removes R9, R10", "net 5V gains C6.1"])
 
 
 def region(*xy, d02=1):
@@ -504,6 +685,44 @@ def release(root, *args):
     return out.getvalue()
 
 
+def changelog(root, *args):
+    """Run pcbkit changelog in the project; its output."""
+    from pcbkit.release import changelog as C
+    cwd, out = os.getcwd(), io.StringIO()
+    os.chdir(root)
+    try:
+        with contextlib.redirect_stdout(out):
+            C.main(list(args))
+    finally:
+        os.chdir(cwd)
+    return out.getvalue()
+
+
+def git(root, *args):
+    r = subprocess.run(["git", "-C", root, "-c", "user.name=test", "-c", "user.email=test@example.invalid", *args],
+                       capture_output=True, text=True, check=True)
+    return r.stdout.strip()
+
+
+def silk_text(text, x=15, y=15, left=False, size=1.0):
+    """A silkscreen text on the front."""
+    def change(b, pcbnew):
+        t = pcbnew.PCB_TEXT(b)
+        t.SetText(text)
+        t.SetLayer(pcbnew.F_SilkS)
+        t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(size), pcbnew.FromMM(size)))
+        t.SetTextThickness(pcbnew.FromMM(size * 0.15))
+        if left:
+            t.SetHorizJustify(pcbnew.GR_TEXT_H_ALIGN_LEFT)
+        t.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+        b.Add(t)
+    return change
+
+
+def silk_gerber(zip_path):
+    return next(lines for n, lines in V._zip_files(zip_path) if "Silkscreen" in n and n.startswith("F"))
+
+
 def edit(root, change):
     """Load the fixture board, change it in pcbnew, save it."""
     import pcbnew
@@ -564,7 +783,9 @@ class Release(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.base = os.path.join(cls.tmp.name, "base")
         make_project(cls.base)
-        cls.first = release(cls.base)
+        # released on its title block's date, so there is nothing to stamp while KiCad has the folder open
+        with mock.patch.object(V, "today", return_value=datetime.date(2026, 11, 1)):
+            cls.first = release(cls.base, "--version", "1.0.0")
         os.remove(os.path.join(cls.base, "boards", "demo", "~demo.kicad_sch.lck"))    # KiCad closed: stamping may go on
 
     @classmethod
@@ -576,8 +797,9 @@ class Release(unittest.TestCase):
         shutil.copytree(self.base, root, symlinks=True)
         return root
 
-    def test_first_release_adopts_the_title_block_and_records_the_circuit(self):
-        self.assertRegex(self.first, r"released v1\.0 \(1\.0\.0\): first release, its title block's v1\.0")
+    def test_first_release_with_its_version_records_the_circuit(self):
+        self.assertRegex(self.first, r"released v1\.0 \(1\.0\.0\): first release, --version 1\.0\.0 \(its title block "
+                                     r"read v1\.0\)")
         (e,) = entries(self.base)
         c = V.circuit(os.path.join(self.base, "boards", "demo", "demo.kicad_pcb"))
         self.assertEqual(e["circuit"], V.circuit_fingerprint(c))
@@ -722,6 +944,113 @@ class Release(unittest.TestCase):
         state, problems = states(root)
         self.assertEqual(state, {"demo": "changed"})
         self.assertIn("boards/demo/demo.kicad_pcb: changed since v1.0: run pcbkit release", problems)
+
+    def fresh(self, name, toml=""):
+        """A project of the fixture board, never released, KiCad closed."""
+        root = os.path.join(self.tmp.name, name)
+        make_project(root)
+        os.remove(os.path.join(root, "boards", "demo", "~demo.kicad_sch.lck"))
+        if toml:
+            path = os.path.join(root, "pcbkit.toml")
+            write(path, read(path).replace("previews = false\n", "previews = false\n" + toml))
+        return root
+
+    def test_a_first_release_needs_its_version(self):
+        root = self.fresh("first")
+        out = release(root, "--dry-run")
+        self.assertIn("not released: a first release needs --version, since the title block reads v1.0, the version "
+                      "of any board already built from it; git has no earlier copy of the board reading v1.0 to "
+                      "compare with. --version 1.0.0 if no board of v1.0 was built, else the next one: 1.1.0 after a "
+                      "change to the circuit, 1.0.1 to the layout only", out)
+        # in git: the commit where the title block first read v1.0, and what changed since
+        git(root, "init", "-q", "-b", "main")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "the board as built")
+        commit, day = git(root, "log", "-1", "--format=%h %as").split()
+        edit(root, value("R1", "4.7k"))
+        self.assertIn(f"since {commit} ({day}), when it first read v1.0, its netlist and BOM changed (1 change: pcbkit "
+                      f"changelog --since {commit})", release(root, "--dry-run"))
+        self.assertIn(f"### demo, since v1.0 as at {commit} ({day}), when its title block first read v1.0\n\n"
+                      "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n", changelog(root))
+        self.assertIn("would release v1.1 (1.1.0): first release, --version 1.1.0 (its title block read v1.0)",
+                      release(root, "--dry-run", "--version", "1.1.0"))
+        # a draft's rev is adopted: no board was built under it
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        write(board, read(board).replace('(rev "v1.0")', '(rev "0.1-draft")'))
+        self.assertIn("would release v0.1 (0.1.0): first release, its title block's 0.1-draft",
+                      release(root, "--dry-run"))
+
+    def test_the_version_and_date_as_text_variables(self):
+        root = self.fresh("variables", 'date_format = "%m.%Y"\n')
+        edit(root, silk_text("${REVISION} ${ISSUE_DATE}"))
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        self.assertIn("released v1.0 (1.0.0)", release(root, "--version", "1.0.0"))
+        when = V.date_text(V.today(), "%m.%Y")
+        text = read(board)
+        self.assertEqual((V.title_rev(text), V.title_field(text, "date")), ("v1.0", when))
+        self.assertIn('(gr_text "${REVISION} ${ISSUE_DATE}"', text)        # KiCad fills it in when it plots
+        sch = read(root, "boards", "demo", "demo.kicad_sch")
+        self.assertEqual((V.title_rev(sch), V.title_field(sch, "date")), ("v1.0", when))
+        self.assertEqual(entries(root)[0]["date"], V.today())               # releases.toml keeps the ISO date
+        # the release's files compared with a board made again: stamped with the release's own date text
+        copy = os.path.join(self.tmp.name, "variables-compare")
+        shutil.copytree(root, copy, symlinks=True)
+        rs = entries(copy)
+        rs[-1]["fab"] = "0" * 40
+        tomlw.dump({"key": "demo", "release": rs}, os.path.join(copy, "releases", "demo", "releases.toml"))
+        edit(copy, comment)
+        self.assertIn("current v1.0 (1.0.0): changed files, same fab output (the same as v1.0's files)",
+                      release(copy, "--dry-run"))
+        # the next version: the same text on the board, another label in the Gerbers' silkscreen
+        edit(root, value("R1", "4.7k"))
+        self.assertIn("released v1.1 (1.1.0)", release(root))
+        self.assertIn('(gr_text "${REVISION} ${ISSUE_DATE}"', read(board))
+        z = [os.path.join(root, "releases", "demo", v, f"GERBER-demo-{v}.zip") for v in ("v1.0", "v1.1")]
+        self.assertNotEqual(silk_gerber(z[0]), silk_gerber(z[1]))
+        self.assertEqual([x for x in V._zip_files(z[0]) if "Silkscreen" not in x[0]],
+                         [x for x in V._zip_files(z[1]) if "Silkscreen" not in x[0]])
+
+    def test_what_would_print_wrong_is_not_released(self):
+        root = self.project("vv")
+        edit(root, value("R1", "4.7k"))
+        edit(root, silk_text("v${REVISION}"))
+        self.assertIn("not released: F.SilkS text 'v${REVISION}' would print vv", release(root, "--dry-run"))
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        write(board, read(board).replace('"v${REVISION}"', '"${CURRENT_DATE}"'))
+        self.assertIn("not released: F.SilkS text '${CURRENT_DATE}' prints the day the Gerbers are made",
+                      release(root, "--dry-run"))
+
+    def test_the_silkscreen_check_sees_what_the_variable_prints(self):
+        """DRC measures ${REVISION} as KiCad fills it in: a longer label that runs over a pad is a new finding, as
+        restamp() counts them."""
+        from pcbkit.release import release as R
+        root = self.project("silk")
+        edit(root, silk_text("${REVISION}", x=2, y=10, left=True))
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        before = R.checks(board, {"checks": ["drc"]})
+        V.stamp(board, "v1.0", "v1.0.0-and-then-a-long-label", "2026-11-15")
+        after = R.checks(board, {"checks": ["drc"]})
+        self.assertGreater(after["silk"], before["silk"])
+
+    def test_the_changelog_since_the_last_release(self):
+        root = self.project("changelog")
+        edit(root, value("R1", "4.7k"))
+        edit(root, move_track)
+        self.assertEqual(changelog(root), "## Unreleased\n\n### demo, since v1.0 (2026-11-01)\n\n"
+                                          "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n\n"
+                                          "Layout:\n- tracks or vias moved (as many, as long)\n")
+        release(root)
+        out = changelog(root, "--all")
+        self.assertIn("### demo, since v1.1 (%s)\n\n- no change to the netlist, BOM or layout\n" % V.today(), out)
+        self.assertIn("## demo v1.1 - %s (since v1.0)\n\nreleases.toml: minor after 1.0.0: R1 value 10k -> 4.7k\n\n"
+                      "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n" % V.today(), out)
+        self.assertIn("## demo v1.0 - 2026-11-01\n\n", out)
+        # against a board named: an as-built copy kept in the project
+        built = os.path.join(root, "archive", "demo-as-built.kicad_pcb")
+        os.makedirs(os.path.dirname(built))
+        shutil.copy(os.path.join(root, "releases", "demo", "v1.0", "kicad", "demo.kicad_pcb"), built)
+        self.assertIn("### demo, since archive/demo-as-built.kicad_pcb\n\nCircuit (netlist and BOM):\n"
+                      "- R1 value 10k -> 4.7k\n", changelog(root, "--since", built))
 
 
 if __name__ == "__main__":

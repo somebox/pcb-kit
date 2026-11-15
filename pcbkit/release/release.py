@@ -4,7 +4,8 @@
 
 For every PCB (or those named, by key, path or folder):
 1. Checks, per its profile (ERC; DRC with schematic parity; nothing unconnected). A PCB that fails is a mockup: it is
-   reported and left alone.
+   reported, with its DRC errors by type and part, and left alone. An accepted error is a measured .kicad_dru rule
+   (docs/CONVENTIONS.md).
 2. Has it changed since its last release? First its source fingerprint (the board and its schematics with the version
    and date stamps masked, its custom rules, the project file's design settings and net classes, and the fab
    settings); if that differs, its fab fingerprint (every house's files made from a copy with neutral stamps), so a
@@ -19,10 +20,15 @@ For every PCB (or those named, by key, path or folder):
    net), patch when only its fab output does (the layout), as releases.toml's circuit fingerprint tells; the output
    says which and what changed ("R3 value 10k -> 4.7k", "net VIN gains U2.5"). A last release recorded without that
    fingerprint gets a patch, and the output says why. --patch or --minor overrides the choice, --major is only ever
-   asked for, --version names the version (it must come after the last). A board without releases adopts the version
-   its title block carries ("v1.0" -> 1.0.0).
-4. The new version is stamped into the board and its root schematic (title block, silkscreen texts carrying the old
-   label), refused while KiCad has the folder open; then DRC again: no new errors, no more silkscreen warnings.
+   asked for, --version names the version (it must come after the last). A board without releases takes --version
+   when its title block names a version ("v1.4", "1.3.1": boards of it may have been built, and the output says what
+   git knows of the circuit since); a draft's ("0.1-draft" -> 0.1.0) or none (1.0.0) is taken as it is.
+   A board whose texts would print wrong is not released: v${REVISION} (vv1.0) or ${CURRENT_DATE} (the plot's day).
+4. The new version and the date (in [release] date_format) are stamped into the title blocks of the board, its root
+   schematic and the sheets under it that have one (versions.stamp), and into silkscreen texts with the old label
+   typed in; ${REVISION} and ${ISSUE_DATE} print them. Refused while KiCad has the folder open; then DRC again, which
+   measures the texts as the variables fill them: no new errors, no more silkscreen warnings. A board unchanged since
+   its release gets that release's stamps where a file lacks them.
 5. <release dir>/v<label>/ (committed, never rewritten): GERBER-<key>-v<label>.zip, the JLC BOM and CPL (of the front,
    the back or both sides, whichever the board's placed parts are on), the checklist for JLC's placement preview,
    PCBWay's BOM and centroid, schematic.pdf and board.pdf made from this version, MANIFEST.txt, and kicad/: a frozen
@@ -66,10 +72,10 @@ def pcbkit(*args):
     return r.stdout
 
 
-def checks(pcb_path, profile):
+def checks(pcb_path, profile, detail=None):
     """Counts: ERC and DRC errors (zones refilled, the file left as it is); unconnected items and schematic parity
     findings of any severity, as pcbkit drc counts them; and silkscreen findings of any severity (stamping may not add
-    any)."""
+    any). With a list for detail, the DRC errors go into it as "<count> <type> (<references>)"."""
     from ..checks import drc, erc
     c = dict(erc=0, drc=0, unconnected=0, parity=0, silk=0)
     sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"
@@ -83,7 +89,22 @@ def checks(pcb_path, profile):
             v = r.get("violations", [])
             c.update(drc=errors(v), silk=sum(1 for x in v if "silk" in x.get("type", "")),
                      unconnected=len(r.get("unconnected_items", [])), parity=len(r.get("schematic_parity", [])))
+            if detail is not None:
+                detail += drc_errors(v)
     return c
+
+
+def drc_errors(violations):
+    """DRC errors by type and the parts they involve: ["2 hole_clearance (USBC1)", ...]."""
+    groups = {}
+    for x in violations:
+        if x.get("severity") != "error":
+            continue
+        found = (re.search(r" of (\S+)", i.get("description", "")) for i in x.get("items", []))
+        refs = sorted({m.group(1) for m in found if m}, key=V._natural)
+        k = (x.get("type", "?"), tuple(refs))
+        groups[k] = groups.get(k, 0) + 1
+    return [f"{n} {t}" + (f" ({', '.join(r)})" if r else "") for (t, r), n in sorted(groups.items())]
 
 
 FAILS = ("erc", "drc", "unconnected", "parity")
@@ -104,12 +125,12 @@ def source_key(project, pcb):
     return V.source_fingerprint(os.path.join(project.root, pcb["path"]), project.fab_settings(pcb["profile"]))
 
 
-def fab_output(project, pcb_path, profile, d, name, label="v0.0", date="2000-01-01"):
+def fab_output(project, pcb_path, profile, d, name, label="v0.0", date="2000-01-01", text_date=None):
     """Every configured house's files, in d/out under the given name, made from a copy of the board in d with neutral
-    stamps (or the label and date given)."""
+    stamps (or the label and dates given: the title block's, and the ISO one of a silkscreen label typed in)."""
     stem = os.path.splitext(os.path.basename(pcb_path))[0]
     open(os.path.join(d, stem + ".kicad_pcb"), "w", encoding="utf-8").write(
-        V.neutral(open(pcb_path, encoding="utf-8").read(), label, date))
+        V.neutral(open(pcb_path, encoding="utf-8").read(), label, date, text_date))
     for ext in (".kicad_pro", ".kicad_dru"):              # net classes and custom rules: the zone fills use them
         if os.path.exists(os.path.splitext(pcb_path)[0] + ext):
             shutil.copy(os.path.splitext(pcb_path)[0] + ext, d)
@@ -153,7 +174,8 @@ def fab_near(project, pcb, pcb_path, profile, last):
     if not os.path.isdir(vdir):
         return None
     with tempfile.TemporaryDirectory() as d:
-        out = fab_output(project, pcb_path, profile, d, pcb["key"], last["label"], str(last["date"]))
+        out = fab_output(project, pcb_path, profile, d, pcb["key"], last["label"], stamped_date(project, pcb, last),
+                         str(last["date"]))
         pairs = [(os.path.join(out, src), os.path.join(vdir, dst))
                  for src, dst in kept(project, profile, out, pcb["key"], last["label"]) if not dst.endswith(".md")]
         stored = {f for f in os.listdir(vdir) if f.endswith((".zip", ".csv"))     # not the kicad/ copy
@@ -161,6 +183,18 @@ def fab_near(project, pcb, pcb_path, profile, last):
         if stored != {os.path.basename(q) for _, q in pairs}:
             return None
         return V.fab_gap(pairs)
+
+
+def stamped_date(project, pcb, last):
+    """The date a release's title block carries, as its kicad/ copy has it (what its files were plotted with, the
+    project's date format then); without a copy, the release's date in the date format now."""
+    copy = os.path.join(project.release_dir(pcb), last["label"], "kicad", os.path.basename(pcb["path"]))
+    if os.path.exists(copy):
+        with open(copy, encoding="utf-8") as fh:
+            d = V.title_field(fh.read(), "date")
+        if d:
+            return d
+    return V.date_text(last["date"], project.release["date_format"])
 
 
 def previews_current(pdir, pcb_path):
@@ -227,13 +261,17 @@ def git(project, *args):
     return r.stdout.strip()
 
 
-def restamp(pcb, profile, before, old_label, new_label, date):
-    """Stamp new_label into the board; None, or why not. DRC again: no new errors, no more silkscreen findings."""
+def restamp(pcb, profile, before, old_label, new_label, date, text_date=None, fill=True):
+    """Stamp new_label and the date into the board and its schematic (V.stamp); None, or why not. Nothing to change
+    is no change. DRC again when the board changed: no new errors, no more silkscreen findings."""
     pcb_path = pcb["abspath"]
+    if not V.stamp(pcb_path, old_label, new_label, date, text_date, dry=True, fill=fill):
+        return None
     lock = V.locked(pcb_path)
     if lock:
         return "open in KiCad (" + " ".join(os.path.basename(x) for x in lock) + ")"
-    V.stamp(pcb_path, old_label, new_label, date)
+    if pcb_path not in V.stamp(pcb_path, old_label, new_label, date, text_date, fill=fill):
+        return None
     after = checks(pcb_path, profile)
     if any(after[k] for k in FAILS) or after["silk"] > before["silk"]:
         raise SystemExit(f"{pcb['path']}: stamping {new_label} made the checks worse ({before} -> {after}); "
@@ -256,10 +294,31 @@ def bump_part(project, pcb, last, circ, cfp, ffp):
     old = os.path.join(project.release_dir(pcb), last["label"], "kicad", os.path.basename(pcb["path"]))
     if os.path.exists(old):
         ch = V.circuit_changes(V.circuit(old), circ)
-        how = "; ".join(ch[:MOST]) + (f"; and {len(ch) - MOST} more" if len(ch) > MOST else "")
+        how = "; ".join(ch[:MOST]) + (f"; and {len(ch) - MOST} more (pcbkit changelog)" if len(ch) > MOST else "")
     else:
         how = f"the netlist or BOM changed ({last['label']} has no kicad/ copy to say what)"
     return "minor", how + (" (the fab output is the same)" if ffp == last["fab"] else "")
+
+
+def needs_version(pcb_path, rev, circ):
+    """Why a first release needs --version when the title block names a version (rev): a board of that version may
+    have been built, and if the circuit or layout has changed since, the new board would go out under its label.
+    What git says helps to choose: the commit where the title block first read rev, and whether the netlist and BOM
+    are the same now."""
+    adopted = V.adopt(rev)
+    hint = ""
+    origin = V.rev_origin(pcb_path, rev)
+    then = V.git_text(pcb_path, origin[0]) if origin else None
+    if then is not None:
+        ch = V.circuit_changes(V.circuit(None, then), circ)
+        since = f"since {origin[0]} ({origin[1]}), when it first read {rev}, "
+        hint = since + (f"its netlist and BOM changed ({len(ch)} change{'s' * (len(ch) > 1)}: pcbkit changelog "
+                        f"--since {origin[0]})" if ch else "its netlist and BOM are the same (the layout may not be)")
+    else:
+        hint = f"git has no earlier copy of the board reading {rev} to compare with"
+    return (f"a first release needs --version, since the title block reads {rev}, the version of any board already "
+            f"built from it; {hint}. --version {adopted} if no board of {rev} was built, else the next one: "
+            f"{V.bump(adopted, 'minor')} after a change to the circuit, {V.bump(adopted, 'patch')} to the layout only")
 
 
 def release(project, pcb, part=None, version=None, note="", dry=False):
@@ -269,9 +328,10 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         return dict(state="excluded")
     if not profile["release"]:
         return dict(state="not released (profile)")
-    c = checks(pcb_path, profile)
+    errs = []
+    c = checks(pcb_path, profile, errs)
     if any(c[k] for k in FAILS):
-        return dict(state="mockup", checks=c)
+        return dict(state="mockup", checks=c, errors=errs)
     if not project.release["enabled"]:
         return dict(state="checked", checks=c)
     rdir = project.release_dir(pcb)
@@ -301,13 +361,22 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
                 f" (zone fills within {near:.6f} mm of {last['label']}'s files)") + ": recorded as equivalent"
             if not dry:
                 V.update_last(rdir, key, equivalent=last.get("equivalent", []) + [src])
-        if on_board != last["label"]:
-            if dry:
-                said = f"the board says {on_board or 'nothing'}: would stamp {last['label']}"
+        # the board, its root schematic and sheets as the release stamped them (a sheet stamped by an earlier pcbkit
+        # still says the version before)
+        stamps = V.stamp(pcb_path, old_label, last["label"], stamped_date(project, pcb, last), str(last["date"]),
+                         dry=True, fill=False)
+        if stamps:
+            if on_board != last["label"]:
+                what = f"the board {'says' if dry else 'said'} {on_board or 'nothing'}"
             else:
-                why = restamp(pcb, profile, c, old_label, last["label"], str(last["date"]))
-                said = f"the board said {on_board or 'nothing'}: " + (f"not stamped, {why}" if why else
-                                                                       f"stamped {last['label']}")
+                what = (", ".join(os.path.basename(x) for x in stamps)
+                        + f" {'differ' if dry else 'differed'} from {last['label']}'s title block")
+            if dry:
+                said = f"{what}: would stamp {last['label']}"
+            else:
+                why = restamp(pcb, profile, c, old_label, last["label"], stamped_date(project, pcb, last),
+                              str(last["date"]), fill=False)
+                said = f"{what}: " + (f"not stamped, {why}" if why else f"stamped {last['label']}")
             r["note"] = "; ".join(x for x in (r.get("note"), said) if x)
         if project.release["previews"] and not dry and not previews_current(project.previews_dir(pcb), pcb_path):
             r["previews"] = make_previews(project, pcb, pcb_path)
@@ -323,19 +392,32 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         else:
             new = V.bump(last["version"], part or auto)
             why = f"{part or auto} after {last['version']}" + (f" (--{part})" if part else "") + f": {how}"
+    elif version:
+        new, why = version, f"first release, --version {version}" + (f" (its title block read {on_board})"
+                                                                     if on_board else "")
+    elif V.names_version(on_board):
+        return dict(state="not released: " + needs_version(pcb_path, on_board, circ), checks=c)
     else:
-        new = version or V.adopt(on_board) or "1.0.0"
-        why = "first release" if version or not on_board else f"first release, its title block's {on_board}"
+        new = V.adopt(on_board) or "1.0.0"
+        why = f"first release, its title block's {on_board}" if on_board else "first release"
     lab = V.label(new, project.release["label"])
     if os.path.exists(os.path.join(rdir, lab)):
         return dict(state=f"not released: {project.rel(os.path.join(rdir, lab))} exists", checks=c)
+    with open(pcb_path, encoding="utf-8") as fh:
+        wrong, typed = V.label_problems(fh.read(), on_board)
+    if wrong:
+        return dict(state="not released: " + "; ".join(wrong), checks=c)
+    said = why + ((f"; {len(typed)} silkscreen text{'s' * (len(typed) > 1)} with the version typed in "
+                   f"({', '.join(typed[:2])}" + (", ..." if len(typed) > 2 else "")
+                   + "): ${REVISION} and ${ISSUE_DATE} follow the title block") if typed else "")
     if dry:
-        return dict(state="would release", version=new, label=lab, checks=c, note=why)
-    if lab != on_board:
-        stuck = restamp(pcb, profile, c, old_label, lab, str(V.today()))
-        if stuck:
-            return dict(state="not released: " + stuck, checks=c)
-    entry = dict(version=new, label=lab, date=V.today(), source=source_key(project, pcb), fab=ffp, circuit=cfp,
+        return dict(state="would release", version=new, label=lab, checks=c, note=said)
+    day = V.today()
+    stuck = restamp(pcb, profile, c, old_label, lab, V.date_text(day, project.release["date_format"]),
+                    day.isoformat())
+    if stuck:
+        return dict(state="not released: " + stuck, checks=c)
+    entry = dict(version=new, label=lab, date=day, source=source_key(project, pcb), fab=ffp, circuit=cfp,
                  equivalent=[], base_commit=git(project, "rev-parse", "--short", "HEAD"), note=note or why,
                  parts=production.board_parts(project, pcb), parts_inputs=production.hand_inputs(project, pcb))
     pv = make_previews(project, pcb, pcb_path) if project.release["previews"] else "off"
@@ -343,8 +425,8 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
     vdir, lost = write_release(project, pcb, pcb_path, profile, new, lab, entry)
     V.record(rdir, key, entry)
     if lost:
-        why += f"; kicad/ names {len(lost)} path{'s' * (len(lost) > 1)} it doesn't find (MANIFEST.txt)"
-    return dict(state="released", version=new, label=lab, checks=c, note=why, previews=pv, dir=project.rel(vdir))
+        said += f"; kicad/ names {len(lost)} path{'s' * (len(lost) > 1)} it doesn't find (MANIFEST.txt)"
+    return dict(state="released", version=new, label=lab, checks=c, note=said, previews=pv, dir=project.rel(vdir))
 
 
 def refresh_parts(project, pcb, dry=False):
@@ -391,13 +473,15 @@ def main(argv=None):
     g.add_argument("--patch", action="store_true", help="a patch, whatever changed")
     g.add_argument("--minor", action="store_true", help="a minor version, whatever changed")
     g.add_argument("--major", action="store_true", help="a major version: the pinout, outline or GPIO map changed")
-    ap.add_argument("--version", help="the version for a first release (X.Y.Z)")
+    ap.add_argument("--version", help="the version (X.Y.Z): after the last release's, or a first release's, which "
+                                      "needs it when the title block names a version")
     ap.add_argument("--note", default="")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--refresh-parts", action="store_true",
                     help="record the last release's hand parts again (after the part rules changed); nothing else")
     a = ap.parse_args(argv)
     project = Project()
+    V.check_date_format(project.release["date_format"])
     if not project.release["enabled"]:
         if a.refresh_parts:                          # nothing is released, so no release's record is rewritten either
             print(f"releases are off in {project.path} ([release] enabled = false): no release's parts refreshed")
@@ -428,7 +512,9 @@ def main(argv=None):
         chk = r.get("checks")
         why = ""
         if r["state"] == "mockup":
-            why = " (" + ", ".join(f"{k} {v}" for k, v in chk.items() if v and k != "silk") + ")"
+            errs = r.get("errors")
+            why = " (" + ", ".join(f"{k} {v}" + (": " + ", ".join(errs) if k == "drc" and errs else "")
+                                   for k, v in chk.items() if v and k != "silk") + ")"
         print(f"{pcb['path']:60s} {r['state']}{ver}{why}" + (f": {extra}" if extra else ""))
     if not a.dry_run:
         save_state(project, results)

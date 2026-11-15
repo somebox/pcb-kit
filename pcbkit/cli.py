@@ -1,7 +1,7 @@
 """pcbkit command line. `pcbkit <command> --help` for each one.
 
 Checks:    drc, erc, nets, check, courtyards, cleanup
-Release:   release, production, previews, print, fab, panel, setup-kikit
+Release:   release, changelog, production, previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
 Routing:   reroute, setup-router
@@ -20,6 +20,7 @@ COMMANDS = {
     "courtyards": ("pcbkit.checks.courtyards", "courtyards that miss pads or the body, or sit on the other side (--fix redraws)"),
     "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered (--dangling: dead-end) segments, merge runs"),
     "release": ("pcbkit.release.release", "version, stamp and fab every changed board (pcbkit.toml), then production"),
+    "changelog": ("pcbkit.release.changelog", "draft CHANGELOG.md: what changed in each board since its last release (--since)"),
     "production": ("pcbkit.production", "the production page: versions, orders, stock (--check)"),
     "previews": ("pcbkit.release.previews", "schematic PDF, copper PNGs, assembly map, 1:1 print, renders"),
     "print": ("pcbkit.release.plot_print", "printable 1:1 PDF, front then mirrored back (needs pcbnew)"),

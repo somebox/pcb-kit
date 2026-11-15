@@ -7,6 +7,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-15
+
+Versioned releases and the production record, the negotiated router, courtyard checks, and board versions
+as text variables with a changelog.
+
 ### Added
 - **`pcbkit changelog`: a draft of a project's CHANGELOG.md from its boards.** For each board, what changed in words:
   the netlist and BOM as `pcbkit release` compares them, a part's fields on one line and parts that changed alike

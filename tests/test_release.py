@@ -383,6 +383,13 @@ class Layout(unittest.TestCase):
         moved = new.replace("(start 0 0) (end 5 0)", "(start 0 1) (end 5 1)")
         self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, moved)),
                          ["tracks or vias moved (as many, as long)"])
+        # the same board as KiCad 10 writes it: no net table, (net "name"), uuids
+        k10 = ('(kicad_pcb (version 20250114)\n'
+               '  (segment (start 0 0) (end 5 0) (width 0.25) (layer "F.Cu") (net "VIN") (uuid "s1"))\n'
+               '  (via (at 5 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "GND") (uuid "v1"))\n'
+               '  (zone (net "GND") (layer "B.Cu") (uuid "z1") (polygon (pts (xy 0 0) (xy 9 9))))\n)\n')
+        self.assertEqual(V.layout(None, old)["copper"], V.layout(None, k10)["copper"])
+        self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, k10)), [])
 
     def test_footprint_texts_and_the_title_printed(self):
         """A reference moved on its part, not with it, is silkscreen too (a hidden field isn't); a title block's

@@ -504,8 +504,8 @@ def _masked(s):
 
 def _net_named(node, codes):
     """A track or via with its (net 3) as (net "GND"): KiCad 6 to 9 number the nets anew when one is added."""
-    return [["net", codes.get(str(x[1]), x[1])] if isinstance(x, list) and len(x) == 2 and x[0] == "net"
-            and isinstance(x[1], sexp.Sym) else x for x in node]
+    return [[x[0], codes.get(str(x[1]), x[1])] if isinstance(x, list) and len(x) == 2 and x[0] == "net"
+            and isinstance(x[1], sexp.Sym) else x for x in node]    # x[0] is the bare head, as KiCad 10 writes it
 
 
 def _net_name(node, codes):
@@ -522,7 +522,7 @@ def _in_frame(node, angle):
     for x in node:
         if isinstance(x, list) and x[:1] == ["at"] and len(x) >= 3:
             a = float(x[3]) if len(x) > 3 and not isinstance(x[3], list) and str(x[3]) not in ("unlocked",) else 0.0
-            x = ["at", x[1], x[2], sexp.Sym(f"{round((a - angle) % 360, 2):g}")] + x[4:]
+            x = [x[0], x[1], x[2], sexp.Sym(f"{round((a - angle) % 360, 2):g}")] + x[4:]
         out.append(x)
     return out
 

@@ -1246,6 +1246,16 @@ class Release(unittest.TestCase):
         self.assertEqual(V.title_rev(read(board)), "")
         self.assertIn("not released: a first release needs --version, since the schematic's title block reads v1.0",
                       release(root, "--dry-run"))
+        # the changelog goes by the same rev: the board at the commit where the schematic first read it
+        git(root, "init", "-q", "-b", "main")
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "as built")
+        commit, day = git(root, "log", "-1", "--format=%h %as").split()
+        edit(root, value("R1", "4.7k"))
+        self.assertIn(f"since {commit} ({day}), when it first read v1.0, its netlist and BOM changed",
+                      release(root, "--dry-run"))
+        self.assertIn(f"### demo, since v1.0 as at {commit} ({day}), when its schematic's title block first read "
+                      "v1.0\n\nCircuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n", changelog(root))
         sch = os.path.join(root, "boards", "demo", "demo.kicad_sch")
         write(sch, read(sch).replace('(rev "v1.0")', '(rev "0.2-draft")'))
         self.assertIn("would release v0.2 (0.2.0): first release, its schematic's title block's 0.2-draft",

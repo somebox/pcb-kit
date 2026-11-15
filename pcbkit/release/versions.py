@@ -144,6 +144,19 @@ def title_rev(text):
     return title_field(text, "rev")
 
 
+def version_source(pcb):
+    """Where a board's version is written before its first release: (the rev, the file it is in, "title block" or
+    "schematic's title block"). The board's title block; its root schematic's when the board has none, as KiCad's
+    blank board hasn't."""
+    with open(pcb, encoding="utf-8") as fh:
+        rev = title_rev(fh.read())
+    sch = os.path.splitext(pcb)[0] + ".kicad_sch"
+    if rev or not os.path.exists(sch):
+        return rev, pcb, "title block"
+    with open(sch, encoding="utf-8") as fh:
+        return title_rev(fh.read()), sch, "schematic's title block"
+
+
 def _label_texts(text, label, date):
     """Every silkscreen text that carries a version: its labels and dates replaced (None: masked)."""
     def gr(m):

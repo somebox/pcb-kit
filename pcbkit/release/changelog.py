@@ -63,11 +63,11 @@ def baseline(project, pcb, since=None):
         text, how = _copy(project, pcb, last)
         return (text, f"{last['label']} ({last['date']}){how}") if text is not None else \
             (None, how + ": --since a board or git revision")
-    rev = V.title_rev(_read(path))
-    origin = V.rev_origin(path, rev)
-    text = V.git_text(path, origin[0]) if origin else None
+    rev, where, block = V.version_source(path)        # the schematic's when the board has no title block
+    origin = V.rev_origin(where, rev)
+    text = V.git_text(path, origin[0]) if origin else None   # the board as it was then
     if text is not None:
-        return text, f"{rev} as at {origin[0]} ({origin[1]}), when its title block first read {rev}"
+        return text, f"{rev} as at {origin[0]} ({origin[1]}), when its {block} first read {rev}"
     return None, ("never released, and git has no copy of it reading " + (rev or "a version")
                   + ": --since an as-built board or a git revision")
 

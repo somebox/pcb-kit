@@ -400,13 +400,7 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
             new = V.bump(last["version"], part or auto)
             why = f"{part or auto} after {last['version']}" + (f" (--{part})" if part else "") + f": {how}"
     else:
-        # a board without a title block (KiCad's blank one) goes by its root schematic's, where the version starts
-        sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"
-        if on_board or not os.path.exists(sch):
-            rev, where, block = on_board, pcb_path, "title block"
-        else:
-            with open(sch, encoding="utf-8") as fh:
-                rev, where, block = V.title_rev(fh.read()), sch, "schematic's title block"
+        rev, where, block = V.version_source(pcb_path)      # the schematic's when the board has no title block
         if version:
             new, why = version, f"first release, --version {version}" + (f" (its {block} read {rev})" if rev else "")
         elif V.names_version(rev):

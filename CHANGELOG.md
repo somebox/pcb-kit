@@ -8,6 +8,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **`pcbkit.schematic.build(..., wire=25.4)` draws small local nets as wires.** Without it every pin of a local net
+  gets a label, and a feedback divider or a boot capacitor reads as parts with no visible connection. With it, two
+  pins of a net (2 to 6 pins, not power, hierarchical or global) within that many mm are joined by a straight, L or
+  Z run when it is clear of every symbol, text, other net's pin and other wire, with a junction where three meet
+  and the net's name once on the wire. Pins it can't reach keep their labels, so the netlist is unchanged: checked
+  on regenerated copies of esp32-s3-ha-node (74 nets) and siebenuhr's power sheet (126 nets), both ERC clean. The
+  ha-node power sheet goes from 3 small local nets wired to 9 of 13; siebenuhr's stays at 2 of 20, because its parts
+  sit in rows away from their ICs: the wires follow the placement. Off by default, so a sheet regenerates as it was.
+  `plan_wires()` is the geometry on its own.
 - **`pcbkit sch-lint`: how a schematic reads, measured from the files.** ERC says a schematic is legal; this lists
   what makes it hard to read: two texts on top of each other, a text across another symbol, a wire through a text
   or through the middle of a symbol, a reference or value more than 5 mm from its part, a part off the page, a sheet

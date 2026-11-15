@@ -14,8 +14,13 @@ A project keeps a `scripts/builder.py` that configures this module and then *bec
 
 A component is a dict: ref, lib, val, fp, x, y, rot, lcsc, fields, pins ({pin: net}), optional unit/mirror.
 A pin's net is a power symbol (in POWER), "NC", a hierarchical label (in `hier`), a global label (in `glob`), or a
-local net, which is wired with batch_connect_to_net. Power symbols are placed once per pin position and numbered
-from `base`. Harvested from the projects' builder.py; the sign, siebenuhr and spotlight variants are merged.
+local net, which gets a label on each pin (batch_connect_to_net). Power symbols are placed once per pin position and
+numbered from `base`. Harvested from the projects' builder.py; the sign, siebenuhr and spotlight variants are merged.
+
+`build(..., wire=25.4)` draws the small local nets instead: where two pins of a net are within that many mm and a
+straight, L or Z run between them is clear of every symbol, text, other pin and other wire, it is drawn as a wire,
+and the net is named once, on the wire. Pins it can't reach keep their labels, so the netlist is the same either
+way; `pcbkit sch-lint` counts what was wired. Place the parts of a block so their pins line up and the wires follow.
 """
 import os
 import re
@@ -63,8 +68,114 @@ def P2(ref, lib, val, fp, lcsc, x, y, p1, p2, rot=0, fields=None, mpn=None):
     return dict(ref=ref, lib=lib, val=val, fp=fp, x=x, y=y, rot=rot, lcsc=lcsc, fields=f, pins={"1": p1, "2": p2})
 
 
-def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None):
-    """Place comps on P+sheet, wire their pins, annotate LCSC and other fields. Returns pin locations."""
+WIRE_PINS = 6  # the largest local net build(wire=...) draws; a wider fan-out keeps its labels
+
+
+def _runs(a, b):
+    """Candidate wire runs from a to b, fewest corners first: straight, the two Ls, the two Zs."""
+    (x1, y1), (x2, y2) = a, b
+    if x1 == x2 or y1 == y2:
+        return [[a, b]]
+    snap = lambda v: round(round(v / 1.27) * 1.27, 2)  # noqa: E731
+    xm, ym = snap((x1 + x2) / 2), snap((y1 + y2) / 2)
+    out = [[a, (x2, y1), b], [a, (x1, y2), b]]
+    if xm not in (x1, x2):
+        out.append([a, (xm, y1), (xm, y2), b])
+    if ym not in (y1, y2):
+        out.append([a, (x1, ym), (x2, ym), b])
+    return out
+
+
+def _touch(s, t):
+    """Do two wire segments meet or cross? Exact for horizontal and vertical ones."""
+    return (min(s[0][0], s[1][0]) <= max(t[0][0], t[1][0]) + 0.01 and min(t[0][0], t[1][0]) <= max(s[0][0], s[1][0]) + 0.01
+            and min(s[0][1], s[1][1]) <= max(t[0][1], t[1][1]) + 0.01 and min(t[0][1], t[1][1]) <= max(s[0][1], s[1][1]) + 0.01)
+
+
+def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS):
+    """Wires for small local nets. Pure geometry, no konnect.
+
+    nets      {name: [(ref, pin, (x, y)), ...]}, the pins of each local net
+    boxes     what a wire may not pass through: symbol outlines (body and pins) and visible texts, (x0, y0, x1, y1)
+    points    every pin endpoint on the sheet, {(x, y): net or None}: a wire may only touch its own net's
+    segments  wires already there, [((x1, y1), (x2, y2))]
+    reach     the longest run between two pins, mm (along the wire)
+
+    Returns {name: {"wires": [segment], "junctions": [(x, y)], "label": (x, y, rotation) or None,
+    "loose": [(ref, pin)]}}: the pins in `loose` could not be reached and still need a label each; `label` names
+    the wired part, and is None when nothing was wired."""
+    from .checks.sch_lint import on_seg, seg_in_box, shrink, text_width
+    boxes = [shrink(b, 0.1) for b in boxes]
+    taken = list(segments)
+    out = {}
+    for name, pins in nets.items():
+        at = {}
+        for ref, pin, p in pins:
+            at.setdefault(p, (ref, pin))
+        pts = sorted(at)
+        res = out[name] = dict(wires=[], junctions=[], label=None, loose=[at[p] for p in pts])
+        if not 2 <= len(pts) <= max_pins:
+            continue
+        group = {p: p for p in pts}
+
+        def root(p):
+            while group[p] != p:
+                p = group[p]
+            return p
+
+        def clear(run):
+            for seg in zip(run, run[1:]):
+                if any(seg_in_box(seg, b) for b in boxes) or any(_touch(seg, t) for t in taken):
+                    return False
+                if any(net != name and on_seg(q, seg) for q, net in points.items()):
+                    return False
+            return True
+
+        mine = []
+        pairs = sorted((abs(a[0] - b[0]) + abs(a[1] - b[1]), a, b) for i, a in enumerate(pts) for b in pts[i + 1:])
+        for d, a, b in pairs:
+            if d > reach or root(a) == root(b):
+                continue
+            run = next((r for r in _runs(a, b) if clear(r)), None)
+            if run:
+                mine += list(zip(run, run[1:]))
+                group[root(a)] = root(b)
+        if not mine:
+            continue
+        # cut the runs where they meet, so a stretch two runs share is drawn once
+        ends = {p for seg in mine for p in seg}
+        cut = set()
+        for s0, s1 in mine:
+            on = sorted(p for p in ends if on_seg(p, (s0, s1)))
+            cut |= {pair for pair in zip(on, on[1:])}
+        mine = sorted(cut)
+        wired = {p for p in pts if p in ends}
+        res["wires"], res["loose"] = mine, [at[p] for p in pts if p not in wired]
+        # a dot where three or more things meet: wire ends, and the pin if there is one
+        for p in sorted(ends):
+            if sum(1 for seg in mine if p in seg) + (p in at) >= 3:
+                res["junctions"].append(p)
+        # the name, on the longest run that holds it: along a horizontal one, else up a vertical one.
+        # Wired pins left in separate groups each get a label on their own pin instead.
+        roots = {root(p) for p in wired}
+        if len(roots) > 1:
+            res["loose"] = [at[p] for p in pts]
+        else:
+            need = text_width(name, 1.27) + 2.54
+            length = lambda s: abs(s[0][0] - s[1][0]) + abs(s[0][1] - s[1][1])  # noqa: E731
+            horiz = [s for s in mine if s[0][1] == s[1][1] and length(s) >= need]
+            s = max(horiz or mine, key=length)
+            if s[0][1] == s[1][1]:
+                res["label"] = (round(min(s[0][0], s[1][0]) + 1.27, 2), s[0][1], 0)
+            else:
+                res["label"] = (s[0][0], round(max(s[0][1], s[1][1]) - 1.27, 2), 90)
+        taken += mine
+    return out
+
+
+def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None, wire=None):
+    """Place comps on P+sheet, connect their pins, annotate LCSC and other fields. Returns pin locations.
+    wire: draw small local nets as wires where two pins are within this many mm (see the module docstring)."""
     glob = glob or {}
     S = sheet_path(sheet)
     k = Konnect()
@@ -135,8 +246,36 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         assert not r["errors"] and not r["failures"], r
     if nc:
         k.call("batch_add_no_connect", {"schematic": S, "positions": nc})
+    drawn = 0
+    if wire:
+        from .checks import sch_lint
+        page = sch_lint.Sheet(S)  # as placed so far: parts, power symbols, their texts
+        boxes = [t["box"] for t in page.texts]
+        for sym in page.symbols:
+            xs, ys = zip(*([p for _, p in sym["pins"]] + [sym["body"][:2], sym["body"][2:]]))
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+        key = lambda x, y: (round(x, 2), round(y, 2))  # noqa: E731
+        points = {key(*p): None for sym in page.symbols for _, p in sym["pins"]}
+        nets = {}
+        for net, pins in local.items():
+            nets[net] = [(p["reference"], p["pin_number"], key(*L[(p["reference"], p["pin_number"])][:2])) for p in pins]
+            points.update({p: net for _, _, p in nets[net]})
+        plan = plan_wires(nets, boxes, points, [((a, b), (c_, d)) for a, b, c_, d in wires], wire)
+        for net, r in plan.items():
+            local[net] = [{"reference": ref, "pin_number": pin} for ref, pin in r["loose"]]
+            if not r["wires"]:
+                continue
+            drawn += 1
+            k.call("batch_add_wire", {"schematic": S, "wires": [dict(x1=a[0], y1=a[1], x2=b[0], y2=b[1]) for a, b in r["wires"]]})
+            if r["junctions"]:
+                k.call("batch_add_junction", {"schematic": S, "positions": [dict(x=x, y=y) for x, y in r["junctions"]]})
+            if r["label"]:
+                x, y, rot = r["label"]
+                k.call("add_schematic_net_label", {"schematic": S, "net": net, "label_type": "net_label",
+                                                   "x": x, "y": y, "rotation": rot})
     for net, pins in local.items():
-        k.call("batch_connect_to_net", {"schematic": S, "net_name": net, "pins": pins})
+        if pins:
+            k.call("batch_connect_to_net", {"schematic": S, "net_name": net, "pins": pins})
     if wires:
         k.call("batch_add_wire", {"schematic": S, "wires": [dict(x1=a, y1=b, x2=c_, y2=d) for a, b, c_, d in wires]})
     if junctions:
@@ -150,7 +289,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         f.update(c.get("fields", {}))
         for key, val in f.items():
             k.call("add_component_annotation", {"schematic": S, "reference": c["ref"], "key": key, "value": val})
-    print(sheet, "placed", len(comps), "global", len(glob), "power", len(pw), "nc", len(nc), "local nets", len(local),
+    print(sheet, "placed", len(comps), "global", len(glob), "power", len(pw), "nc", len(nc), "local nets", len(local), "wired", drawn,
           "hier", len(hier_done), "missing hier", set(hier) - hier_done)
     return L
 

@@ -339,7 +339,8 @@ agent which commands to run, under Claude Code's usual permission prompts:
 Library use from a project script:
 
 ```python
-from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect
+from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect;
+                                             # sch.build(..., wire=25.4) draws small local nets as wires, not labels
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box

@@ -7,6 +7,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Changed
+- **More JLC rotations from the preview (2026-11-15).** KiCad's `TSOT-23-6` gets -90 like its SOT-23-6, which it is
+  laid out as: it matched the never-checked `^TSOT-23` (+180), a quarter turn off for an LMR51625. Two part rules
+  for parts whose JLC footprint lies a quarter turn from the part their package rule was checked on: the TPS2116DRLR
+  (C3235557) -90 on SOT-583-8, and the BCR421UW6Q-7 (C154739) 180 on SOT-23-6. `^SOT-23` was seen right again and is
+  dated 2026-11-15. A board with one of these parts gets its next version from `pcbkit release`, since its CPL
+  changes.
+
 ## [0.4.0] - 2026-11-15
 
 Versioned releases and the production record, the negotiated router, courtyard checks, and board versions

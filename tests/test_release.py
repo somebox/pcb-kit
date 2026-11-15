@@ -224,6 +224,19 @@ class Labels(unittest.TestCase):
                                        {"severity": "error", "type": "clearance", "items": []}]),
                          ["1 clearance", "2 hole_clearance (USBC1)"])
 
+    def test_pcbkit_new_gives_the_board_the_schematics_title_block(self):
+        """The scaffold's board and schematic read the same title block, so its first release is v0.1, the draft's,
+        and ${TITLE} on the board prints the project's title."""
+        from pcbkit import new_project
+        with tempfile.TemporaryDirectory() as d:
+            new_project.new(os.path.join(d, "demo"), "main", title='Demo "LED"', company="ACME", git=False, bomi=False)
+            board, sch = (read(d, "demo", "boards", "main", "main." + e) for e in ("kicad_pcb", "kicad_sch"))
+        today = datetime.date.today().isoformat()
+        self.assertEqual([V.title_field(board, k) for k in ("title", "date", "rev", "company")],
+                         ['Demo "LED"', today, "0.1-draft", "ACME"])
+        self.assertEqual((V.title_rev(sch), V.title_field(sch, "date")), ("0.1-draft", today))
+        self.assertEqual(V.adopt(V.title_rev(board)), "0.1.0")
+
     def test_a_first_release_adopts_only_a_draft(self):
         self.assertTrue(all(V.names_version(r) for r in ("v1.4", "1.3.1", "2.0", "v3")))
         self.assertFalse(any(V.names_version(r) for r in ("0.1-draft", "3.0-draft", "", "rev A")))
@@ -348,7 +361,7 @@ class Layout(unittest.TestCase):
         # a version typed into the silkscreen is no change; a track moved the same length is one
         moved = LAYOUT_A.replace("(start 8.8 10) (end 15.2 10)", "(start 8.8 10.1) (end 15.2 10.1)")
         self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, moved)),
-                         ["tracks or vias moved (as many, as long)"])
+                         ["tracks or vias moved or resized (as many, as long)"])
         self.assertEqual(V.layout_changes(V.layout(None, LAYOUT_A), V.layout(None, LAYOUT_A.replace("v1.0", "v2.3"))),
                          [])
 
@@ -382,7 +395,7 @@ class Layout(unittest.TestCase):
         self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, new)), [])
         moved = new.replace("(start 0 0) (end 5 0)", "(start 0 1) (end 5 1)")
         self.assertEqual(V.layout_changes(V.layout(None, old), V.layout(None, moved)),
-                         ["tracks or vias moved (as many, as long)"])
+                         ["tracks or vias moved or resized (as many, as long)"])
         # the same board as KiCad 10 writes it: no net table, (net "name"), uuids
         k10 = ('(kicad_pcb (version 20250114)\n'
                '  (segment (start 0 0) (end 5 0) (width 0.25) (layer "F.Cu") (net "VIN") (uuid "s1"))\n'
@@ -1145,7 +1158,7 @@ class Release(unittest.TestCase):
         edit(root, move_track)
         self.assertEqual(changelog(root), "## Unreleased\n\n### demo, since v1.0 (2026-11-01)\n\n"
                                           "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n\n"
-                                          "Layout:\n- tracks or vias moved (as many, as long)\n")
+                                          "Layout:\n- tracks or vias moved or resized (as many, as long)\n")
         release(root)
         out = changelog(root, "--all")
         self.assertIn("### demo, since v1.1 (%s)\n\n- no change to the netlist, BOM or layout\n" % V.today(), out)
@@ -1222,6 +1235,21 @@ class Release(unittest.TestCase):
             rs[-1]["base_commit"] = base
             tomlw.dump({"key": "demo", "release": rs}, path)
             self.assertIn(said, changelog(root))
+
+    def test_a_board_without_a_title_block_goes_by_its_schematics(self):
+        """KiCad's blank board has no title block: a first release reads the root schematic's rev instead."""
+        root = self.fresh("no-title")
+        board = os.path.join(root, "boards", "demo", "demo.kicad_pcb")
+        text = read(board)
+        s, e = V.title_block(text)
+        write(board, text[:text.rfind("\n", 0, s)] + text[e:])
+        self.assertEqual(V.title_rev(read(board)), "")
+        self.assertIn("not released: a first release needs --version, since the schematic's title block reads v1.0",
+                      release(root, "--dry-run"))
+        sch = os.path.join(root, "boards", "demo", "demo.kicad_sch")
+        write(sch, read(sch).replace('(rev "v1.0")', '(rev "0.2-draft")'))
+        self.assertIn("would release v0.2 (0.2.0): first release, its schematic's title block's 0.2-draft",
+                      release(root, "--dry-run"))
 
 
 if __name__ == "__main__":

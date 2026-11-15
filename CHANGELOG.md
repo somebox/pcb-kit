@@ -212,7 +212,10 @@ as text variables with a changelog.
   may have been built, and the new board would go out under their label. It took the title block's version before,
   which on espcandle-pcb would have released the changed top as v1.4.0 again. The output says what git knows: the
   commit where the title block first read that version, and how many netlist and BOM changes there are since. A
-  draft's rev (`0.1-draft`) or none is still taken as it is.
+  draft's rev (`0.1-draft`) or none is still taken as it is. A board without a title block goes by its root
+  schematic's, and `pcbkit new` gives the blank board the schematic's title block (title, date, `0.1-draft`,
+  company), so a new project's first release is v0.1 and `${TITLE}` prints its title; it was v1.0, from the
+  board's missing one. `pcbkit new` also escapes a title or company with quotes in the schematic.
 - **A mockup's line names its DRC errors**, by type and part: `mockup (drc 2: 2 hole_clearance (USBC1))`.
   docs/CONVENTIONS.md says how to accept one: a measured `.kicad_dru` rule naming the part and the value, not a
   DRC exclusion; the pcb-kit skill's courtyard advice says the same.

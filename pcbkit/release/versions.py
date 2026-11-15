@@ -633,7 +633,7 @@ def layout_changes(old, new):
         out.append(f"vias {old['vias']} -> {new['vias']}")
     if (old["tracks"], old["length"], old["vias"]) == (new["tracks"], new["length"], new["vias"]) and \
             old.get("copper") != new.get("copper"):
-        out.append("tracks or vias moved (as many, as long)")
+        out.append("tracks or vias moved or resized (as many, as long)")
     for z, n, m, same in _by_name(old["zones"], new["zones"]):
         if m > n:
             out.append(f"adds a zone: {z}" + (f" (x{m - n})" if m - n > 1 else ""))

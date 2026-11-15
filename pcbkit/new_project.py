@@ -3,7 +3,8 @@
   pcbkit new DIR --board NAME [--title "..."] [--description "..."] [--company "..."] [--no-git] [--no-bomi]
 
 Creates DIR with README.md, DESIGN.md, LAYOUT.md, PRODUCTION.md, CHANGELOG.md, .gitignore and pcbkit.toml from the kit's templates (placeholders
-filled in), boards/NAME/ with an empty KiCad 10 project (root schematic, blank board, lib tables pointing at lib/),
+filled in), boards/NAME/ with an empty KiCad 10 project (root schematic and blank board, both with the title block
+title, today, 0.1-draft, company; lib tables pointing at lib/),
 lib/<project>.kicad_sym and lib/<project>.pretty (empty), docs/previews/, docs/datasheets/, scripts/ with the
 previews wrapper and the builder glue for pcbkit.schematic, a bomi project in the board folder, and a first git
 commit. See docs/CONVENTIONS.md in the kit for what goes where.
@@ -19,6 +20,7 @@ import uuid
 from pathlib import Path
 
 from .kicad import data_path
+from .release.versions import _esc, _stamp_title_block
 
 KIT = Path(__file__).resolve().parents[1]
 TEMPLATES = KIT / "templates" / "project"
@@ -45,9 +47,14 @@ def kicad_project(bdir, board, project, title, company):
     }, indent=2) + "\n")
     write(bdir / f"{board}.kicad_sch",
           f'(kicad_sch (version 20250114) (generator "pcbkit") (generator_version "10.0") (uuid "{root}")\n'
-          f'\t(paper "A3")\n\t(title_block (title "{title}") (date "{today}") (rev "0.1-draft") (company "{company}"))\n'
+          f'\t(paper "A3")\n\t(title_block (title "{_esc(title)}") (date "{today}") (rev "0.1-draft") '
+          f'(company "{_esc(company)}"))\n'
           f'\t(lib_symbols)\n\t(sheet_instances (path "/" (page "1")))\n\t(embedded_fonts no)\n)\n')
-    shutil.copy(data_path("templates", "blank.kicad_pcb"), bdir / f"{board}.kicad_pcb")
+    # the board's title block as the schematic's, so the first release and ${TITLE} on the board go by it
+    blank = data_path("templates", "blank.kicad_pcb")
+    with open(blank, encoding="utf-8") as fh:
+        pcb = _stamp_title_block(fh.read(), "0.1-draft", today, blank, fill={"title": title, "company": company})
+    write(bdir / f"{board}.kicad_pcb", pcb)
     write(bdir / "sym-lib-table",
           f'(sym_lib_table\n  (version 7)\n  (lib (name "{project}")(type "KiCad")(uri "${{KIPRJMOD}}/../../lib/{project}.kicad_sym")'
           '(options "")(descr "Project symbols"))\n)\n')

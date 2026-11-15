@@ -301,14 +301,14 @@ def bump_part(project, pcb, last, circ, cfp, ffp):
     return "minor", how + (" (the fab output is the same)" if ffp == last["fab"] else "")
 
 
-def needs_version(pcb_path, rev, circ):
+def needs_version(pcb_path, rev, circ, where=None, block="the title block"):
     """Why a first release needs --version when the title block names a version (rev): a board of that version may
     have been built, and if the circuit or layout has changed since, the new board would go out under its label.
-    What git says helps to choose: the commit where the title block first read rev, and whether the netlist and BOM
-    are the same now."""
+    What git says helps to choose: the commit where the title block (of where, the board's file unless the rev came
+    from the schematic) first read rev, and whether the board's netlist and BOM then are the same as now."""
     adopted = V.adopt(rev)
     hint = ""
-    origin = V.rev_origin(pcb_path, rev)
+    origin = V.rev_origin(where or pcb_path, rev)
     then = V.git_text(pcb_path, origin[0]) if origin else None
     if then is not None:
         ch = V.circuit_changes(V.circuit(None, then), circ)
@@ -317,7 +317,7 @@ def needs_version(pcb_path, rev, circ):
                         f"--since {origin[0]})" if ch else "its netlist and BOM are the same (the layout may not be)")
     else:
         hint = f"git has no earlier copy of the board reading {rev} to compare with"
-    return (f"a first release needs --version, since the title block reads {rev}, the version of any board already "
+    return (f"a first release needs --version, since {block} reads {rev}, the version of any board already "
             f"built from it; {hint}. --version {adopted} if no board of {rev} was built, else the next one: "
             f"{V.bump(adopted, 'minor')} after a change to the circuit, {V.bump(adopted, 'patch')} to the layout only")
 
@@ -399,14 +399,21 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         else:
             new = V.bump(last["version"], part or auto)
             why = f"{part or auto} after {last['version']}" + (f" (--{part})" if part else "") + f": {how}"
-    elif version:
-        new, why = version, f"first release, --version {version}" + (f" (its title block read {on_board})"
-                                                                     if on_board else "")
-    elif V.names_version(on_board):
-        return dict(state="not released: " + needs_version(pcb_path, on_board, circ), checks=c)
     else:
-        new = V.adopt(on_board) or "1.0.0"
-        why = f"first release, its title block's {on_board}" if on_board else "first release"
+        # a board without a title block (KiCad's blank one) goes by its root schematic's, where the version starts
+        sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"
+        if on_board or not os.path.exists(sch):
+            rev, where, block = on_board, pcb_path, "title block"
+        else:
+            with open(sch, encoding="utf-8") as fh:
+                rev, where, block = V.title_rev(fh.read()), sch, "schematic's title block"
+        if version:
+            new, why = version, f"first release, --version {version}" + (f" (its {block} read {rev})" if rev else "")
+        elif V.names_version(rev):
+            return dict(state="not released: " + needs_version(pcb_path, rev, circ, where, "the " + block), checks=c)
+        else:
+            new = V.adopt(rev) or "1.0.0"
+            why = f"first release, its {block}'s {rev}" if rev else "first release"
     lab = V.label(new, project.release["label"])
     if os.path.exists(os.path.join(rdir, lab)):
         return dict(state=f"not released: {project.rel(os.path.join(rdir, lab))} exists", checks=c)

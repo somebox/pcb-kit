@@ -86,8 +86,9 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
   written: releases.toml keeps each release's date as a date, the fingerprints mask the title block, and a release
   compared with later is stamped with the date its own `kicad/` copy carries. A version typed into the silkscreen
   keeps its date in ISO.
-- **A first release.** A board without releases takes the version its title block reads only when that is a
-  draft's (`0.1-draft` gives 0.1.0) or there is none (1.0.0). A rev that is a version alone (`v1.4`, `1.3.1`, `2.0`)
+- **A first release.** A board without releases takes the version its title block reads (its root schematic's
+  when the board has none, as KiCad's blank board hasn't) only when that is a draft's (`0.1-draft` gives 0.1.0, as
+  `pcbkit new` writes it in both) or there is none (1.0.0). A rev that is a version alone (`v1.4`, `1.3.1`, `2.0`)
   may be the label of boards already built, and if the circuit or layout has changed since, the new board would go
   out under the same label: release asks for `--version`, and says what git knows, the commit where the title block
   first read that version and whether the netlist and BOM have changed since (`pcbkit changelog` says how). Use the

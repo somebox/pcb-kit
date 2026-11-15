@@ -27,6 +27,7 @@ DEFAULTS = {
         "enabled": True,               # versions, stamping, release folders; false: pcbkit release only checks
         "dir": "releases/{key}",       # where each version's files go (committed)
         "label": "short",              # "short": v1.0 when the patch is 0, v1.0.1 otherwise; "full": v1.0.0
+        "date_format": "%Y-%m-%d",     # the title block's date (${ISSUE_DATE} on the board), e.g. "%m.%Y": 11.2026
         "fab": ["jlcpcb", "pcbway"],   # whose assembly files to write
         "placed": "not-excluded",      # parts the assembler places: "not-excluded" (in BOM and position files),
                                        # or "field:NAME=VALUE" (e.g. "field:Assembly=jlc")

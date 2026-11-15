@@ -19,3 +19,6 @@ pcbkit check boards/<b>/<b>.kicad_pcb
 ```
 
 ## Silkscreen
+
+Version and date: `${ISSUE_DATE} ${REVISION}` on the back, which KiCad fills from the title block when it plots the
+Gerbers (pcbkit release stamps the title block).

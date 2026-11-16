@@ -175,7 +175,44 @@ class Rails(Lib):
     def test_the_name_goes_where_it_is_clear(self):
         segs = [((50.8, 50.8), (63.5, 50.8)), ((63.5, 50.8), (71.12, 50.8))]
         self.assertEqual(sch._name_spot("FB", segs, []), (52.07, 50.8, 0))                  # the longest stretch
-        self.assertEqual(sch._name_spot("FB", segs, [(51, 48, 56, 50.5)]), (64.77, 50.8, 0))   # a value in the way there
+        self.assertEqual(sch._name_spot("FB", segs, [(51, 48, 56, 50.5)]), (59.69, 50.8, 0))   # a value in the way: the far end
+        self.assertEqual(sch._name_spot("FB", segs, [(51, 48, 63, 50.5)]), (64.77, 50.8, 0))   # all along it: the next stretch
+        self.assertEqual(sch._name_spot("FB", [((50.8, 50.8), (51.3, 50.8))], []), (51.3, 50.8, 0))    # never past a short one
+        self.assertEqual(sch._name_spot("FB", [((50.8, 50.8), (50.8, 51.3))], []), (50.8, 50.8, 0))
+
+    def test_two_pins_are_joined_only_when_nothing_lies_between(self):
+        a, b = (50.8, 50.8), (53.34, 50.8)
+        self.assertTrue(sch._free(a, b, {a, b, (60.96, 50.8)}, []))
+        self.assertFalse(sch._free(a, b, {a, b, (52.07, 50.8)}, []))                      # another pin on the way
+        self.assertFalse(sch._free(a, b, {a, b}, [(52.07, 45.72, 52.07, 55.88)]))         # a wire across
+        self.assertTrue(sch._free(a, b, {a, b}, [(50.8, 50.8, 50.8, 45.72)]))             # a wire that ends on one of them
+
+    def test_a_derived_symbol_in_a_directory_library(self):
+        lib = os.path.join(self.dir.name, "d.kicad_symdir")
+        os.makedirs(lib, exist_ok=True)
+        for name, body in (("R", LIB[LIB.index('\t(symbol "R"'):LIB.index('\t(symbol "R_Small"')]),
+                           ("R_Kid", '\t(symbol "R_Kid"\n\t\t(extends "R")\n\t)\n')):
+            with open(os.path.join(lib, name + ".kicad_sym"), "w") as f:
+                f.write('(kicad_symbol_lib (version 20241209) (generator "test")\n' + body + ")\n")
+        with open(os.path.join(self.dir.name, "sym-lib-table"), "a") as f:
+            f.write('(sym_lib_table (lib (name "d")(type "KiCad")(uri "${KIPRJMOD}/d.kicad_symdir")(options "")(descr "")))\n')
+        table = os.path.join(self.dir.name, "sym-lib-table")
+        both = '(sym_lib_table (version 7)\n (lib (name "t")(type "KiCad")(uri "${KIPRJMOD}/t.kicad_sym")(options "")(descr ""))\n' \
+               ' (lib (name "d")(type "KiCad")(uri "${KIPRJMOD}/d.kicad_symdir")(options "")(descr "")))\n'
+        with open(table, "w") as f:
+            f.write(both)
+        self.assertEqual(sch.pins(dict(ref="R1", lib="d:R_Kid", x=0, y=0, pins={})), {"1": (0, -3.81), "2": (0, 3.81)})
+        with self.assertRaises(KeyError):
+            sch.pins(dict(ref="R1", lib="d:NOPE", x=0, y=0, pins={}))
+
+    def test_a_block_measures_its_own_unit_of_a_part(self):
+        import types
+        sym = lambda unit, x: dict(ref="U1", unit=unit, power=False, pins=[("1", (x, 50.8))], body=(x, 48.26, round(x + 5.08, 2), 53.34))  # noqa: E731
+        sh = types.SimpleNamespace(symbols=[sym(1, 50.8), sym(2, 150.0)], wires=[], texts=[], path="t")
+        one = types.SimpleNamespace(parts=[dict(ref="U1", unit=1)])
+        two = types.SimpleNamespace(parts=[dict(ref="U1", unit=2)])
+        self.assertEqual(sch._content(sh, one), (50.8, 48.26, 55.88, 53.34))
+        self.assertEqual(sch._content(sh, two), (150.0, 48.26, 155.08, 53.34))
         self.assertEqual(sch._name_spot("FB", [((50.8, 50.8), (50.8, 63.5))], []), (50.8, 62.23, 0))   # level, beside the wire
 
 
@@ -250,6 +287,14 @@ class Fields(unittest.TestCase):
     def test_to_the_left_when_the_right_is_taken(self):
         _, box = self.tidy(placed("R1", 50, 50), placed("R2", 54, 50))       # R2's body where R1's fields would go
         self.assertEqual(box[("R1", "Reference")][2], 47.98)                 # ends 1 mm left of the body
+
+    def test_a_one_letter_value_is_set_level_too(self):
+        from pcbkit.checks.sch_lint import transform
+        for rot in (0, 90, 180, 270):                                       # "0": narrower than it is high
+            x, y, ang, hj = sch._field_at(transform(rot, None), 10.0, 5.0, 1.0, 1.27, "left")
+            self.assertEqual((x, ang in (0, 90)), (10.0, True))
+        self.assertEqual(sch._field_at(transform(0, None), 10.0, 5.0, 1.0, 1.27, "left")[2:], (0, "left"))
+        self.assertEqual(sch._field_at(transform(90, None), 10.0, 5.0, 1.0, 1.27, "left")[2], 90)   # turned with the part, kept level
 
     def test_above_and_below_a_part_that_lies_flat(self):
         _, box = self.tidy(placed("R1", 50, 50, rot=90))

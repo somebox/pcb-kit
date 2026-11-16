@@ -177,7 +177,9 @@ class Sheet:
             root = sexp.parse(f.read())
         libs = _lib_symbols(root)
         paper = sexp.first(root, "paper")
-        self.paper = PAPER.get(paper[1]) if paper and len(paper) == 2 else None
+        self.paper = PAPER.get(paper[1]) if paper and len(paper) >= 2 else None
+        if self.paper and "portrait" in paper[2:]:
+            self.paper = self.paper[::-1]
         if paper and len(paper) > 3 and paper[1] == "User":
             self.paper = (float(paper[2]), float(paper[3]))
         tb = sexp.first(root, "title_block")
@@ -202,6 +204,8 @@ class Sheet:
                 self.texts.append(dict(kind="text", text=lines[0][:30], at=(x, y), owner=None,
                                        box=_text_box(x, y, w, h, hj, vj, ang)))
         for sh in sexp.find(root, "sheet"):
+            for pin in sexp.find(sh, "pin"):  # where a net goes down into the child sheet
+                self.labels.append(dict(kind="sheet_pin", name=pin[1], at=_at(pin)[:2]))
             f = sexp.prop(sh, "Sheetfile")
             if f:
                 self.children.append(os.path.normpath(os.path.join(os.path.dirname(path), f)))
@@ -227,7 +231,7 @@ class Sheet:
         corners = [sheet_pt(px, py) for px, py in pts] or [p for _, p in pins] or [(x, y)]
         body = norm(min(c[0] for c in corners), min(c[1] for c in corners),
                     max(c[0] for c in corners), max(c[1] for c in corners))
-        sym = dict(ref=ref, lib=lib_id, at=(x, y), m=m, body=body, pins=pins,
+        sym = dict(ref=ref, unit=unit, lib=lib_id, at=(x, y), m=m, body=body, pins=pins,
                    power=ref.startswith("#") or lib_id.startswith("power:"))
         self.symbols.append(sym)
         for p in sexp.find(s, "property"):
@@ -353,11 +357,21 @@ def lint(sheet, hop_distance=25.4, field_distance=5.08, net_pins=4):
         if not s["power"]:
             for num, p in s["pins"]:
                 pins_of[group(p)].append((s["ref"], num, p))
-    by_name, leaves = collections.defaultdict(set), set()
+    by_name, leaves, away = collections.defaultdict(set), set(), set()
     for lb in sheet.labels:
-        by_name[lb["name"]].add(group(lb["at"]))
-        if lb["kind"] != "label":
-            leaves.add(lb["name"])
+        if lb["kind"] == "label":
+            by_name[lb["name"]].add(group(lb["at"]))
+        else:  # a global or hierarchical label, a sheet pin: the net leaves the sheet from this piece
+            away.add(group(lb["at"]))
+            if lb["kind"] != "sheet_pin":
+                by_name[lb["name"]].add(group(lb["at"]))
+                leaves.add(lb["name"])
+    grew = True
+    while grew:  # and so does every piece that shares a name with it, under that name or another on the same wire
+        more = {n for n, gs in by_name.items() if n not in leaves and gs & away}
+        leaves |= more
+        away |= {g for n in more for g in by_name[n]}
+        grew = bool(more)
     labelled = set().union(*by_name.values()) if by_name else set()
     wired = sum(1 for g, pins in pins_of.items() if g not in labelled and 2 <= len(pins) <= net_pins)
     hops = islands = 0

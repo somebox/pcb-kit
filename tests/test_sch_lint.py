@@ -41,9 +41,9 @@ def wire(x1, y1, x2, y2):
     return "(wire (pts (xy %g %g) (xy %g %g)))" % (x1, y1, x2, y2)
 
 
-def lint(*items, title="Test", **kw):
+def lint(*items, title="Test", paper='"A4"', **kw):
     tb = '(title_block (title "%s"))' % title if title else ""
-    text = '(kicad_sch (version 20260306) (generator "eeschema") (paper "A4") %s %s %s)' % (tb, LIB, " ".join(items))
+    text = '(kicad_sch (version 20260306) (generator "eeschema") (paper %s) %s %s %s)' % (paper, tb, LIB, " ".join(items))
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "t.kicad_sch")
         with open(path, "w") as f:
@@ -73,6 +73,18 @@ class Nets(unittest.TestCase):
                                label("SDA", 60, 53.81, "hierarchical_label"))
         self.assertEqual(kinds, [])
         self.assertEqual(stats["local_nets"], 0)
+
+    def test_a_net_that_goes_into_a_child_sheet_keeps_its_labels(self):
+        child = '(sheet (at 100 40) (size 20 20) (property "Sheetname" "Child") (pin "SDA_IN" input (at 100 53.81 180)))'
+        kinds, stats, _ = lint(part("R1", 50, 50), part("R2", 60, 50), label("SDA", 50, 53.81), label("SDA", 60, 53.81),
+                               wire(60, 53.81, 100, 53.81), child)
+        self.assertEqual((kinds, stats["local_nets"]), ([], 0))
+
+    def test_a_local_name_on_a_wire_that_leaves_the_sheet_keeps_its_labels(self):
+        # FB names two pieces; one of them also carries the hierarchical label SENSE
+        kinds, stats, _ = lint(part("R1", 50, 50), part("R2", 60, 50), label("FB", 50, 53.81), label("FB", 60, 53.81),
+                               wire(60, 53.81, 70, 53.81), label("SENSE", 70, 53.81, "hierarchical_label"))
+        self.assertEqual((kinds, stats["local_nets"]), ([], 0))
 
     def test_a_fan_out_keeps_its_labels(self):
         parts = [part("R%d" % i, 40 + 10 * i, 50) for i in range(6)]
@@ -114,6 +126,12 @@ class Texts(unittest.TestCase):
 
     def test_a_label_sits_on_its_wire(self):
         kinds, _, _ = lint(part("R1", 50, 50), wire(50, 53.81, 70, 53.81), label("OUT", 55, 53.81))
+        self.assertEqual(kinds, [])
+
+    def test_a_portrait_page_is_its_size_turned(self):
+        kinds, _, _ = lint(part("R1", 250, 50), paper='"A4" portrait')      # 210 wide
+        self.assertEqual(sorted(set(kinds)), ["off-page"])
+        kinds, _, _ = lint(part("R1", 100, 250), paper='"A4" portrait')     # 297 high
         self.assertEqual(kinds, [])
 
     def test_off_page_and_no_title(self):

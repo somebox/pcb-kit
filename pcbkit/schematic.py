@@ -165,13 +165,14 @@ def _close(text, start):
 def _symbol(path, name):
     """One symbol of a library, parsed: only its own text is read, the stock libraries are megabytes."""
     from . import sexp
-    if os.path.isdir(path):
-        path = os.path.join(path, name + ".kicad_sym")
-    with open(path, encoding="utf-8") as f:
+    file = os.path.join(path, name + ".kicad_sym") if os.path.isdir(path) else path  # a directory holds a file a symbol
+    if not os.path.exists(file):
+        raise KeyError("symbol %r is not in %s" % (name, path))
+    with open(file, encoding="utf-8") as f:
         text = f.read()
     m = re.search(r'^\s*\(symbol "%s"\s' % re.escape(name), text, re.M)
     if not m:
-        raise KeyError("symbol %r is not in %s" % (name, path))
+        raise KeyError("symbol %r is not in %s" % (name, file))
     start = text.index("(", m.start())
     i = _close(text, start)
     sym = sexp.parse(text[start:i + 1])
@@ -549,11 +550,12 @@ def _field_at(m, left, mid_y, w, h, align):
     from .checks.sch_lint import _text_box, apply
     for ang in (0, 90):
         for hj in (("center",) if align == "center" else ("left", "right")):
+            base = (0, -1) if ang else (1, 0)  # the way the text runs before the symbol's turn: up the page at 90
+            if abs(apply(m, *base)[1]) > 0.5:
+                continue  # reads up the page
             x0, y0, x1, y1 = _text_box(0, 0, w, h, hj, "center", ang)
             (ax, ay), (bx, by) = apply(m, x0, y0), apply(m, x1, y1)
             d = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
-            if d[2] - d[0] < d[3] - d[1]:
-                continue  # reads up the page
             edge = {"left": d[0], "right": d[2], "center": (d[0] + d[2]) / 2}[align]
             if abs(edge) < 0.01:
                 return round(left, 2), round(mid_y - (d[1] + d[3]) / 2, 2), ang, hj
@@ -631,8 +633,8 @@ def _content(sh, b):
     pins and the ones that carry on from those, and the power symbols and labels on them."""
     from .checks.sch_lint import on_seg
     key = lambda p: (round(p[0], 2), round(p[1], 2))  # noqa: E731
-    refs = {c["ref"] for c in b.parts}
-    own = [s for s in sh.symbols if s["ref"] in refs]
+    refs, units = {c["ref"] for c in b.parts}, {(c["ref"], c.get("unit") or 1) for c in b.parts}
+    own = [s for s in sh.symbols if (s["ref"], s["unit"]) in units]  # another unit of a part may be in another block
     assert own, "none of %s is on %s" % (sorted(refs), sh.path)
     at = {key(p) for s in own for _, p in s["pins"]}
     wires, grew = [], True
@@ -757,7 +759,8 @@ def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS, far=())
     Returns {name: {"wires": [segment], "junctions": [(x, y)], "label": (x, y, rotation) or None,
     "loose": [(ref, pin)]}}: the pins in `loose` could not be reached and still need a label each; `label` names
     the wired part, and is None when nothing was wired."""
-    from .checks.sch_lint import on_seg, seg_in_box, shrink, text_width
+    from .checks.sch_lint import on_seg, overlap, seg_in_box, shrink
+    whole = list(boxes)
     wide = [shrink(b, -1.0) for b in boxes]
     boxes = [shrink(b, 0.1) for b in boxes]
     taken = list(segments)
@@ -812,36 +815,50 @@ def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS, far=())
         for p in sorted(ends):
             if sum(1 for seg in mine if p in seg) + (p in at) >= 3:
                 res["junctions"].append(p)
-        # the name, on the longest run that holds it: along a horizontal one, else up a vertical one.
+        # the name, on the longest level run that holds it, else beside an upright one.
         # Wired pins left in separate groups each get a label on their own pin instead.
         roots = {root(p) for p in wired}
         if len(roots) > 1:
             res["loose"] = [at[p] for p in pts]
         else:
-            need = text_width(name, 1.27) + 2.54
-            length = lambda s: abs(s[0][0] - s[1][0]) + abs(s[0][1] - s[1][1])  # noqa: E731
-            horiz = [s for s in mine if s[0][1] == s[1][1] and length(s) >= need]
-            s = max(horiz or mine, key=length)
-            if s[0][1] == s[1][1]:
-                res["label"] = (round(min(s[0][0], s[1][0]) + 1.27, 2), s[0][1], 0)
-            else:
-                res["label"] = (s[0][0], round(max(s[0][1], s[1][1]) - 1.27, 2), 0)  # level, beside an upright wire
+            spots = _name_spots(name, mine)  # clear of every symbol and text, and of the names given so far
+            spot, box = next(((sp, bx) for sp, bx in spots if not any(overlap(bx, q) for q in whole)), spots[0])
+            res["label"] = spot
+            whole.append(box)
+            boxes.append(shrink(box, 0.1))  # a later net's wire keeps off it
+            wide.append(shrink(box, -1.0))
         taken += mine
     return out
 
 
-def _name_spot(name, segs, boxes):
-    """(x, y, rotation) for a net label on one of the wire segments: the longest one where the name is clear of
-    `boxes` (texts and symbol bodies), else the longest. On an upright wire the name still reads level."""
-    from .checks.sch_lint import overlap, text_width
+def _name_spots(name, segs):
+    """[((x, y, rotation), box)] for a net label on wire segments, best first: on a level segment that holds the name
+    before one that does not, longer before shorter, the near end before the far one. On an upright wire the name
+    still reads level, beside it. The inset from a segment's end is no more than the segment is long."""
+    import math
+    from .checks.sch_lint import text_width
     w, spots = text_width(name, 1.27), []
-    for a, b in sorted(segs, key=lambda q: -(abs(q[0][0] - q[1][0]) + abs(q[0][1] - q[1][1]))):
+    length = lambda q: abs(q[0][0] - q[1][0]) + abs(q[0][1] - q[1][1])  # noqa: E731
+    for a, b in sorted(segs, key=lambda q: (not (q[0][1] == q[1][1] and length(q) >= w + 2.54), -length(q))):
+        inset = min(1.27, length((a, b)))
         if a[1] == b[1]:
-            x = round(min(a[0], b[0]) + 1.27, 2)
-            spots.append(((x, a[1], 0), (x, a[1] - 1.9, x + w, a[1] - 0.2)))
+            xs = [round(min(a[0], b[0]) + inset, 2)]
+            if length((a, b)) >= 2 * (w + 2.54):
+                xs.append(round(math.floor((max(a[0], b[0]) - 1.27 - w) / 1.27) * 1.27, 2))  # on the grid
+            spots += [((x, a[1], 0), (x, a[1] - 1.9, x + w, a[1] - 0.2)) for x in xs]
         else:
-            y = round(max(a[1], b[1]) - 1.27, 2)  # level, beside an upright wire
-            spots.append(((a[0], y, 0), (a[0] + 0.2, y - 1.9, a[0] + w, y - 0.2)))
+            ys = [round(max(a[1], b[1]) - inset, 2)]
+            if length((a, b)) >= 6.35:
+                ys.append(round(min(a[1], b[1]) + 2.54, 2))
+            spots += [((a[0], y, 0), (a[0] + 0.2, y - 1.9, a[0] + w, y - 0.2)) for y in ys]
+    return spots
+
+
+def _name_spot(name, segs, boxes):
+    """(x, y, rotation) for a net label on one of the wire segments: the best spot where the name is clear of
+    `boxes` (texts and symbol bodies), else the best one."""
+    from .checks.sch_lint import overlap
+    spots = _name_spots(name, segs)
     return next((spot for spot, box in spots if not any(overlap(box, q) for q in boxes)), spots[0][0])
 
 
@@ -871,6 +888,15 @@ def _rails(blocks, L, pins_net, comps=()):
             assert a["net"] == b_["net"] or not any(_touch(s, t) for s in a["wires"] for t in b_["wires"]), \
                 "the %s rail and the %s rail of two blocks touch" % (a["net"], b_["net"])
     return out
+
+
+def _free(a, b, ends, wires):
+    """Is the short stretch from a to b clear, for a wire that joins two pins of one net: no other pin end on it
+    (`ends`, every pin end on the sheet), and no wire (x1, y1, x2, y2) across it that does not end on a or b?"""
+    from .checks.sch_lint import on_seg
+    if any(q not in (a, b) and on_seg(q, (a, b)) for q in ends):
+        return False
+    return not any(_touch((a, b), ((w[0], w[1]), (w[2], w[3]))) and not {(w[0], w[1]), (w[2], w[3])} & {a, b} for w in wires)
 
 
 def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None, wire=None, blocks=()):
@@ -933,12 +959,15 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     # supply pins that are connected so far, (net, x, y, th): the ones on rails, then every symbol placed
     placed = [(r["net"],) + tuple(L[k]) for r in rails if r["net"] in POWER for k in r["pins"] if k in skip]
 
+    ends = {(x, y) for x, y, _ in L.values()}
+    free = lambda a, b: _free(a, b, ends, wires)  # noqa: E731
+
     def pwr(net, x, y, th):
         if (x, y) in seen:
             return
         seen.add((x, y))
         for net2, x2, y2, th2 in placed:  # two pins of one supply side by side: a short wire to the symbol that is there
-            if net2 == net and th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2):
+            if net2 == net and th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2) and free((x2, y2), (x, y)):
                 wires.append((x2, y2, x, y))
                 placed.append((net, x, y, th))
                 return
@@ -955,7 +984,8 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     def joins(net, x, y, th):
         """Two pins of one net side by side on a part (a connector's doubled pins): a short wire, not a second name."""
         for x2, y2, th2 in beside.setdefault(net, []):
-            if th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2) and (x, y) not in seen:
+            if (th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2) and (x, y) not in seen
+                    and free((x2, y2), (x, y))):
                 seen.add((x, y))
                 wires.append((x2, y2, x, y))
                 beside[net].append((x, y, th))

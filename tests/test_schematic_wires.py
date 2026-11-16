@@ -31,6 +31,13 @@ class Plan(unittest.TestCase):
         self.assertEqual((r["loose"], r["junctions"]), ([], []))
         self.assertEqual(r["label"], (52.07, 50.8, 0))
 
+    def test_the_name_keeps_off_a_text_and_the_next_net_off_the_name(self):
+        r = plan({"FB": [A, B]}, boxes=[(51, 48, 56, 50.5)])["FB"]           # a value just above the near end
+        self.assertEqual((len(r["wires"]), r["label"]), (1, (59.69, 50.8, 0)))
+        up = {"FB": [A, B], "EN": [("R5", "1", (60.96, 45.72)), ("R6", "1", (60.96, 50.0))]}   # would run up through "FB"
+        self.assertEqual(plan(up)["EN"]["wires"], [((60.96, 45.72), (60.96, 50.0))])
+        self.assertEqual(plan(up, boxes=[(51, 48, 56, 50.5)])["EN"]["wires"], [])
+
     def test_an_l_goes_round_a_symbol(self):
         c = ("R2", "1", (63.5, 60.96))
         # a body on the corner of the first L (63.5, 50.8): the other L, by (50.8, 60.96), is taken

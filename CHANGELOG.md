@@ -32,8 +32,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   no block. A block's row can start at a connector (`(j2, None, "2")`), a flag or test point can hang from a
   rail, `Block.add` takes in a part placed by hand, a signal between two path parts gets room for its name, and a
   part put across one that lies flat is wired to it. On the same copy of esp32-s3-ha-node's power sheet, with
-  every part in one of six blocks: the same 74 nets, a clean ERC, 38 power symbols for 60, 15 of 16 small local
-  nets wired where 3 of 13 were, and no text on text where `sch-lint` found six (it still finds a zener's value
+  every part in one of six blocks: the same 74 nets, a clean ERC, 38 power symbols for 60, all but one of its
+  small local nets wired where none was, and no text on text where `sch-lint` found six (it still finds a zener's value
   next to a gate resistor, and the feedback pin joined to its divider by a label).
 - **Sense returns drawn as wires: `block(..., sense=[(u5, "5")])`.** A regulator's feedback pin and the divider
   that hangs from its output are one net with the output capacitors between them, so the pin and the divider each
@@ -41,7 +41,7 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   clear, `build` takes the shortest run round what lies between (a stub off the pin, a channel above or below the
   parts, a millimetre clear of every symbol and text) and names it there. `plan_wires(..., far={net})` is the
   same for a caller that plans its own wires. On the copy of esp32-s3-ha-node's power sheet the 3.3 V feedback
-  wire runs under the output capacitors to the divider tap; all 16 small local nets are now drawn, the 74 nets
+  wire runs under the output capacitors to the divider tap; all 10 small local nets are now drawn (none was), the 74 nets
   are the same and ERC is clean.
 
 - **Title blocks on generated sheets: `pcbkit.schematic.title_block`, and `reset` keeps them.** A generated sheet
@@ -66,20 +66,22 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   net with the one before. Pins that line up are what `build(wire=...)` joins with a straight wire. The predicted
   positions match konnect's placement for all 889 pins of the esp32-s3-ha-node and siebenuhr sheets. Five `put`
   calls on a copy of ha-node's power sheet (the buck's boot capacitor, catch diode and inductor on the switch pin's
-  row; the CC pull-downs on their pins) take it to 12 of 13 small local nets wired, netlist unchanged.
+  row; the CC pull-downs on their pins) put those nets in reach of `build(wire=...)`, netlist unchanged.
 - **`pcbkit.schematic.build(..., wire=25.4)` draws small local nets as wires.** Without it every pin of a local net
   gets a label, and a feedback divider or a boot capacitor reads as parts with no visible connection. With it, two
   pins of a net (2 to 6 pins, not power, hierarchical or global) within that many mm are joined by a straight, L or
   Z run when it is clear of every symbol, text, other net's pin and other wire, with a junction where three meet
   and the net's name once on the wire. Pins it can't reach keep their labels, so the netlist is unchanged: checked
   on regenerated copies of esp32-s3-ha-node (74 nets) and siebenuhr's power sheet (126 nets), both ERC clean. The
-  ha-node power sheet goes from 3 small local nets wired to 9 of 13; siebenuhr's stays at 2 of 20, because its parts
-  sit in rows away from their ICs: the wires follow the placement. Off by default, so a sheet regenerates as it was.
+  ha-node power sheet goes from none of its 10 small local nets wired to most of them; siebenuhr's gains none,
+  because its parts sit in rows away from their ICs: the wires follow the placement. Off by default, so a sheet
+  regenerates as it was.
   `plan_wires()` is the geometry on its own.
 - **`pcbkit sch-lint`: how a schematic reads, measured from the files.** ERC says a schematic is legal; this lists
   what makes it hard to read: two texts on top of each other, a text across another symbol, a wire through a text
   or through the middle of a symbol, a reference or value more than 5 mm from its part, a part off the page, a sheet
-  with no title. And it counts each sheet's small local nets (two to four pins, no global or hierarchical label):
+  with no title. And it counts each sheet's small local nets (two to four pins; not a supply, and no global or hierarchical
+  label or sheet pin):
   wired, joined by labels between pins within 25 mm (`label-hop`: draw the wire) or further apart (`label-island`:
   the part sits away from what it works with). It reads the root and every sheet below it with pcbkit's parser, so
   it needs neither KiCad nor konnect; text sizes are estimated, and it exits 0 unless `--strict`. On the generated

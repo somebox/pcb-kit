@@ -135,6 +135,30 @@ def _effects(node):
     return size, hj, vj, hidden or bool(h and (len(h) < 2 or h[1] == "yes"))
 
 
+def _arc_points(a, m, b):
+    """The points that bound an arc from a through m to b: the three, and where it is furthest left, right, up and
+    down between them."""
+    pts = [q for q in (a, m, b) if q]
+    if len(pts) < 3:
+        return pts
+    d = 2 * (a[0] * (m[1] - b[1]) + m[0] * (b[1] - a[1]) + b[0] * (a[1] - m[1]))
+    if abs(d) < 1e-9:
+        return pts  # a straight line
+    sq = lambda q: q[0] * q[0] + q[1] * q[1]  # noqa: E731
+    cx = (sq(a) * (m[1] - b[1]) + sq(m) * (b[1] - a[1]) + sq(b) * (a[1] - m[1])) / d
+    cy = (sq(a) * (b[0] - m[0]) + sq(m) * (a[0] - b[0]) + sq(b) * (m[0] - a[0])) / d
+    r = math.hypot(a[0] - cx, a[1] - cy)
+    ang = lambda q: math.atan2(q[1] - cy, q[0] - cx) % (2 * math.pi)  # noqa: E731
+    a0, am, a1 = ang(a), ang(m), ang(b)
+    ccw = (am - a0) % (2 * math.pi) <= (a1 - a0) % (2 * math.pi)  # is m on the way round from a to b, anticlockwise?
+    sweep = (a1 - a0) % (2 * math.pi) if ccw else (a0 - a1) % (2 * math.pi)
+    for k in range(4):
+        t = k * math.pi / 2
+        if ((t - a0) % (2 * math.pi) if ccw else (a0 - t) % (2 * math.pi)) <= sweep:
+            pts.append((round(cx + r * math.cos(t), 4), round(cy + r * math.sin(t), 4)))
+    return pts
+
+
 def _lib_symbols(root):
     """lib name -> {"subs": [(unit, style, points, pins)]}: points (x, y) of the graphics and pins (number, x, y),
     in the library's own coordinates (y up)."""
@@ -155,7 +179,8 @@ def _lib_symbols(root):
                 elif g[0] in ("polyline", "bezier"):
                     pts += [(float(p[1]), float(p[2])) for p in sexp.find(sexp.first(g, "pts") or [], "xy")]
                 elif g[0] == "arc":
-                    pts += [tuple(map(float, sexp.first(g, k)[1:3])) for k in ("start", "mid", "end") if sexp.first(g, k)]
+                    pts += _arc_points(*[tuple(map(float, sexp.first(g, k)[1:3])) if sexp.first(g, k) else None
+                                         for k in ("start", "mid", "end")])
                 elif g[0] == "circle":
                     (cx, cy), r = map(float, sexp.first(g, "center")[1:3]), float(sexp.first(g, "radius")[1])
                     pts += [(cx - r, cy - r), (cx + r, cy + r)]
@@ -366,6 +391,9 @@ def lint(sheet, hop_distance=25.4, field_distance=5.08, net_pins=4):
             if lb["kind"] != "sheet_pin":
                 by_name[lb["name"]].add(group(lb["at"]))
                 leaves.add(lb["name"])
+    for s in syms:  # a power symbol names the net of its piece: a supply, not a local net (a PWR_FLAG names nothing)
+        if s["power"] and not s["lib"].endswith(":PWR_FLAG"):
+            away |= {group(p) for _, p in s["pins"]}
     grew = True
     while grew:  # and so does every piece that shares a name with it, under that name or another on the same wire
         more = {n for n, gs in by_name.items() if n not in leaves and gs & away}
@@ -373,7 +401,7 @@ def lint(sheet, hop_distance=25.4, field_distance=5.08, net_pins=4):
         away |= {g for n in more for g in by_name[n]}
         grew = bool(more)
     labelled = set().union(*by_name.values()) if by_name else set()
-    wired = sum(1 for g, pins in pins_of.items() if g not in labelled and 2 <= len(pins) <= net_pins)
+    wired = sum(1 for g, pins in pins_of.items() if g not in labelled and g not in away and 2 <= len(pins) <= net_pins)
     hops = islands = 0
     for name, groups in sorted(by_name.items()):
         pins = [p for g in groups for p in pins_of[g]]

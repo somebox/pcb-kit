@@ -244,6 +244,7 @@ def _series(comps, net=None):
     part before it; the first by its pin on `net`, else by the pin that doesn't share one with the second, else
     pin 1. Give (part, pin_in, pin_out) for any other part."""
     items = [(c, None, None) if isinstance(c, dict) else tuple(c) for c in comps]
+    items = [(c, a if a is None else str(a), b if b is None else str(b)) for c, a, b in items]  # 3 is pin "3"
     for i, (c, pin_in, pin_out) in enumerate(items):
         if pin_out is None:
             names = sorted(c["pins"])
@@ -639,7 +640,9 @@ def _content(sh, b):
     at = {key(p) for s in own for _, p in s["pins"]}
     wires, grew = [], True
     while grew:
-        more = [w for w in sh.wires if w not in wires and any(key(q) in at or any(on_seg(q, v) for v in wires) for q in w)]
+        more = [w for w in sh.wires if w not in wires and (
+            any(key(q) in at or any(on_seg(q, v) for v in wires) for q in w)          # it ends on a pin or on a wire found
+            or any(on_seg(q, w) for q in at) or any(on_seg(q, w) for v in wires for q in v))]   # or one of those ends on it
         wires += more
         grew = bool(more)
     at |= {key(q) for w in wires for q in w}
@@ -941,12 +944,13 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     rails = _rails(blocks, L, {(c["ref"], p): net for c in comps for p, net in c["pins"].items()}, comps) if blocks else []
     wires, junctions, extra_power, skip, named = list(wires), list(junctions), list(extra_power), set(skip), []
     _rails_clear(rails, wires)
-    by_net = {}
+    by_net, keeps = {}, set()  # keeps: where a supply rail's one power symbol goes; it is never traded for a wire
     for r in rails:
         by_net.setdefault(r["net"], []).append(r)
         wires += [(a[0], a[1], b_[0], b_[1]) for a, b_ in r["wires"]]
         if r["net"] in POWER:  # one symbol: at the free end, else on the first pin
             skip |= set(r["pins"] if r["open"] else sorted(r["pins"])[1:])
+            keeps.add(r["open"] or L[sorted(r["pins"])[0]][:2])
             if r["open"]:
                 extra_power.append((r["net"], r["open"][0], r["open"][1], POWER[r["net"]][2]))
         elif r["net"] in hier or r["net"] in glob:  # its label goes on the first pin, as without a rail
@@ -978,7 +982,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         if (x, y) in seen:
             return
         seen.add((x, y))
-        for net2, x2, y2, th2 in placed:  # two pins of one supply side by side: a short wire to the symbol that is there
+        for net2, x2, y2, th2 in (() if (x, y) in keeps else placed):  # two pins of one supply side by side: a short wire to the symbol that is there
             if net2 == net and th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2) and free((x2, y2), (x, y)):
                 wires.append((x2, y2, x, y))
                 placed.append((net, x, y, th))
@@ -1055,7 +1059,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         for net, pins in local.items():
             nets[net] = [(p["reference"], p["pin_number"], key(*L[(p["reference"], p["pin_number"])][:2])) for p in pins]
             points.update({p: net for _, _, p in nets[net]})
-        plan = plan_wires(nets, boxes, points, [((a, b), (c_, d)) for a, b, c_, d in wires], wire,
+        plan = plan_wires(nets, boxes, points, page.wires + [((a, b), (c_, d)) for a, b, c_, d in wires], wire,
                           far={net for b in blocks for net in b.far})
         for net, r in plan.items():
             local[net] = [{"reference": ref, "pin_number": pin} for ref, pin in r["loose"]]

@@ -57,6 +57,11 @@ class Blocks(Lib):
                                    dict(net="SW", pts=[(78.74, 50.8), (91.44, 50.8), (104.14, 50.8)], open=None)])
         self.assertEqual(b.box, (49.78, 48.26, 111.76, 60.96))        # the drawings and the pin ends
 
+    def test_pins_given_as_numbers(self):
+        u, r = REG(), R("R9", "SW", "OUT")
+        sch.block("buck", AT, [(u, 1, 3), r])
+        self.assertEqual(sch.pin(r, 1), sch.step(sch.pin(u, 3), "right", 7.62))
+
     def test_without_shunts_it_is_a_chain(self):
         a, c = R("R1", "IN", "N1"), R("R2", "N1", "OUT")
         b = sch.block("", AT, [a, c])
@@ -211,6 +216,14 @@ class Rails(Lib):
         self.assertEqual(sch.pins(dict(ref="R1", lib="d:R_Kid", x=0, y=0, pins={})), {"1": (0, -3.81), "2": (0, 3.81)})
         with self.assertRaises(KeyError):
             sch.pins(dict(ref="R1", lib="d:NOPE", x=0, y=0, pins={}))
+
+    def test_a_block_takes_in_a_wire_its_pin_ends_in_the_middle_of(self):
+        import types
+        sym = dict(ref="R1", unit=1, power=False, pins=[("1", (50.8, 50.8))], body=(49.78, 50.8, 51.82, 58.42))
+        sh = types.SimpleNamespace(symbols=[sym], texts=[], path="t",
+                                   wires=[((40.64, 50.8), (60.96, 50.8)), ((60.96, 40.64), (60.96, 60.96)), ((100, 100), (110, 100))])
+        b = types.SimpleNamespace(parts=[dict(ref="R1")])                    # the pin on the middle of one wire, which ends
+        self.assertEqual(sch._content(sh, b), (40.64, 40.64, 60.96, 60.96))   # ... in the middle of the next; not the far one
 
     def test_a_block_measures_its_own_unit_of_a_part(self):
         import types

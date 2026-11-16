@@ -135,6 +135,13 @@ What the viewer has caught so far; the corrected rows and their dates are in `co
   under the never-checked `^TSOT-23`, and a TPS2116 on SOT-583-8 and two BCR421UW6Q on SOT-23-6 under rules checked
   on other parts.
 
+On 2026-11-16 (RGB Spotlight v2.0): a 74AHCT1G125 (C350557) on KiCad's SOT-353_SC-70-5 a quarter turn out under the
+never-checked `^SOT-353` (+180): JLC's model lay with its legs along the pads' length and pin 1 at the far corner, so
+the rule is now -90. And the green and blue XL-HD2525 LEDs (C49237859, C49237860) a half turn from the red (C49237857)
+on the same project footprint, though all three datasheets put the cathode on pad 1: JLC's footprints for them differ.
+Read a two-pad polar part's own + and - in the viewer against the board's silk, colour by colour, not the pink dot
+alone. `^SOT-89` (PT4115, 78L05) and `^SOIC-` were right that day and are dated 2026-11-16.
+
 On 2026-11-18 (ESP32-S3 Audio Node): two footprints with no rule a quarter turn out, both fixed with "Rotate Right"
 (-90): the SJ-3524 audio jack and the MAX98357A's 3x3 mm TQFN-16 (the QFN rule doesn't match a TQFN name). Under their
 rules, the SOT-23, SOT-23-5, SOT-23-6, TSSOP and HRO USB-C parts were right, and those rows are dated 2026-11-18. The

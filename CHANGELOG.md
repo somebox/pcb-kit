@@ -7,6 +7,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+- **More JLC rotations from the preview (2026-11-16).** `^SOT-353` (SC-70-5) is now -90, where its never-checked +180
+  put a 74AHCT1G125 (C350557) a quarter turn out. A rule for the XINGLIGHT HD2525 LED footprint
+  (`^LED_XINGLIGHT_HD2525$`, 0, seen right on the red C49237857) and part rules of 180 for the green and blue
+  (C49237859, C49237860), which JLC draws a half turn from the red. `^SOT-89` was seen right for the first time and
+  `^SOIC-` again; both are dated 2026-11-16. A board with one of these parts gets a new CPL, and so its next version
+  from `pcbkit release`.
+
 ## [0.6.0] - 2026-11-18
 
 The project overview page, a standard for released boards with its check and release gate, depth and scope for

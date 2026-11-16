@@ -5,10 +5,10 @@ Pattern,Rotation,Offset X,Offset Y,Checked
 ^SOT-23(-3|_Handsoldering)?$,180,0,0,2026-11-18
 ^SOT-23-5(_HandSoldering)?$,180,0,0,2026-11-18
 ^SOT-23-6(_Handsoldering)?$,-90,0,0,2026-11-18
-^SOT-89,180,0,0,
+^SOT-89,180,0,0,2026-11-16
 ^TSOT-23-6(_HandSoldering)?$,-90,0,0,2026-11-15
 ^TSOT-23,180,0,0,
-^SOT-353,180,0,0,
+^SOT-353,-90,0,0,2026-11-16
 ^SOT-363,0,0,0,2026-10-26
 ^SOT-583-8$,180,0,0,2026-11-08
 ^LQFP-,270,0,0,
@@ -18,7 +18,7 @@ Pattern,Rotation,Offset X,Offset Y,Checked
 ^TSSOP-,270,0,0,2026-11-18
 ^SSOP-,270,0,0,2026-11-08
 ^DFN-,270,0,0,
-^SOIC-,270,0,0,2026-10-26
+^SOIC-,270,0,0,2026-11-16
 ^SOP-18_,0,0,0,
 ^VSSOP-8_3.0x3.0mm_P0.65mm,270,0,0,
 ^VSSOP-8_,180,0,0,
@@ -66,6 +66,7 @@ Pattern,Rotation,Offset X,Offset Y,Checked
 ^SOT-143,180,0,0,
 ^PinHeader_2x05_P1\.27mm_Vertical,90,2.54,0.635,
 ^LED_WS2812B-2020_PLCC4_2.0x2.0mm,90,0,0,
+^LED_XINGLIGHT_HD2525$,0,0,0,2026-11-16
 ^^WSON-8-1EP_6x5mm_P1.27mm,-90,0,0,
 ^Potentiometer_Bourns_3224W,180,0,0,2026-10-26
 ^PinSocket_1x08_P1\.27mm_Vertical_SMD_Pin1Right$,-90,0,0,2026-10-26
@@ -76,3 +77,5 @@ C46550459,0,0,0,2026-11-08
 C3235557,-90,0,0,2026-11-15
 C154739,180,0,0,2026-11-15
 C143037,0,0,0,
+C49237859,180,0,0,2026-11-16
+C49237860,180,0,0,2026-11-16

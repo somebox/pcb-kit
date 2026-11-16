@@ -903,14 +903,14 @@ def _free(a, b, ends, wires):
 
 
 def _rails_clear(rails, wires):
-    """Refuse a rail that a wire the caller drew (x1, y1, x2, y2) meets anywhere but with an end on one of the rail's
+    """Refuse a rail that a wire the caller drew or one already on the sheet (x1, y1, x2, y2) meets anywhere but with an end on one of the rail's
     own pins: nothing says which net that wire is on, and the rail would join it."""
     for r in rails:
         for seg in r["wires"]:
             for w in wires:
                 a, b = (w[0], w[1]), (w[2], w[3])
                 assert not _touch(seg, (a, b)) or {a, b} & set(r["at"]), \
-                    "the %s rail meets the wire %s-%s given in wires=: end that wire on a pin of %s, or move it" % (r["net"], a, b, r["net"])
+                    "the %s rail meets the wire %s-%s (given in wires=, or on the sheet already): end that wire on a pin of %s, or move it" % (r["net"], a, b, r["net"])
 
 
 def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None, wire=None, blocks=()):
@@ -943,7 +943,9 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     pw, nc, local, seen, hier_done, n = [], [], {}, set(), set(), [0]
     rails = _rails(blocks, L, {(c["ref"], p): net for c in comps for p, net in c["pins"].items()}, comps) if blocks else []
     wires, junctions, extra_power, skip, named = list(wires), list(junctions), list(extra_power), set(skip), []
-    _rails_clear(rails, wires)
+    from .checks import sch_lint
+    there = [a + b for a, b in sch_lint.Sheet(S).wires]  # wires on the sheet before this build (none after reset())
+    _rails_clear(rails, wires + there)
     by_net, keeps = {}, set()  # keeps: where a supply rail's one power symbol goes; it is never traded for a wire
     for r in rails:
         by_net.setdefault(r["net"], []).append(r)
@@ -976,7 +978,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     placed = [(r["net"],) + tuple(L[k]) for r in rails if r["net"] in POWER for k in r["pins"] if k in skip]
 
     ends = {(x, y) for x, y, _ in L.values()}
-    free = lambda a, b: _free(a, b, ends, wires)  # noqa: E731
+    free = lambda a, b: _free(a, b, ends, wires + there)  # noqa: E731
 
     def pwr(net, x, y, th):
         if (x, y) in seen:

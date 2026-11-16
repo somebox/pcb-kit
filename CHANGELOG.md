@@ -106,6 +106,22 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   dated 2026-11-15. Where a board's CPL changes (one of these parts on a KiCad footprint that the rules match),
   `pcbkit release` gives it its next version. A part on a footprint no package rule matches, such as one imported
   from EasyEDA, gets no turn from a part rule, so that board's CPL and version stay as they are.
+- **The failure-review skill reviews its own fixes, and its checklist covers more.** In every project with a second
+  review, a change accepted from the first caused a finding in the second (the sign controller's eFuse, dodeca's
+  TPS2116, ESP Candle's VBUS). The skill now tests each recommendation like a finding before the briefing (step 7)
+  and reviews what changed before the order (step 11). It describes the kinds of review the projects were already
+  writing: the changes since a review, layout only, a design that was imported or is already built. The second
+  pass is never skipped, quotes the datasheet's table row with its column, and measures a layout claim on the board
+  file; a datasheet summary finds the section and is no longer evidence. The briefing gains a *Found at* rating
+  (power-up, bench, field), evidence marks, the checks run at the commit, and sections for earlier findings,
+  refuted claims, firmware duties, notes and stock, decisions and bench results. Findings are ordered by what to
+  settle first, and their numbers carry on from one round to the next. A check left undone is an open check in the
+  status line, and in the verdict when it could kill the board, not a line under "Not covered". The checklist gains small-part ratings, clocks, the analog chain, logic levels between supplies,
+  connector footprints against the maker's drawing, layout returns and RF, the placement count, mechanics, and a
+  table of contents. Three of its facts are corrected: KiCad's track calculator uses IPC-2221 (it said IPC-2152),
+  the TPS2116's reverse-current threshold is 42 mV typical and 70 mV maximum, and an AHCT1G125 is not specified to
+  isolate with its rail off. USB's inrush limits now have their numbers: 10 µF at attach, 100 µF after a PD
+  contract. A briefing written to the old template still reads; a new one has one more column.
 
 ## [0.4.0] - 2026-11-15
 

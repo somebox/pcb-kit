@@ -140,7 +140,8 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 
 1. A failure review (the failure-review skill) of the version being ordered, before the checks below, since the
    changes it leads to need them again: its briefing in `docs/reviews/`, the changes the user accepted as decisions
-   in DESIGN.md, its test points on the board, its bench list in PRODUCTION.md under "Bring-up".
+   in DESIGN.md, its test points on the board, its bench list in PRODUCTION.md under "Bring-up". Once those
+   changes are made, a review of the changes at the commit to be ordered: a fix is a new design.
 2. `pcbkit erc` clean, the project's netlist assertions pass.
 3. `pcbkit drc --save` with 0 errors, 0 unconnected, 0 parity issues; warnings explained in LAYOUT.md. An error
    that is accepted (a vendor's footprint as it was built, two courtyards closer than KiCad's rule but farther apart

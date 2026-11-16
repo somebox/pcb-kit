@@ -172,6 +172,13 @@ class Rails(Lib):
         with self.assertRaisesRegex(AssertionError, "block 'buck': the OUT rail runs through R7"):
             sch._rails([b], L, nets, b.parts + [stray])
 
+    def test_a_wire_of_the_callers_that_meets_a_rail_is_refused(self):
+        rail = dict(net="OUT", wires=[((50.8, 50.8), (76.2, 50.8))], at=[(50.8, 50.8), (63.5, 50.8), (76.2, 50.8)])
+        sch._rails_clear([rail], [(63.5, 50.8, 63.5, 40.64), (10.16, 10.16, 20.32, 10.16)])   # from a pin of the rail; elsewhere
+        for w in ((58.42, 40.64, 58.42, 50.8), (58.42, 45.72, 58.42, 55.88)):                # ends on the rail; crosses it
+            with self.assertRaisesRegex(AssertionError, "the OUT rail meets the wire"):
+                sch._rails_clear([rail], [w])
+
     def test_the_name_goes_where_it_is_clear(self):
         segs = [((50.8, 50.8), (63.5, 50.8)), ((63.5, 50.8), (71.12, 50.8))]
         self.assertEqual(sch._name_spot("FB", segs, []), (52.07, 50.8, 0))                  # the longest stretch

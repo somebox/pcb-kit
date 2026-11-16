@@ -899,6 +899,17 @@ def _free(a, b, ends, wires):
     return not any(_touch((a, b), ((w[0], w[1]), (w[2], w[3]))) and not {(w[0], w[1]), (w[2], w[3])} & {a, b} for w in wires)
 
 
+def _rails_clear(rails, wires):
+    """Refuse a rail that a wire the caller drew (x1, y1, x2, y2) meets anywhere but with an end on one of the rail's
+    own pins: nothing says which net that wire is on, and the rail would join it."""
+    for r in rails:
+        for seg in r["wires"]:
+            for w in wires:
+                a, b = (w[0], w[1]), (w[2], w[3])
+                assert not _touch(seg, (a, b)) or {a, b} & set(r["at"]), \
+                    "the %s rail meets the wire %s-%s given in wires=: end that wire on a pin of %s, or move it" % (r["net"], a, b, r["net"])
+
+
 def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip=(), glob=None, wire=None, blocks=()):
     """Place comps on P+sheet, connect their pins, annotate LCSC and other fields. Returns pin locations.
     wire: draw small local nets as wires where two pins are within this many mm (see the module docstring).
@@ -929,6 +940,7 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
     pw, nc, local, seen, hier_done, n = [], [], {}, set(), set(), [0]
     rails = _rails(blocks, L, {(c["ref"], p): net for c in comps for p, net in c["pins"].items()}, comps) if blocks else []
     wires, junctions, extra_power, skip, named = list(wires), list(junctions), list(extra_power), set(skip), []
+    _rails_clear(rails, wires)
     by_net = {}
     for r in rails:
         by_net.setdefault(r["net"], []).append(r)

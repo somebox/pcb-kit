@@ -35,6 +35,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   every part in one of six blocks: the same 74 nets, a clean ERC, 38 power symbols for 60, 15 of 16 small local
   nets wired where 3 of 13 were, and no text on text where `sch-lint` found six (it still finds a zener's value
   next to a gate resistor, and the feedback pin joined to its divider by a label).
+- **Sense returns drawn as wires: `block(..., sense=[(u5, "5")])`.** A regulator's feedback pin and the divider
+  that hangs from its output are one net with the output capacitors between them, so the pin and the divider each
+  got a label. A pin named in `sense` has its net wired however far it has to go: where no straight, L or Z run is
+  clear, `build` takes the shortest run round what lies between (a stub off the pin, a channel above or below the
+  parts, a millimetre clear of every symbol and text) and names it there. `plan_wires(..., far={net})` is the
+  same for a caller that plans its own wires. On the copy of esp32-s3-ha-node's power sheet the 3.3 V feedback
+  wire runs under the output capacitors to the divider tap; all 16 small local nets are now drawn, the 74 nets
+  are the same and ERC is clean.
 
 ### Changed
 - **`pcbkit.schematic.build` joins supply pins that sit side by side.** Two pins of one part on the same supply,

@@ -104,6 +104,11 @@ class Blocks(Lib):
         self.assertEqual(sch.pin(flag, 2), (71.12, 43.18))
         self.assertEqual(b.rails[0]["pts"], [(58.42, 50.8), (71.12, 50.8)])
 
+    def test_a_sense_pin_names_the_net_to_wire_however_far(self):
+        u = REG(low="FB")
+        b = sch.block("", AT, [(u, "1", "3")], shunt={"SW": [[R("R8", "SW", "FB"), R("R9", "FB", "GND")]]}, sense=[(u, 2)])
+        self.assertEqual((b.far, sch.block("", AT, [(REG(), "1", "3")]).far), ({"FB"}, set()))
+
     def test_a_net_that_is_not_on_the_path_is_an_error(self):
         with self.assertRaisesRegex(AssertionError, "no path part enters or leaves on FB"):
             sch.block("", AT, [R("R1", "IN", "OUT")], shunt={"FB": [R("R2", "FB", "GND")]})

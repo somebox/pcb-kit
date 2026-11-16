@@ -14,11 +14,11 @@ sys.path.insert(0, ROOT)
 from pcbkit.schematic import plan_wires  # noqa: E402
 
 
-def plan(nets, boxes=(), others=(), segments=(), reach=25.4):
+def plan(nets, boxes=(), others=(), segments=(), reach=25.4, far=()):
     points = {p: None for p in others}
     for name, pins in nets.items():
         points.update({p: name for _, _, p in pins})
-    return plan_wires(nets, list(boxes), points, list(segments), reach)
+    return plan_wires(nets, list(boxes), points, list(segments), reach, far=far)
 
 
 A, B = ("R1", "2", (50.8, 50.8)), ("R2", "1", (63.5, 50.8))
@@ -50,6 +50,25 @@ class Plan(unittest.TestCase):
     def test_out_of_reach_keeps_the_labels(self):
         r = plan({"FB": [A, ("R2", "1", (150, 50.8))]})["FB"]
         self.assertEqual((r["wires"], len(r["loose"])), ([], 2))
+
+    def test_a_sense_net_is_wired_however_far(self):
+        far = ("R2", "1", (152.4, 50.8))
+        r = plan({"FB": [A, far]}, far={"FB"})["FB"]
+        self.assertEqual((r["wires"], r["loose"]), ([((50.8, 50.8), (152.4, 50.8))], []))
+
+    def test_a_sense_net_goes_round_what_lies_between(self):
+        far, parts = ("R2", "1", (152.4, 50.8)), (90, 30, 110, 60.96)        # parts on the straight line, more of them above it
+        r = plan({"FB": [A, far]}, boxes=[parts], far={"FB"})["FB"]
+        pts = sorted({q for seg in r["wires"] for q in seg})
+        self.assertEqual(r["loose"], [])
+        self.assertEqual(pts, [(50.8, 50.8), (50.8, 63.5), (152.4, 50.8), (152.4, 63.5)])   # down, under it, up: the shortest way
+        self.assertEqual(r["label"], (52.07, 63.5, 0))                       # named on the long stretch
+        self.assertEqual(plan({"FB": [A, far]}, boxes=[parts])["FB"]["wires"], [])   # not without the role
+
+    def test_a_detour_keeps_a_millimetre_from_what_it_passes(self):
+        far, low = ("R2", "1", (152.4, 50.8)), (90, 20, 110, 62.8)           # its lower edge 0.7 mm above the first clear channel
+        r = plan({"FB": [A, far]}, boxes=[low], far={"FB"})["FB"]
+        self.assertEqual(max(q[1] for seg in r["wires"] for q in seg), 66.04)
 
     def test_a_third_pin_on_the_node_gets_a_junction(self):
         c = ("C1", "1", (57.15, 58.42))

@@ -40,7 +40,8 @@ hangs from each node, what sits across what):
                      path=[(u5, "4", "3"), l2],                          # in at VIN, out at SW, then the inductor
                      shunt={"+5V": [c8],                                 # input capacitor, before the regulator
                             "+3V3": [c9, c19, [r8, r9], [r2, d1]]},      # output capacitors, divider, LED: on the output
-                     across=[(r8, [c25])])                               # feed-forward capacitor over the top resistor
+                     across=[(r8, [c25])],                               # feed-forward capacitor over the top resistor
+                     sense=[(u5, "5")])                                  # FB is wired back from the divider, not labelled
     for again in (False, True):                                          # the second time by the measured sizes
         sch.arrange([[inp, buck5], [usb, buck]])                         # rows of blocks, set out on the page
         sch.reset(sheet)
@@ -260,11 +261,12 @@ class Block:
     """What block() placed: `title`, `parts` (the component dicts), `rails` and `box`, (x0, y0, x1, y1) around the
     parts' drawings and pins as placed (fields and power symbols come on top of that; frames() measures the built
     sheet). A rail is a node drawn as one straight wire: dict(net, pts: the pin ends on it, open: the direction of
-    its free end, where its one power symbol goes when the net is a supply, or None). build(blocks=[...]) draws them.
+    its free end, where its one power symbol goes when the net is a supply, or None). build(blocks=[...]) draws them,
+    and wires the nets in `far` (the sense pins) however far apart their pins are.
     `frame` is the rectangle arrange() gave it, or None."""
 
     def __init__(self, title, parts, rails=()):
-        self.title, self.parts, self.rails, self.frame, self.measured = title, parts, list(rails), None, None
+        self.title, self.parts, self.rails, self.frame, self.measured, self.far = title, parts, list(rails), None, None, set()
 
     def add(self, *parts):
         """Take in parts placed by hand (a connector before the path, a flag), so they move and are framed with it."""
@@ -394,7 +396,7 @@ def _hang(net, entries, start, along, pitch, gap, parts, count=False, room=None)
     return used if count else max(used.values()), sorted(set(pts), key=pts.index)
 
 
-def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch=PITCH, gap=5.08, out=7.62):
+def block(title, at, path, shunt=None, taps=(), across=(), sense=(), toward="right", pitch=PITCH, gap=5.08, out=7.62):
     """Place one functional block from the roles of its parts, and return a Block (for frames(), and for its box).
 
       path   the parts the signal or the power passes through, in order, as chain() takes them. The first one's
@@ -409,6 +411,9 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
              a pin that points up or down the sides are "right" and "left", and a part to GND below a pin that
              points down carries straight on;
              (part, pin, [parts], mm) sets the distance.
+      sense  [(part, pin)]: a pin that senses a node elsewhere in the block (the feedback pin of a regulator whose
+             divider hangs from the output). build(blocks=...) draws that net as a wire however far it has to
+             go, round what lies between, where it would otherwise get a label at each end.
       across [(part, [parts])]: parts in parallel with a placed two-pin part (a feed-forward capacitor over a
              divider resistor, a clamp over a gate resistor). They sit beside it, pins in line: 7.62 mm above
              a part that lies flat; in the next places along the row after one that stands, which the row keeps
@@ -468,7 +473,9 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
         for o in [o for item in across for o in item[1]]:
             r["pts"] += [q for m, q in pins(o).items() if o["pins"].get(m) == r["net"] and q not in r["pts"]
                          and (q[1] == r["pts"][0][1] if flat else q[0] == r["pts"][0][0])]
-    return Block(title, parts, rails)
+    b = Block(title, parts, rails)
+    b.far = {c["pins"][str(n)] for c, n in sense}
+    return b
 
 
 def arrange(rows, origin=(25.4, 30.48), gap=7.62, pad=2.54):
@@ -671,13 +678,33 @@ def _runs(a, b):
     return out
 
 
+def _detours(a, b, far=50.8):
+    """Runs from a to b that go round what lies between: a short stub off each end, then a channel above, below,
+    left or right of both, up to `far` mm away. Shortest first, fewer corners before more."""
+    steps, runs = (0, 2.54, -2.54, 5.08, -5.08, 7.62, -7.62), []
+    for flip in (False, True):  # channels that run level, then (x and y swapped) channels that run up the page
+        (ax, ay), (bx, by) = (a, b) if not flip else (a[::-1], b[::-1])
+        for k in range(1, int(far / 2.54) + 1):
+            for yc in (max(ay, by) + 2.54 * k, min(ay, by) - 2.54 * k):
+                for d in steps:
+                    for e in steps:
+                        pts = [(ax, ay), (ax + d, ay), (ax + d, yc), (bx + e, yc), (bx + e, by), (bx, by)]
+                        pts = [(round(x, 2), round(y, 2)) for x, y in pts]
+                        pts = [q for i, q in enumerate(pts) if not i or q != pts[i - 1]]
+                        if any(p0 == p2 for p0, p2 in zip(pts, pts[2:])):
+                            continue  # doubles back on itself
+                        length = sum(abs(p[0] - q[0]) + abs(p[1] - q[1]) for p, q in zip(pts, pts[1:]))
+                        runs.append((length + 2.54 * len(pts), [q[::-1] for q in pts] if flip else pts))
+    return [r for _, r in sorted(runs)]
+
+
 def _touch(s, t):
     """Do two wire segments meet or cross? Exact for horizontal and vertical ones."""
     return (min(s[0][0], s[1][0]) <= max(t[0][0], t[1][0]) + 0.01 and min(t[0][0], t[1][0]) <= max(s[0][0], s[1][0]) + 0.01
             and min(s[0][1], s[1][1]) <= max(t[0][1], t[1][1]) + 0.01 and min(t[0][1], t[1][1]) <= max(s[0][1], s[1][1]) + 0.01)
 
 
-def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS):
+def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS, far=()):
     """Wires for small local nets. Pure geometry, no konnect.
 
     nets      {name: [(ref, pin, (x, y)), ...]}, the pins of each local net
@@ -685,11 +712,14 @@ def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS):
     points    every pin endpoint on the sheet, {(x, y): net or None}: a wire may only touch its own net's
     segments  wires already there, [((x1, y1), (x2, y2))]
     reach     the longest run between two pins, mm (along the wire)
+    far       nets to wire however far apart their pins are: where no straight, L or Z run is clear, a run that goes
+              round (see _detours) is taken. For the pin that senses a node elsewhere in its block.
 
     Returns {name: {"wires": [segment], "junctions": [(x, y)], "label": (x, y, rotation) or None,
     "loose": [(ref, pin)]}}: the pins in `loose` could not be reached and still need a label each; `label` names
     the wired part, and is None when nothing was wired."""
     from .checks.sch_lint import on_seg, seg_in_box, shrink, text_width
+    wide = [shrink(b, -1.0) for b in boxes]
     boxes = [shrink(b, 0.1) for b in boxes]
     taken = list(segments)
     out = {}
@@ -719,9 +749,12 @@ def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS):
         mine = []
         pairs = sorted((abs(a[0] - b[0]) + abs(a[1] - b[1]), a, b) for i, a in enumerate(pts) for b in pts[i + 1:])
         for d, a, b in pairs:
-            if d > reach or root(a) == root(b):
+            if (d > reach and name not in far) or root(a) == root(b):
                 continue
             run = next((r for r in _runs(a, b) if clear(r)), None)
+            if not run and name in far:  # round what lies between, the channel a clear millimetre from everything
+                run = next((r for r in _detours(a, b) if clear(r) and not any(
+                    seg_in_box(seg, w) for seg in list(zip(r, r[1:]))[1:-1] for w in wide)), None)
             if run:
                 mine += list(zip(run, run[1:]))
                 group[root(a)] = root(b)
@@ -926,7 +959,8 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         for net, pins in local.items():
             nets[net] = [(p["reference"], p["pin_number"], key(*L[(p["reference"], p["pin_number"])][:2])) for p in pins]
             points.update({p: net for _, _, p in nets[net]})
-        plan = plan_wires(nets, boxes, points, [((a, b), (c_, d)) for a, b, c_, d in wires], wire)
+        plan = plan_wires(nets, boxes, points, [((a, b), (c_, d)) for a, b, c_, d in wires], wire,
+                          far={net for b in blocks for net in b.far})
         for net, r in plan.items():
             local[net] = [{"reference": ref, "pin_number": pin} for ref, pin in r["loose"]]
             if not r["wires"]:

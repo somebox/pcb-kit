@@ -159,7 +159,9 @@ the part's corners and beside the strips where TI's figure and EVM put them, and
 
 ### Check a board
 
-`pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit check` finds what
+`pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit sch-lint` reads the
+schematic files and says how they read: texts on top of each other, and feedback or switch-node nets joined by a
+label on each pin where a wire would show the circuit. `pcbkit check` finds what
 DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power pads fed only through thin track,
 and courtyards that don't describe their part. DRC's placement checks trust each footprint's courtyard, so one that
 misses pads or the body lets a part be placed on it; `pcbkit courtyards` lists those on a board or in a footprint
@@ -314,6 +316,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit drc BOARD [--refill] [--save] [--full]` | DRC through kicad-cli: counts by type, every error, unconnected items by net and footprint. `--save` refills and writes the board back, which is how the projects keep their boards filled. Exit 1 on errors or unconnected items |
 | `pcbkit erc SCH` | ERC summary, exit 1 on errors |
 | `pcbkit nets SCH [NET ...]` | net sizes and members; `pcbkit.checks.netlist.Netlist` is the base for a project's topology assertions |
+| `pcbkit sch-lint SCH... [--summary] [--only TYPE,...] [--json] [--strict]` | how a schematic reads, from the files (the root and its sheets; no KiCad needed): overlapping texts, text across another symbol, wires through text or a symbol, a reference or value far from its part, small local nets joined by labels (`label-hop` when the pins are within `--hop-distance`, `label-island` when further), parts off the page, sheets with no title; per sheet, how many small local nets are wired. Exit 0 unless `--strict` |
 | `pcbkit check BOARD` | what DRC doesn't flag: floating copper, stubs with their full length, loops, pours reaching one pad, power pads fed only through thin track, courtyards as `pcbkit courtyards` |
 | `pcbkit courtyards BOARD\|LIB.pretty [--fix] [--margin 0.25] [--ref REF] [--easyeda PCB.json]` | courtyards that don't describe the part: none or an open one, on the other side from the pads, pads outside it, the body (fab outline, or silk without one) outside it. `--fix` redraws each as a rectangle round pads and body plus the margin, on the pads' side, and saves. `--easyeda` first draws each part's body on fab from the EasyEDA export the board came from, so an imported board's courtyards go round the body, not the silk |
 | `pcbkit cleanup BOARD [--dry-run] [--dangling]` | duplicate, zero-length and covered segments removed, collinear runs merged; `--dangling` also removes dead-end segments that no net needs; edits the file text by uuid |
@@ -336,7 +339,14 @@ agent which commands to run, under Claude Code's usual permission prompts:
 Library use from a project script:
 
 ```python
-from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect
+from pcbkit import schematic as sch          # schematic sheets from Python data, through konnect;
+                                             # sch.build(..., wire=25.4) draws small local nets as wires, not labels;
+                                             # sch.pin/put/step/chain place a part by one of its pins;
+                                             # sch.block places a whole block from its parts' roles (path, shunt,
+                                             # taps, across), build(blocks=) draws its rails, sch.arrange sets the
+                                             # blocks out in rows, sch.fields tidies references and values,
+                                             # sch.frames frames each block, sch.title_block gives a sheet
+                                             # the root's title, rev and date and a line on what it holds
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box

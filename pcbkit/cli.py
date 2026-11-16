@@ -1,6 +1,6 @@
 """pcbkit command line. `pcbkit <command> --help` for each one.
 
-Checks:    drc, erc, nets, check, courtyards, cleanup
+Checks:    drc, erc, sch-lint, nets, check, courtyards, cleanup
 Release:   release, changelog, production, previews, print, fab, panel, setup-kikit
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
@@ -15,6 +15,7 @@ from . import __version__
 COMMANDS = {
     "drc": ("pcbkit.checks.drc", "DRC summary through kicad-cli (--refill/--save/--full)"),
     "erc": ("pcbkit.checks.erc", "ERC summary through kicad-cli"),
+    "sch-lint": ("pcbkit.checks.sch_lint", "how a schematic reads: overlapping text, stray fields, nets joined by labels"),
     "nets": ("pcbkit.checks.netlist", "net sizes and members from a schematic"),
     "check": ("pcbkit.checks.route_check", "floating copper, stubs, loops, thin power feeds (needs pcbnew)"),
     "courtyards": ("pcbkit.checks.courtyards", "courtyards that miss pads or the body, or sit on the other side (--fix redraws)"),

@@ -7,7 +7,98 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Added
+- **Schematic blocks placed by role: `pcbkit.schematic.block`, `build(blocks=...)` and `frames`.** A sheet script
+  was a flat list of parts with coordinates, so nothing said which resistor is whose feedback divider, and the
+  script's author did the arithmetic. `block(title, at, path=[...], shunt={net: [...]}, taps=[...], across=[...])`
+  takes the parts by what they do: `path` is what the power or signal passes through, in a row; `shunt` is what
+  hangs from a node of that row (to GND downwards, to a supply upwards, a list in series as a divider is), and the
+  row makes room for it; `taps` hang parts from a pin that is not on the path; `across` puts a part in parallel
+  with another. It sets x, y and rot only. `build(..., blocks=[...])` draws each node row as a rail: one wire
+  through the pins, named once, or with one power symbol at its free end where every pin had its own; it stops with
+  an error if a rail would run over another net's pin. `frames(sheet, blocks)` draws a dashed frame round each
+  block on the built sheet, fields and power symbols included, with the title above it. On a copy of
+  esp32-s3-ha-node's power sheet, four blocks (input, two bucks, the feedback network) gave the same 74 nets and a
+  clean ERC with 48 power symbols where there were 60; a block on siebenuhr's LED power sheet left its nets the
+  same too. Rows that run into each other are not prevented: `pcbkit sch-lint` shows them.
+- **A page set out on purpose: `pcbkit.schematic.arrange`, `measure` and `fields`.** `arrange([[a, b], [c]])` puts
+  blocks in rows from the top left and moves each as a whole: the frames of a row share a top and a height and
+  stand one gap apart. A block's size is an estimate until the sheet has been built; `measure(sheet, blocks)` notes
+  the real one, so building twice (arrange, build, fields, measure; then again) gives frames that are exactly the
+  ones arranged. `fields(sheet)` puts the reference and value of every two-pin part level: beside a part that
+  stands (to the left when the right is taken), above and below one that lies flat; a part with more pins is
+  touched only when it was turned so its fields read up the page. `frames` now takes in everything that hangs
+  on a block (the wires from its pins and the labels and power symbols on them) and prints the parts that are in
+  no block. A block's row can start at a connector (`(j2, None, "2")`), a flag or test point can hang from a
+  rail, `Block.add` takes in a part placed by hand, a signal between two path parts gets room for its name, and a
+  part put across one that lies flat is wired to it. On the same copy of esp32-s3-ha-node's power sheet, with
+  every part in one of six blocks: the same 74 nets, a clean ERC, 38 power symbols for 60, all but one of its
+  small local nets wired where none was, and no text on text where `sch-lint` found six (it still finds a zener's value
+  next to a gate resistor, and the feedback pin joined to its divider by a label).
+- **Sense returns drawn as wires: `block(..., sense=[(u5, "5")])`.** A regulator's feedback pin and the divider
+  that hangs from its output are one net with the output capacitors between them, so the pin and the divider each
+  got a label. A pin named in `sense` has its net wired however far it has to go: where no straight, L or Z run is
+  clear, `build` takes the shortest run round what lies between (a stub off the pin, a channel above or below the
+  parts, a millimetre clear of every symbol and text) and names it there. `plan_wires(..., far={net})` is the
+  same for a caller that plans its own wires. On the copy of esp32-s3-ha-node's power sheet the 3.3 V feedback
+  wire runs under the output capacitors to the divider tap; all 10 small local nets are now drawn (none was), the 74 nets
+  are the same and ERC is clean.
+
+- **Title blocks on generated sheets: `pcbkit.schematic.title_block`, and `reset` keeps them.** A generated sheet
+  had an empty title block: `reset` wrote the file without one. `title_block(sheet, about="Power: input, bucks")`
+  copies the title, date, rev and company from the root schematic (`configure(..., root="board.kicad_sch")`), so
+  every page carries the project's name and the release it belongs to, and writes what the sheet holds on the line
+  above (comment 1). `author=` sets comment 2; otherwise the root's comment 2 and up carry over, so an author
+  written on the root once is on every page. Keywords set a field outright. `reset` now keeps a sheet's title block
+  as it keeps its uuid, so what `title_block` or a release stamped there survives a rebuild.
+- **Less to write in a block script: `part`, `flag`, no `at`, and `arrange(page=...)`.** `part(ref, lib, val, fp,
+  lcsc, pins, mpn=...)` makes any part without a place, and `flag(ref, net)` a PWR_FLAG that hangs up from a supply
+  or down from GND; `block(title, path=...)` needs no origin when `arrange` follows. `arrange(rows, page="A3")`
+  centres the blocks on the page and keeps them off the title block, where they started at the top left. The script
+  of esp32-s3-ha-node's power sheet, rewritten with blocks on a copy of the project, has four distances where it
+  had 41 x, y pairs; the sheet has the same 74 nets, a clean ERC and the project's title, rev and date on it.
+- **Placing schematic parts by pin: `pcbkit.schematic.pin`, `put`, `step` and `chain`.** A sheet script gave every
+  part an absolute x, y, so a part ended up wherever there was room, away from the pin it works with. `pin(c, n)` is
+  where a component's pin ends on the sheet, read from the symbol library (KiCad's, or the project's through the
+  sheet folder's sym-lib-table) before anything is placed; `put(c, n, point, toward="down")` turns the part so its
+  body lies on that side of the pin and lands the pin on the point; `step(point, "right", 7.62)` is a point beside
+  another; `chain(point, [f1, q5], toward="right")` sets parts in series, each entered by the pin that shares a
+  net with the one before. Pins that line up are what `build(wire=...)` joins with a straight wire. The predicted
+  positions match konnect's placement for all 889 pins of the esp32-s3-ha-node and siebenuhr sheets. Five `put`
+  calls on a copy of ha-node's power sheet (the buck's boot capacitor, catch diode and inductor on the switch pin's
+  row; the CC pull-downs on their pins) put those nets in reach of `build(wire=...)`, netlist unchanged.
+- **`pcbkit.schematic.build(..., wire=25.4)` draws small local nets as wires.** Without it every pin of a local net
+  gets a label, and a feedback divider or a boot capacitor reads as parts with no visible connection. With it, two
+  pins of a net (2 to 6 pins, not power, hierarchical or global) within that many mm are joined by a straight, L or
+  Z run when it is clear of every symbol, text, other net's pin and other wire, with a junction where three meet
+  and the net's name once on the wire. Pins it can't reach keep their labels, so the netlist is unchanged: checked
+  on regenerated copies of esp32-s3-ha-node (74 nets) and siebenuhr's power sheet (126 nets), both ERC clean. The
+  ha-node power sheet goes from none of its 10 small local nets wired to most of them; siebenuhr's gains none,
+  because its parts sit in rows away from their ICs: the wires follow the placement. Off by default, so a sheet
+  regenerates as it was.
+  `plan_wires()` is the geometry on its own.
+- **`pcbkit sch-lint`: how a schematic reads, measured from the files.** ERC says a schematic is legal; this lists
+  what makes it hard to read: two texts on top of each other, a text across another symbol, a wire through a text
+  or through the middle of a symbol, a reference or value more than 5 mm from its part, a part off the page, a sheet
+  with no title. And it counts each sheet's small local nets (two to four pins; not a supply, and no global or hierarchical
+  label or sheet pin):
+  wired, joined by labels between pins within 25 mm (`label-hop`: draw the wire) or further apart (`label-island`:
+  the part sits away from what it works with). It reads the root and every sheet below it with pcbkit's parser, so
+  it needs neither KiCad nor konnect; text sizes are estimated, and it exits 0 unless `--strict`. On the generated
+  sheets of four projects most small local nets are joined by labels (siebenuhr's mcu sheet: 0 wired, 40 by label).
+  The reading rules come from [modular-schematic-layout](https://github.com/Ausanx/modular-schematic-layout).
+
 ### Changed
+- **`pcbkit.schematic.build` joins supply pins that sit side by side.** Two pins of one part on the same supply,
+  2.54 mm apart and facing the same way (the GND and pad pins of a regulator), got a power symbol each, the values
+  printed over each other. They now share one symbol through a short wire. The netlist is the same.
+- **`pcbkit.schematic.put` turns a part by the edge its pin is on.** It took the rotation with most of the part
+  behind the pin, which turned a tall connector on its side when the pin was near a corner.
+- **`pcbkit.schematic.build` joins pins of one net that sit side by side.** Two pins of a part on one net, 2.54 mm
+  apart and facing the same way (the doubled D+ and D- pins of a USB-C connector), got a label each, one above the
+  other. The second now joins the first by a short wire and the net is named once, as supply pins already were.
+  The netlist is the same; a sheet built without `wire=` changes here.
+- **A net name on an upright wire reads level**, beside the wire, where `build(wire=...)` wrote it up the page.
 - **More JLC rotations from the preview (2026-11-15).** KiCad's `TSOT-23-6` gets -90 like its SOT-23-6, which it is
   laid out as: it matched the never-checked `^TSOT-23` (+180), a quarter turn off for an LMR51625. Two part rules
   for parts whose JLC footprint lies a quarter turn from the part their package rule was checked on: the TPS2116DRLR

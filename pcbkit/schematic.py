@@ -36,21 +36,24 @@ Placing by pin, so they do line up (pin positions are read from the symbol libra
 A block, placed from what its parts do (read the circuit first: what the power or signal passes through, what
 hangs from each node, what sits across what):
 
-    buck = sch.block("3.3 V buck", (165.1, 160.02),
+    buck = sch.block("3.3 V buck",
                      path=[(u5, "4", "3"), l2],                          # in at VIN, out at SW, then the inductor
                      shunt={"+5V": [c8],                                 # input capacitor, before the regulator
                             "+3V3": [c9, c19, [r8, r9], [r2, d1]]},      # output capacitors, divider, LED: on the output
                      across=[(r8, [c25])],                               # feed-forward capacitor over the top resistor
                      sense=[(u5, "5")])                                  # FB is wired back from the divider, not labelled
+    sch.title_block(sheet, about="Power: input, bucks, USB-C")           # the root's title, rev and date, and this line
     for again in (False, True):                                          # the second time by the measured sizes
-        sch.arrange([[inp, buck5], [usb, buck]])                         # rows of blocks, set out on the page
+        sch.arrange([[inp, buck5], [usb, buck]], page="A3")              # rows of blocks, centred on the page
         sch.reset(sheet)
         sch.build(sheet, 100, comps, hier, wire=25.4, blocks=B)          # each node row is one wire, one supply symbol
         sch.fields(sheet)                                                # reference and value level, beside each part
         sch.measure(sheet, B)
     sch.frames(sheet, B)                                                 # dashed frames and titles, last
 
-`block` only sets x, y and rot, so `at` can be (0, 0) when `arrange` follows. `blocks=` makes build draw every node
+`block` only sets x, y and rot; give it `at=(x, y)` when no `arrange` follows. `part(ref, lib, ...)` makes a part
+without a place and `flag(ref, net)` a PWR_FLAG. `title_block` needs `configure(..., root="board.kicad_sch")`, and
+`reset` keeps what it wrote. `blocks=` makes build draw every node
 it laid out as a rail: one wire through the pins, named once (a signal) or with one power symbol at its free end (a
 supply), and it refuses a rail that would run over another net's pin or through a part. A row can start at a
 connector, `(j2, None, "2")`; a flag or a test point hangs from a rail like any part; `b.add(part)` takes in a part
@@ -68,15 +71,18 @@ from .parts import FP, capacitor, resistor
 R0402, R0603, C0402, C0603, C0805, C1206 = (FP[k] for k in ("R0402", "R0603", "C0402", "C0603", "C0805", "C1206"))
 
 P = ""  # project (sheet) directory with trailing slash; set with configure(), or assign P directly
+ROOT_SHEET = None  # the root schematic, whose title block title_block() copies; set with configure(root=...)
 # net -> (symbol, value override, native rotation of the symbol's pin)
 POWER = {"GND": ("power:GND", None, 270), "+3V3": ("power:+3V3", None, 90), "+5V": ("power:+5V", None, 90),
          "+12V": ("power:+12V", None, 90), "VBUS": ("power:VBUS", None, 90)}
 
 
-def configure(project_dir, power=None):
-    """Set the sheet directory and add project power nets, e.g. {"VIN": ("power:VCC", "VIN", 90)}."""
-    global P
+def configure(project_dir, power=None, root=None):
+    """Set the sheet directory and add project power nets, e.g. {"VIN": ("power:VCC", "VIN", 90)}.
+    root: the root schematic's file name, for title_block()."""
+    global P, ROOT_SHEET
     P = project_dir if project_dir.endswith("/") else project_dir + "/"
+    ROOT_SHEET = root or ROOT_SHEET
     if power:
         POWER.update(power)
 
@@ -102,6 +108,19 @@ def P2(ref, lib, val, fp, lcsc, x, y, p1, p2, rot=0, fields=None, mpn=None):
     if mpn:
         f["MPN"] = mpn
     return dict(ref=ref, lib=lib, val=val, fp=fp, x=x, y=y, rot=rot, lcsc=lcsc, fields=f, pins={"1": p1, "2": p2})
+
+
+def part(ref, lib, val=None, fp=None, lcsc="", pins=None, mpn=None, **fields):
+    """Any part, without a place: block(), chain() or put() gives it one. pins: {pin: net}; mpn and other keywords
+    become symbol fields."""
+    if mpn:
+        fields["MPN"] = mpn
+    return dict(ref=ref, lib=lib, val=val, fp=fp, x=0, y=0, rot=0, lcsc=lcsc, fields=fields, pins=dict(pins or {}))
+
+
+def flag(ref, net):
+    """A PWR_FLAG on `net`, to hang from a node in block(shunt=...) or taps: up from a supply, down from GND."""
+    return dict(ref=ref, lib="power:PWR_FLAG", x=0, y=0, rot=0, pins={"1": net})
 
 
 DIRS = {"right": (1, 0), "left": (-1, 0), "up": (0, -1), "down": (0, 1)}  # on the sheet, y grows downwards
@@ -257,6 +276,10 @@ PITCH = 12.7  # between parts hung side by side from one node: room for a refere
 FREE = 7.62   # from the last pin of a supply rail to its power symbol
 
 
+MARGIN = 12.7  # from the page edge to anything drawn: KiCad's border and its grid letters
+TITLE_BLOCK = (200.0, 60.0)  # the bottom right corner of the page that KiCad's title block takes, with the margin
+
+
 class Block:
     """What block() placed: `title`, `parts` (the component dicts), `rails` and `box`, (x0, y0, x1, y1) around the
     parts' drawings and pins as placed (fields and power symbols come on top of that; frames() measures the built
@@ -396,9 +419,10 @@ def _hang(net, entries, start, along, pitch, gap, parts, count=False, room=None)
     return used if count else max(used.values()), sorted(set(pts), key=pts.index)
 
 
-def block(title, at, path, shunt=None, taps=(), across=(), sense=(), toward="right", pitch=PITCH, gap=5.08, out=7.62):
+def block(title, at=(0, 0), path=(), shunt=None, taps=(), across=(), sense=(), toward="right", pitch=PITCH, gap=5.08, out=7.62):
     """Place one functional block from the roles of its parts, and return a Block (for frames(), and for its box).
 
+      at     where the block starts; leave it out when arrange() sets the page out.
       path   the parts the signal or the power passes through, in order, as chain() takes them. The first one's
              entering pin lands on `at` (after the shunts of its net, if any) and the row runs `toward`. A row
              can start at a source: (connector, None, pin) puts the connector before `at`, its pin on it.
@@ -478,11 +502,13 @@ def block(title, at, path, shunt=None, taps=(), across=(), sense=(), toward="rig
     return b
 
 
-def arrange(rows, origin=(25.4, 30.48), gap=7.62, pad=2.54):
+def arrange(rows, origin=(25.4, 30.48), gap=7.62, pad=2.54, page=None):
     """Set blocks out on the page: each list in `rows` is a row of blocks, left to right, the rows one under the
     other from `origin`. Every block is moved as a whole. Its frame is its `extent` plus `pad`; the frames of a row
     get the same height and stand `gap` apart, and every row starts at the same left edge. Call it after the
     blocks are made (and after Block.add) and before build. Returns (x0, y0, x1, y1) of the lot.
+    page: a paper size ("A3", as reset() takes it) or (width, height) in mm: the lot is centred on that page instead
+    of starting at `origin`, and kept clear of the title block in the bottom right corner.
 
     A block's extent is an estimate until the sheet has been built once. For frames that line up exactly, build
     twice: arrange, build, fields, then measure(sheet, blocks), and arrange, build, fields again, then frames."""
@@ -500,7 +526,20 @@ def arrange(rows, origin=(25.4, 30.48), gap=7.62, pad=2.54):
             b.frame = (round(x, 2), round(y, 2), round(x + w, 2), round(y + height, 2))
             x += w + gap
         right, y = max(right, x - gap), y + height + gap + 5.08  # and room for the next row's titles
-    return (origin[0], origin[1], round(right, 2), round(y - gap - 5.08, 2))
+    box = (origin[0], origin[1], round(right, 2), round(y - gap - 5.08, 2))
+    if page:
+        from .checks.sch_lint import PAPER
+        W, H = PAPER[page] if isinstance(page, str) else page
+        near = lambda v: round(round(v / 1.27) * 1.27, 2)  # noqa: E731
+        top = 5.08  # the titles stand above the first row
+        dx = near((W - (box[2] - box[0])) / 2 - box[0])
+        dy = near((H - (box[3] - box[1]) + top) / 2 - box[1])
+        if box[2] + dx > W - TITLE_BLOCK[0] and box[3] + dy > H - TITLE_BLOCK[1]:  # onto the title block: up, as far as the page has room
+            dy = near(max(MARGIN + top - box[1], H - TITLE_BLOCK[1] - box[3]))
+        for b in (b for row in rows for b in row):
+            b.move(dx, dy)
+        box = tuple(round(v + d, 2) for v, d in zip(box, (dx, dy, dx, dy)))
+    return box
 
 
 def _field_at(m, left, mid_y, w, h, align):
@@ -911,6 +950,19 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
             e["value"] = val
         pw.append(e)
 
+    beside = {}  # net -> [(x, y, th)] of its pins that are named so far
+
+    def joins(net, x, y, th):
+        """Two pins of one net side by side on a part (a connector's doubled pins): a short wire, not a second name."""
+        for x2, y2, th2 in beside.setdefault(net, []):
+            if th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2) and (x, y) not in seen:
+                seen.add((x, y))
+                wires.append((x2, y2, x, y))
+                beside[net].append((x, y, th))
+                return True
+        beside[net].append((x, y, th))
+        return False
+
     for c in comps:
         for pin, net in c["pins"].items():
             if (c["ref"], pin) in skip or net is None:
@@ -922,6 +974,8 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
                     nc.append({"x": x, "y": y})
             elif net in POWER:
                 pwr(net, x, y, th)
+            elif joins(net, x, y, th):
+                continue
             elif net in hier and net not in hier_done and (x, y) not in seen:
                 seen.add((x, y))
                 hier_done.add(net)
@@ -1002,12 +1056,64 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
 
 
 def reset(sheet, paper="A3"):
-    """Blank a child sheet in place, keeping its own uuid so hierarchy links survive."""
+    """Blank a child sheet in place, keeping its own uuid so hierarchy links survive, and its title block, so what
+    title_block() or a release wrote there does."""
+    from .release.versions import title_block as find
     S = sheet_path(sheet)
     txt = open(S).read()
     uuid = re.search(r'\(uuid "?([0-9a-f-]+)"?\)', txt).group(1)
+    b = find(txt)
+    tb = "\t" + txt[b[0]:b[1]] + "\n" if b else ""
     open(S, "w").write(f'(kicad_sch\n\t(version 20260306)\n\t(generator "eeschema")\n\t(generator_version "10.0")\n'
-                       f'\t(uuid "{uuid}")\n\t(paper "{paper}")\n\t(lib_symbols)\n\t(embedded_fonts no)\n)\n')
+                       f'\t(uuid "{uuid}")\n\t(paper "{paper}")\n{tb}\t(lib_symbols)\n\t(embedded_fonts no)\n)\n')
+
+
+def title_block(sheet, about=None, root=None, author=None, **fields):
+    """Fill a sheet's title block so every page says what it belongs to. title, date, rev and company come from the
+    root schematic (`root`, or configure(root=...)): the project's name is the title of every page, and a release
+    stamps the same rev and date on all of them. `about` says what this sheet holds, on the line above the title
+    (comment 1); `author` goes on the next (comment 2), else the root's comment 2 and up carry over.
+    Keywords (title=, date=, rev=, company=, comment3=...) set a field outright. Returns the fields written."""
+    from .release.versions import _esc, title_block as find, title_field
+    S = sheet_path(sheet)
+    txt = open(S).read()
+    vals, comments = {}, {}
+    root = root or ROOT_SHEET
+    if root and os.path.abspath(sheet_path(root)) != os.path.abspath(S):
+        rt = open(sheet_path(root)).read()
+        vals = {k: title_field(rt, k) for k in ("title", "date", "rev", "company")}
+        b = find(rt)
+        for n, text in re.findall(r'\(comment (\d) "((?:[^"\\]|\\.)*)"\)', rt[b[0]:b[1]] if b else ""):
+            if int(n) > 1:
+                comments[int(n)] = re.sub(r"\\(.)", r"\1", text)
+    b = find(txt)
+    if b:  # what the sheet has already and the root does not say
+        old = txt[b[0]:b[1]]
+        for k in ("title", "date", "rev", "company"):
+            vals[k] = vals.get(k) or title_field(txt, k)
+        for n, text in re.findall(r'\(comment (\d) "((?:[^"\\]|\\.)*)"\)', old):
+            comments.setdefault(int(n), re.sub(r"\\(.)", r"\1", text))
+    if about:
+        comments[1] = about
+    if author:
+        comments[2] = author
+    for k, v in fields.items():
+        if k.startswith("comment"):
+            comments[int(k[7:])] = v
+        else:
+            assert k in ("title", "date", "rev", "company"), "title_block: no field %r" % k
+            vals[k] = v
+    lines = ['\t\t(%s "%s")' % (k, _esc(vals[k])) for k in ("title", "date", "rev", "company") if vals.get(k)]
+    lines += ['\t\t(comment %d "%s")' % (n, _esc(comments[n])) for n in sorted(comments) if comments[n]]
+    new = "(title_block\n" + "\n".join(lines) + "\n\t)"
+    if b:
+        txt = txt[:b[0]] + new + txt[b[1]:]
+    else:
+        m = re.search(r"\n\t*\(paper [^\n]*", txt)
+        assert m, "%s: no (paper ...) to put a title block after" % S
+        txt = txt[:m.end()] + "\n\t" + new + txt[m.end():]
+    open(S, "w").write(txt)
+    return dict(vals, **{"comment%d" % n: v for n, v in comments.items()})
 
 
 def labels(sheet, items):

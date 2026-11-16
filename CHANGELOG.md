@@ -44,13 +44,19 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   wire runs under the output capacitors to the divider tap; all 16 small local nets are now drawn, the 74 nets
   are the same and ERC is clean.
 
-### Changed
-- **`pcbkit.schematic.build` joins supply pins that sit side by side.** Two pins of one part on the same supply,
-  2.54 mm apart and facing the same way (the GND and pad pins of a regulator), got a power symbol each, the values
-  printed over each other. They now share one symbol through a short wire. The netlist is the same.
-- **`pcbkit.schematic.put` turns a part by the edge its pin is on.** It took the rotation with most of the part
-  behind the pin, which turned a tall connector on its side when the pin was near a corner.
-- **A net name on an upright wire reads level**, beside the wire, where `build(wire=...)` wrote it up the page.
+- **Title blocks on generated sheets: `pcbkit.schematic.title_block`, and `reset` keeps them.** A generated sheet
+  had an empty title block: `reset` wrote the file without one. `title_block(sheet, about="Power: input, bucks")`
+  copies the title, date, rev and company from the root schematic (`configure(..., root="board.kicad_sch")`), so
+  every page carries the project's name and the release it belongs to, and writes what the sheet holds on the line
+  above (comment 1). `author=` sets comment 2; otherwise the root's comment 2 and up carry over, so an author
+  written on the root once is on every page. Keywords set a field outright. `reset` now keeps a sheet's title block
+  as it keeps its uuid, so what `title_block` or a release stamped there survives a rebuild.
+- **Less to write in a block script: `part`, `flag`, no `at`, and `arrange(page=...)`.** `part(ref, lib, val, fp,
+  lcsc, pins, mpn=...)` makes any part without a place, and `flag(ref, net)` a PWR_FLAG that hangs up from a supply
+  or down from GND; `block(title, path=...)` needs no origin when `arrange` follows. `arrange(rows, page="A3")`
+  centres the blocks on the page and keeps them off the title block, where they started at the top left. The script
+  of esp32-s3-ha-node's power sheet, rewritten with blocks on a copy of the project, has four distances where it
+  had 41 x, y pairs; the sheet has the same 74 nets, a clean ERC and the project's title, rev and date on it.
 - **Placing schematic parts by pin: `pcbkit.schematic.pin`, `put`, `step` and `chain`.** A sheet script gave every
   part an absolute x, y, so a part ended up wherever there was room, away from the pin it works with. `pin(c, n)` is
   where a component's pin ends on the sheet, read from the symbol library (KiCad's, or the project's through the
@@ -79,6 +85,18 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   it needs neither KiCad nor konnect; text sizes are estimated, and it exits 0 unless `--strict`. On the generated
   sheets of four projects most small local nets are joined by labels (siebenuhr's mcu sheet: 0 wired, 40 by label).
   The reading rules come from [modular-schematic-layout](https://github.com/Ausanx/modular-schematic-layout).
+
+### Changed
+- **`pcbkit.schematic.build` joins supply pins that sit side by side.** Two pins of one part on the same supply,
+  2.54 mm apart and facing the same way (the GND and pad pins of a regulator), got a power symbol each, the values
+  printed over each other. They now share one symbol through a short wire. The netlist is the same.
+- **`pcbkit.schematic.put` turns a part by the edge its pin is on.** It took the rotation with most of the part
+  behind the pin, which turned a tall connector on its side when the pin was near a corner.
+- **`pcbkit.schematic.build` joins pins of one net that sit side by side.** Two pins of a part on one net, 2.54 mm
+  apart and facing the same way (the doubled D+ and D- pins of a USB-C connector), got a label each, one above the
+  other. The second now joins the first by a short wire and the net is named once, as supply pins already were.
+  The netlist is the same; a sheet built without `wire=` changes here.
+- **A net name on an upright wire reads level**, beside the wire, where `build(wire=...)` wrote it up the page.
 - **More JLC rotations from the preview (2026-11-15).** KiCad's `TSOT-23-6` gets -90 like its SOT-23-6, which it is
   laid out as: it matched the never-checked `^TSOT-23` (+180), a quarter turn off for an LMR51625. Two part rules
   for parts whose JLC footprint lies a quarter turn from the part their package rule was checked on: the TPS2116DRLR

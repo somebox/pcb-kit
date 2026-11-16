@@ -199,6 +199,25 @@ class Arrange(Lib):
             self.assertTrue(all(abs(v / 1.27 - round(v / 1.27)) < 1e-6 for c in b.parts for v in (c["x"], c["y"])))
         self.assertEqual(one.rails[0]["pts"][0], sch.pin(one.parts[0], 2))   # the rails moved with the parts
 
+    def test_a_page_centres_the_lot_and_keeps_off_the_title_block(self):
+        one, two, three = self.blocks()
+        x0, y0, x1, y1 = sch.arrange([[one, two], [three]], page="A3")
+        self.assertLess(abs((x0 + x1) / 2 - 210), 1.27)                      # the middle of a 420 mm page, on the grid
+        self.assertLess(abs((y0 - 5.08 + y1) / 2 - 148.5), 1.27)             # titles and all
+        self.assertEqual((one.frame[0], one.frame[1]), (x0, y0))
+        wide = [sch.block("b%d" % i, path=[R("R%d" % i, "A%d" % i, "B%d" % i)]) for i in range(60)]
+        rows = [wide[i:i + 12] for i in range(0, 60, 12)]                    # a lot that reaches into the corner
+        box = sch.arrange(rows, page="A4")
+        self.assertTrue(box[2] > 297 - sch.TITLE_BLOCK[0] and box[3] <= 210 - sch.TITLE_BLOCK[1] + 0.64, box)
+
+    def test_a_block_needs_no_place_and_a_part_none_either(self):
+        r, f = sch.part("R1", "t:R", "10k", pins={"1": "IN", "2": "OUT"}, mpn="X"), sch.flag("#FLG01", "OUT")
+        g = sch.flag("#FLG02", "GND")
+        self.assertEqual((r["fields"], f["lib"], f["pins"]), ({"MPN": "X"}, "power:PWR_FLAG", {"1": "OUT"}))
+        b = sch.block("b", path=[r], shunt={"OUT": [R("R2", "OUT", "GND")]})
+        self.assertEqual(sch.pin(r, 1), (0, 0))
+        self.assertEqual(len(b.parts), 2)
+
     def test_the_extent_holds_fields_and_symbols_until_it_is_measured(self):
         one, _, _ = self.blocks()
         b, e = one.box, one.extent
@@ -238,6 +257,53 @@ class Fields(unittest.TestCase):
         self.assertEqual((round((ref[0] + ref[2]) / 2, 2), round((val[0] + val[2]) / 2, 2)), (50.0, 50.0))   # centred on it
         self.assertTrue(ref[3] < 48.98 < 51.02 < val[1])                     # clear of the body, one each side
         self.assertTrue(ref[2] - ref[0] > ref[3] - ref[1])
+
+
+class TitleBlock(unittest.TestCase):
+    ROOT_TB = '(title_block\n\t\t(title "Lamp \\"two\\"")\n\t\t(date "2026-11-16")\n\t\t(rev "v1.2")\n\t\t(company "Maker")\n' \
+              '\t\t(comment 1 "Overview")\n\t\t(comment 2 "A. Author")\n\t)'
+
+    def sheets(self, d, child_tb=""):
+        head = '(kicad_sch\n\t(version 20260306)\n\t(generator "eeschema")\n\t(uuid "%s")\n\t(paper "A3")\n%s\t(lib_symbols)\n)\n'
+        with open(os.path.join(d, "root.kicad_sch"), "w") as f:
+            f.write(head % ("11111111-1111-1111-1111-111111111111", "\t" + self.ROOT_TB + "\n"))
+        with open(os.path.join(d, "child.kicad_sch"), "w") as f:
+            f.write(head % ("22222222-2222-2222-2222-222222222222", child_tb))
+        sch.configure(d, root="root.kicad_sch")
+        return sch_lint.Sheet(os.path.join(d, "child.kicad_sch"))
+
+    def test_a_sheet_takes_the_roots_title_rev_and_date_and_says_what_it_holds(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.sheets(d).title, "")
+            got = sch.title_block("child.kicad_sch", about="Power: input and bucks")
+            self.assertEqual(got, dict(title='Lamp "two"', date="2026-11-16", rev="v1.2", company="Maker",
+                                       comment1="Power: input and bucks", comment2="A. Author"))
+            text = open(os.path.join(d, "child.kicad_sch")).read()
+            self.assertEqual(sch_lint.Sheet(os.path.join(d, "child.kicad_sch")).title, 'Lamp "two"')
+            self.assertEqual(text.count("(title_block"), 1)
+            sch.title_block("child.kicad_sch", author="B. Other", rev="v2.0", comment3="draft")   # again: replaced, not added
+            text = open(os.path.join(d, "child.kicad_sch")).read()
+            self.assertEqual(text.count("(title_block"), 1)
+            for want in ('(rev "v2.0")', '(comment 1 "Power: input and bucks")', '(comment 2 "B. Other")', '(comment 3 "draft")'):
+                self.assertIn(want, text)
+
+    def test_reset_keeps_the_title_block_and_the_uuid(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.sheets(d)
+            sch.title_block("child.kicad_sch", about="Power")
+            sch.reset("child.kicad_sch", paper="A4")
+            text = open(os.path.join(d, "child.kicad_sch")).read()
+            self.assertIn('(uuid "22222222-2222-2222-2222-222222222222")', text)
+            self.assertIn('(paper "A4")\n\t(title_block\n\t\t(title "Lamp \\"two\\"")', text)
+            self.assertIn('(comment 2 "A. Author")\n\t)\n\t(lib_symbols)', text)
+
+    def test_without_a_root_only_what_is_given_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.sheets(d)
+            sch.ROOT_SHEET = None
+            self.assertEqual(sch.title_block("child.kicad_sch", title="Solo", about="one sheet"), dict(title="Solo", comment1="one sheet"))
+            with self.assertRaises(AssertionError):
+                sch.title_block("child.kicad_sch", author_name="x")
 
 
 class Frames(unittest.TestCase):

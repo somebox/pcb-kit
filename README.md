@@ -345,7 +345,8 @@ from pcbkit import schematic as sch          # schematic sheets from Python data
                                              # sch.block places a whole block from its parts' roles (path, shunt,
                                              # taps, across), build(blocks=) draws its rails, sch.arrange sets the
                                              # blocks out in rows, sch.fields tidies references and values,
-                                             # sch.frames frames each block
+                                             # sch.frames frames each block, sch.title_block gives a sheet
+                                             # the root's title, rev and date and a line on what it holds
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box

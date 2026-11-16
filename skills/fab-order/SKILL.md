@@ -11,6 +11,11 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 
 ## Ground rules
 
+- **The order is the last step, and it is done once.** Before a cart is touched, tell the user which released
+  versions go in and what changed since the last review or order, list any design change still open, and wait for
+  their OK. The forms, the BOM page and the viewer are many steps. A change to the board after that is its next
+  release, a patch at least, and the steps again. The one fix made in the order itself is a part turned in JLC's
+  viewer (below); its corrected rule gives the board its next version at the next release.
 - **The user pays.** Leave every order in the cart, unpaid and unticked for checkout. Then tell the user what each
   cart holds and what it costs.
 - The carts may hold items from other projects. Leave them alone. Removing or replacing one of this project's own

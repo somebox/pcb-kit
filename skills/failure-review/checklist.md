@@ -175,9 +175,11 @@ Examples name the board where it mattered.
 
 - Each decoupling capacitor and each IC ground pin with a via to the plane at its pad (siebenuhr v3 gave U301's
   ground pin and C303 a via of their own).
-- The plane unbroken under a switch node, a clock or a fast edge: no slot, via row or track across the return
-  path, and no switch node routed on the plane's layer (the sign's module ran its switch node through 3.95 mm of
-  0.15 mm track on the ground-plane layer).
+- The plane unbroken under a clock or a fast edge: no slot, via row or track across the return path.
+- Under a switch node, the copper the regulator's layout guidance asks for: some keep the plane whole there, some
+  cut it away (the LM2734's: a continuous ground plane "except under the switching node island"). No switch node
+  routed on the plane's layer (the sign's module ran its through 3.95 mm of 0.15 mm track on the ground-plane
+  layer).
 - The ESD part between the connector and what it protects, the line running through its pad, its ground short.
 - No via in or touching an SMD pad unless it is filled (Orbitchron moved three out of socket pads).
 - The antenna's keep-out on every layer, on a board stacked beside it, and against the enclosure's metal

@@ -29,7 +29,8 @@ board or the design data the board is generated from. Changes follow the user's 
 1. **Scope and ground truth.** Board, revision and commit; which blocks are in scope; which kind of review this is
    (below). Read the status lines of README, DESIGN, LAYOUT and PRODUCTION, DESIGN's "what the last version taught
    us", earlier reviews, and this kit's `library/PARTS.md` notes for each part on the board. Ask what is already
-   built and how those units behave: a fault they show is the first finding. List the boards that share a circuit
+   built and how those units behave: a fault they show is the first finding. Ask what this build is, a prototype
+   or a product, and what a prototype will be used with (below). List the boards that share a circuit
    with this one (a module and its controller, the same block in another project): a finding in a shared circuit
    names them in its action.
    Run `pcbkit erc`, `pcbkit drc`, the project's netlist assertions and `pcbkit nets SCH` yourself, at this commit,
@@ -102,10 +103,13 @@ board or the design data the board is generated from. Changes follow the user's 
     simulations the change touches run again on the design as edited. The briefing gets a Decisions table, dated.
     Test points go into LAYOUT.md, the bench list into PRODUCTION.md's bring-up section. Carry each accepted
     change to the boards that share the circuit, or give the reason in the Decisions table: the sign's module kept
-    the 33 Ω outputs that the controller had already changed to 100 Ω, until its own review found them.
+    the 33 Ω outputs that the controller had already changed to 100 Ω, until its own review found them. After a
+    major round, bring the project's overview page up to date (this kit's `docs/CONVENTIONS.md`, "The overview
+    page").
 11. **Review the changes before the order.** In every project with a second round, a change accepted in the first
     caused a finding in the second. Review what changed (below) at the commit that will be ordered, as a new dated
-    briefing that links this one. If that leads to more changes to the board, they get the same.
+    briefing that links this one: `<date>-<board>-round2.md` when the date is the same, so no briefing is
+    overwritten. If that leads to more changes to the board, they get the same.
 12. **When the boards are built,** add what JLC's placement viewer and the bench found to the briefing, dated, and
     the parts' lessons to this kit's `library/PARTS.md`.
 
@@ -115,14 +119,30 @@ The steps describe a full review of a board that has had none. The others run th
 and the status line says which:
 
 - **The changes since a review.** What changed since the reviewed commit (`pcbkit changelog --since <commit>` for
-  the netlist, the BOM and the layout; `git diff` for the design notes), each decision as it was drawn, the layout
-  around each change, and the earlier "verified OK" claims a change touches. Every earlier finding gets a status:
+  the netlist, the BOM and the layout; `git diff <commit>` for the design notes), each decision as it was drawn,
+  the layout around each change, and the earlier "verified OK" claims a change touches. Every earlier finding gets
+  a status:
   fixed (by which decision), carried over, accepted, open. The earlier review holds for what isn't mentioned.
 - **Layout only,** once the schematic has been reviewed: the layout part of step 3, the netviews, measurements and
   checkers of step 5, connectors and footprints against their drawings, fab and assembly.
 - **A design that was imported, or is already built** (an EasyEDA import, a product with units in use): start from
   how the built units behave, and review the import as a change. Footprints, pin maps and rotations are checked
   against the built board, not taken over from the import.
+
+## Prototype or product
+
+A prototype is a few boards on the user's bench, with the user's supply. A product goes to other people. The
+findings are the same for both; the actions are not.
+
+- A prototype can rest on the bench where a product needs a part: the supply named exactly (its voltage, its
+  current limit, the one adapter), handling limited (no hot-plug, the cable fitted before power), a polarity marked.
+- Such a finding reads "accept for this build", with the condition written where it will be seen: on the
+  silkscreen where there is room, in the bench list, in PRODUCTION.md's bring-up section.
+- The improvement is noted for the revision that warrants it, in DESIGN.md and as a DNP footprint or a pad where
+  that is free now. It is not built in yet: a protection part or a re-route against a risk the bench already holds
+  costs more than the prototype is there to spend.
+- Still changed on a prototype: what would kill the board in the use it is given, what would hide the thing the
+  prototype is built to find out, and what costs nothing.
 
 ## The briefing
 
@@ -133,7 +153,8 @@ it links to.
 # <Board> <rev>: failure review
 
 Status (<date>): reviewed at <commit>; <full review | changes since <review> | layout only | imported or built
-design>; covers <blocks>; not covered: <...>; open checks: <...>; shares circuits with: <boards>.
+design>; <prototype, used with <supply, handling> | product>; covers <blocks>; not covered: <...>; open checks:
+<...>; shares circuits with: <boards>.
 Checks at this commit: ERC <n>; DRC <errors, unconnected, parity>; assertions <n nets, n failures>; checkers <ran |
 not run, why>. Second pass: <what tried to refute the findings>.
 Evidence marks: *ds* datasheet text (document, section, column), *sim*, *calc*, *board* (netlist or layout,
@@ -146,7 +167,7 @@ kill the board.
 ## Findings
 | # | Finding | Effect | Likelihood | Found at | Evidence | How it shows up, how to tell | Action (cost) |
 |---|---|---|---|---|---|---|---|
-| F1 | ... | dead | likely | bench | *ds* TPS2116 SLVSFG1A §7.6.1; *sim* sim/results/<question>.txt | symptom; reading at TP3 | change / test point / firmware / bench test / accept |
+| F1 | ... | dead | likely | bench | *ds* TPS2116 SLVSFG1A §7.6.1; *sim* sim/results/<question>.txt | symptom; reading at TP3 | change / test point / firmware / bench test / accept for this build |
 
 ## Earlier findings
 In a review of changes: each finding of the earlier review, and whether it is fixed (by which decision), carried
@@ -191,7 +212,8 @@ Added when the boards are built.
   finding without evidence is a question and goes under "Questions for the user".
 - Number the findings F1, F2, … and carry on from the last number in a later round, so a number means one finding
   for the life of the board. Use no other prefix: R6 would read as a resistor.
-- Each action names its cost: a pad, a part, a re-route, a firmware duty, or a bench test before deciding.
+- Each action names its cost: a pad, a part, a re-route, a firmware duty, or a bench test before deciding. On a
+  prototype the cheapest action that holds is often a condition written down (above).
 - "Not covered" is for what was left out of scope on purpose. A check that belongs to the review and wasn't done (a
   connector's footprint against its drawing, the placement viewer) is an open check: it goes into the status line,
   and into the verdict when it could kill the board. Orbitchron's first review listed connector mating under "Not

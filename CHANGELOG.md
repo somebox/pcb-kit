@@ -122,6 +122,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   the TPS2116's reverse-current threshold is 42 mV typical and 70 mV maximum, and an AHCT1G125 is not specified to
   isolate with its rail off. USB's inrush limits now have their numbers: 10 µF at attach, 100 µF after a PD
   contract. A briefing written to the old template still reads; a new one has one more column.
+- **Four working rules, written into the conventions and the skills.** A change made during the release steps is
+  the board's next release, a patch at least, and nothing is uploaded that isn't a release. The order comes last
+  and once: before a cart is touched the user confirms the versions and that no design change is open (fab-order's
+  ground rules; "Checks before an order", step 8). After each major design round the user gets the project on one
+  HTML page, `docs/overview.html`, with status, a viewer, a section per block, open decisions, cost and supply,
+  and every round kept (docs/CONVENTIONS.md, "The overview page"; the kit has no template or generator for it
+  yet). A prototype is reviewed as one: a risk the bench can hold (a named supply, limited handling, a marked
+  polarity) is noted, on the board too, and left for the revision that warrants it (failure-review, "Prototype or
+  product"; DESIGN.md says which the build is).
 
 ## [0.4.0] - 2026-11-15
 

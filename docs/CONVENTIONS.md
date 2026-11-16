@@ -135,8 +135,10 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 - **A change during the release steps is a new release.** Once a board is released, anything that changes it (a
   fix from the checks before an order, a part swapped for stock, a rotation rule corrected) goes into the project
   and comes out as the board's next version: a patch when only the fab output changes, a minor when the netlist
-  or BOM does. The order then pins that version. Nothing is edited in a release folder, and nothing is uploaded
-  that isn't a release. Each such change repeats the order's steps, so the design is settled with the user first.
+  or BOM does. The order then pins that version. Nothing is edited in a release folder, and what is ordered is a
+  release: its own files, or, for another split of the sides, the BOM and placement pair `pcbkit fab` makes from
+  the board as released (`pcbkit release --dry-run` gives it no new version). Files for a quote alone need no
+  release. Each such change repeats the order's steps, so the design is settled with the user first.
 - An order is a folder under `production/orders/`, named by its date and what it is. Its order.toml pins each
   board's version and records what happened as dated events: draft, submitted (with the order number and price),
   in-production, shipped, received, problem (a stock shortage, a question from the fab), cancelled. Edit it by
@@ -181,12 +183,13 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 6. `pcbkit previews` regenerated and looked at: assembly map, silkscreen, plane coverage.
 7. `pcbkit release` (which reruns ERC and DRC and refuses a board with errors), and `pcbkit panel` for panels; BOM
    reviewed against bomi for stock and extended-part fees; an order.toml pinning the released versions, then
-   `pcbkit production` and the upload from its `upload/` folder. The fab-order skill covers the forms, the BOM page and
-   the placement viewer, where every part in the release's placement checklist is checked before the order goes into
-   the cart.
-8. The order itself comes last, and once. Before a cart is touched, the user confirms the versions to be ordered
-   and that no design change is open: the forms, the BOM page and the viewer are many steps, and a change after
-   them means a new release and all of them again.
+   `pcbkit production`, which fills the order's `upload/` folder from the pinned releases.
+8. The user confirms the versions to be ordered and that no design change is open. Nothing goes into a cart before
+   that: the forms, the BOM page and the viewer are many steps, and a change after them means a new release and
+   all of them again.
+9. The order itself, last and once: the upload from the order's `upload/` folder. The fab-order skill covers the
+   forms, the BOM page and the placement viewer, where every part in the release's placement checklist is checked
+   before the order goes into the cart.
 
 ## The overview page
 

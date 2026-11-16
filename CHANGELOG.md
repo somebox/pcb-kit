@@ -123,9 +123,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   isolate with its rail off. USB's inrush limits now have their numbers: 10 µF at attach, 100 µF after a PD
   contract. A briefing written to the old template still reads; a new one has one more column.
 - **Four working rules, written into the conventions and the skills.** A change made during the release steps is
-  the board's next release, a patch at least, and nothing is uploaded that isn't a release. The order comes last
-  and once: before a cart is touched the user confirms the versions and that no design change is open (fab-order's
-  ground rules; "Checks before an order", step 8). After each major design round the user gets the project on one
+  the board's next release, a patch at least, and what is ordered is a release (files for a quote alone need
+  none). The order comes last and once: before a cart is touched the user confirms the versions and that no design
+  change is open (fab-order's ground rules; "Checks before an order", steps 8 and 9). After each major design round the user gets the project on one
   HTML page, `docs/overview.html`, with status, a viewer, a section per block, open decisions, cost and supply,
   and every round kept (docs/CONVENTIONS.md, "The overview page"; the kit has no template or generator for it
   yet). A prototype is reviewed as one: a risk the bench can hold (a named supply, limited handling, a marked

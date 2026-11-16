@@ -1,7 +1,7 @@
 {
   "name": "pcb-kit",
   "description": "Skills for checking, placing, simulating, costing and ordering KiCad 10 boards with the pcbkit CLI on macOS",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": { "name": "Jeremy Seitz" },
   "homepage": "https://github.com/somebox/pcb-kit",
   "repository": "https://github.com/somebox/pcb-kit",

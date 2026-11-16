@@ -7,6 +7,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-16
+
 ### Added
 - **Schematic blocks placed by role: `pcbkit.schematic.block`, `build(blocks=...)` and `frames`.** A sheet script
   was a flat list of parts with coordinates, so nothing said which resistor is whose feedback divider, and the

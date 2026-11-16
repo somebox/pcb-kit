@@ -41,12 +41,21 @@ hangs from each node, what sits across what):
                      shunt={"+5V": [c8],                                 # input capacitor, before the regulator
                             "+3V3": [c9, c19, [r8, r9], [r2, d1]]},      # output capacitors, divider, LED: on the output
                      across=[(r8, [c25])])                               # feed-forward capacitor over the top resistor
-    sch.build(sheet, 100, comps, hier, wire=25.4, blocks=[buck, ...])    # each node row is one wire, one supply symbol
-    sch.frames(sheet, [buck, ...])                                       # dashed frame and title, after build
+    for again in (False, True):                                          # the second time by the measured sizes
+        sch.arrange([[inp, buck5], [usb, buck]])                         # rows of blocks, set out on the page
+        sch.reset(sheet)
+        sch.build(sheet, 100, comps, hier, wire=25.4, blocks=B)          # each node row is one wire, one supply symbol
+        sch.fields(sheet)                                                # reference and value level, beside each part
+        sch.measure(sheet, B)
+    sch.frames(sheet, B)                                                 # dashed frames and titles, last
 
-`block` only sets x, y and rot. `blocks=` makes build draw every node it laid out as a rail: one wire through the
-pins, named once (a signal) or with one power symbol at its free end (a supply), and it refuses a rail that would
-run over another net's pin. `buck.box` is where the block ended up, for placing the next one.
+`block` only sets x, y and rot, so `at` can be (0, 0) when `arrange` follows. `blocks=` makes build draw every node
+it laid out as a rail: one wire through the pins, named once (a signal) or with one power symbol at its free end (a
+supply), and it refuses a rail that would run over another net's pin or through a part. A row can start at a
+connector, `(j2, None, "2")`; a flag or a test point hangs from a rail like any part; `b.add(part)` takes in a part
+placed by hand. `arrange` moves each block as a whole and gives the frames of a row one top, one height and one gap;
+a block's size is an estimate until `measure` has seen it built, hence the two passes. `frames` names the parts
+that are in no block.
 """
 import os
 import re
@@ -114,18 +123,9 @@ def _library(nick):
     raise FileNotFoundError("symbol library %r: not in %s nor in %s" % (nick, table, KICAD_SYMBOLS))
 
 
-def _symbol(path, name):
-    """One symbol of a library, parsed: only its own text is read, the stock libraries are megabytes."""
-    from . import sexp
-    if os.path.isdir(path):
-        path = os.path.join(path, name + ".kicad_sym")
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    m = re.search(r'^\s*\(symbol "%s"\s' % re.escape(name), text, re.M)
-    if not m:
-        raise KeyError("symbol %r is not in %s" % (name, path))
-    i = start = text.index("(", m.start())
-    depth, quoted = 0, False
+def _close(text, start):
+    """The index of the bracket that closes the one at `start`, quoted strings skipped."""
+    i, depth, quoted = start, 0, False
     while True:
         ch = text[i]
         if quoted:
@@ -138,8 +138,22 @@ def _symbol(path, name):
         elif ch == ")":
             depth -= 1
             if not depth:
-                break
+                return i
         i += 1
+
+
+def _symbol(path, name):
+    """One symbol of a library, parsed: only its own text is read, the stock libraries are megabytes."""
+    from . import sexp
+    if os.path.isdir(path):
+        path = os.path.join(path, name + ".kicad_sym")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    m = re.search(r'^\s*\(symbol "%s"\s' % re.escape(name), text, re.M)
+    if not m:
+        raise KeyError("symbol %r is not in %s" % (name, path))
+    start = text.index("(", m.start())
+    i = _close(text, start)
     sym = sexp.parse(text[start:i + 1])
     parent = sexp.first(sym, "extends")
     return _symbol(path, parent[1]) if parent else sym
@@ -161,14 +175,15 @@ def geometry(lib_id, unit=1):
 
 
 def _offsets(c, rot=None):
-    """Sheet offsets from the part's origin: ({pin: (dx, dy)}, (dx, dy) of the middle of its drawing and pins)."""
+    """Sheet offsets from the part's origin: ({pin: (dx, dy)}, (dx, dy) of the middle of its drawing and pins,
+    (half its width, half its height))."""
     from .checks.sch_lint import apply, transform
     m = transform(c.get("rot", 0) if rot is None else rot, c.get("mirror"))
     pins, pts = geometry(c["lib"], c.get("unit", 1))
     off = {n: apply(m, x, -y) for n, (x, y) in pins.items()}
     allp = [apply(m, x, -y) for x, y in pts] + list(off.values())
-    mid = ((min(p[0] for p in allp) + max(p[0] for p in allp)) / 2, (min(p[1] for p in allp) + max(p[1] for p in allp)) / 2)
-    return off, mid
+    lo, hi = [min(p[i] for p in allp) for i in (0, 1)], [max(p[i] for p in allp) for i in (0, 1)]
+    return off, ((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2), ((hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2)
 
 
 def pins(c):
@@ -193,10 +208,11 @@ def put(c, n, at, toward=None):
     if toward:
         dx, dy = DIRS[toward]
 
-        def along(rot):
-            off, mid = _offsets(c, rot)
-            return (mid[0] - off[n][0]) * dx + (mid[1] - off[n][1]) * dy
-        c["rot"] = max((0, 90, 180, 270), key=lambda rot: (round(along(rot), 3), -rot))
+        def along(rot):  # (1 when the pin is on the edge of the part that faces away from `toward`, how far the body reaches)
+            off, mid, half = _offsets(c, rot)
+            d = (mid[0] - off[n][0]) * dx + (mid[1] - off[n][1]) * dy
+            return round(d / max(half[0] * abs(dx) + half[1] * abs(dy), 0.01), 2), round(d, 3)
+        c["rot"] = max((0, 90, 180, 270), key=lambda rot: along(rot) + (-rot,))
     off = _offsets(c)[0][n]
     c["x"], c["y"] = round(at[0] - off[0], 2), round(at[1] - off[1], 2)
     return c
@@ -208,7 +224,7 @@ def _series(comps, net=None):
     pin 1. Give (part, pin_in, pin_out) for any other part."""
     items = [(c, None, None) if isinstance(c, dict) else tuple(c) for c in comps]
     for i, (c, pin_in, pin_out) in enumerate(items):
-        if pin_in is None:
+        if pin_out is None:
             names = sorted(c["pins"])
             assert len(names) == 2, "%s has %d pins: give (part, pin_in, pin_out)" % (c["ref"], len(names))
             if i:
@@ -221,7 +237,7 @@ def _series(comps, net=None):
                 shared = [n for n in names if c["pins"][n] not in after]
             pin_in = shared[0] if len(shared) == 1 else names[0]
             items[i] = (c, pin_in, [n for n in names if n != pin_in][0])
-    return [(c, str(a), str(b)) for c, a, b in items]
+    return [(c, a if a is None else str(a), str(b)) for c, a, b in items]
 
 
 def chain(at, comps, toward="right", gap=5.08):
@@ -237,27 +253,90 @@ def chain(at, comps, toward="right", gap=5.08):
 
 
 PITCH = 12.7  # between parts hung side by side from one node: room for a reference and a value beside each
+FREE = 7.62   # from the last pin of a supply rail to its power symbol
 
 
 class Block:
     """What block() placed: `title`, `parts` (the component dicts), `rails` and `box`, (x0, y0, x1, y1) around the
     parts' drawings and pins as placed (fields and power symbols come on top of that; frames() measures the built
     sheet). A rail is a node drawn as one straight wire: dict(net, pts: the pin ends on it, open: the direction of
-    its free end, where its one power symbol goes when the net is a supply, or None). build(blocks=[...]) draws them."""
+    its free end, where its one power symbol goes when the net is a supply, or None). build(blocks=[...]) draws them.
+    `frame` is the rectangle arrange() gave it, or None."""
 
     def __init__(self, title, parts, rails=()):
-        self.title, self.parts, self.rails = title, parts, list(rails)
+        self.title, self.parts, self.rails, self.frame, self.measured = title, parts, list(rails), None, None
 
-    @property
-    def box(self):
+    def add(self, *parts):
+        """Take in parts placed by hand (a connector before the path, a flag), so they move and are framed with it."""
+        self.parts += [c for c in parts if c not in self.parts]
+        return self
+
+    def move(self, dx, dy):
+        """Shift the whole block, parts and rails."""
+        for c in self.parts:
+            c["x"], c["y"] = round(c["x"] + dx, 2), round(c["y"] + dy, 2)
+        for r in self.rails:
+            r["pts"] = [(round(x + dx, 2), round(y + dy, 2)) for x, y in r["pts"]]
+        if self.frame:
+            self.frame = tuple(round(v + d, 2) for v, d in zip(self.frame, (dx, dy, dx, dy)))
+        return self
+
+    def _hull(self, pins=True):
         from .checks.sch_lint import apply, transform
         pts = []
         for c in self.parts:
             m = transform(c.get("rot", 0), c.get("mirror"))
-            pins, drawing = geometry(c["lib"], c.get("unit", 1))
-            pts += [apply(m, x, -y) + (c,) for x, y in list(pins.values()) + drawing]
+            ends, drawing = geometry(c["lib"], c.get("unit", 1))
+            pts += [apply(m, x, -y) + (c,) for x, y in (list(ends.values()) if pins or not drawing else []) + drawing]
         pts = [(dx + c["x"], dy + c["y"]) for dx, dy, c in pts]
         return tuple(round(f(q[i] for q in pts), 2) for f, i in ((min, 0), (min, 1), (max, 0), (max, 1)))
+
+    box = property(_hull)
+    body = property(lambda self: self._hull(pins=False))
+
+    @property
+    def extent(self):
+        """(x0, y0, x1, y1) the block will take on the sheet, as near as can be told before it is built: the
+        parts, the reference and value where fields() puts them, a power symbol or a label at every pin (a wired
+        pin has neither) and the free ends of the supply rails. It is an estimate; after measure() it is exact."""
+        from .checks.sch_lint import text_width
+        if self.measured:  # what measure() found on a built sheet, moved to where the block is now
+            x, y = self.box[:2]
+            return tuple(round(v + d, 2) for v, d in zip(self.measured, (x, y, x, y)))
+        boxes = [self.box]
+        for c in self.parts:
+            x0, y0, x1, y1 = Block("", [c]).body
+            off, mid, half = _offsets(c)
+            names = [str(c.get(k) or "") for k in ("ref", "val") if not str(c.get("ref", "")).startswith("#")]
+            wide = max([text_width(t, 1.27) for t in names] or [0])
+            ends = sorted(set(pins(c).values()))
+            if len(ends) == 2 and ends[0][0] == ends[1][0]:
+                boxes.append((x0, y0, x1 + 1.0 + wide, y1))             # stands: its fields to the right
+            elif len(ends) == 2 and ends[0][1] == ends[1][1]:
+                boxes.append(((x0 + x1 - wide) / 2, y0 - 2.5, (x0 + x1 + wide) / 2, y1 + 2.5))   # lies flat: above and below
+            else:
+                boxes.append((x0, y0 - 5.08, max(x1, x0 + sum(text_width(t, 1.27) for t in names) + 2.54), y1))   # over the part
+            for n, net in c["pins"].items():
+                if net in (None, "NC") or n not in off:
+                    continue
+                px, py = c["x"] + off[n][0], c["y"] + off[n][1]
+                dx, dy = (off[n][0] - mid[0]) / max(half[0], 0.01), (off[n][1] - mid[1]) / max(half[1], 0.01)
+                ux, uy = ((1 if dx > 0 else -1), 0) if abs(dx) >= abs(dy) else (0, (1 if dy > 0 else -1))
+                w = text_width(POWER[net][1] or POWER[net][0].split(":")[1] if net in POWER else net, 1.27)
+                if net in POWER:   # the symbol 3.8 mm out, its value beyond that; sideways from the part when turned
+                    reach, across = (6.0, w / 2) if ux == 0 else (4.5 + w, 1.0)
+                else:              # a label: its name out from the pin
+                    reach, across = (w + 1.0, 1.0) if uy == 0 else (2.0, w)
+                qx, qy = px + ux * reach, py + uy * reach
+                boxes.append((min(px, qx) - (across if ux == 0 else 0), min(py, qy) - (across if uy == 0 else 0),
+                              max(px, qx) + (across if ux == 0 else 0), max(py, qy) + (across if uy == 0 else 0)))
+        for r in self.rails:
+            if r["open"] and r["net"] in POWER:
+                far = max(r["pts"], key=lambda q: q[0] * DIRS[r["open"]][0] + q[1] * DIRS[r["open"]][1])
+                fx, fy = step(far, r["open"], FREE)
+                w = text_width(POWER[r["net"]][1] or r["net"], 1.27) / 2
+                boxes.append((fx - w, fy - 6.0, fx + w, fy + 6.0))
+        return tuple(round(f(q[i] for q in boxes), 2) for f, i in ((min, 0), (min, 1), (max, 2), (max, 3)))
 
 
 def _across(c, others, side, gap, toward):
@@ -293,7 +372,10 @@ def _hang(net, entries, start, along, pitch, gap, parts, count=False, room=None)
         side = None
         if isinstance(e, tuple) and len(e) == 2 and isinstance(e[1], str):
             e, side = e
-        series = _series(e if isinstance(e, list) else [e], net)
+        if isinstance(e, dict) and len(e["pins"]) == 1:  # a flag, a test point
+            series = [(e,) + tuple(e["pins"]) * 2]
+        else:
+            series = _series(e if isinstance(e, list) else [e], net)
         c, n, _ = series[0]
         assert c["pins"].get(n) == net, "%s has no pin on %s (pin %s is on %s)" % (c["ref"], net, n, c["pins"].get(n))
         if side is None:  # to ground: down; to a supply: up; where the line itself runs up or down, the first side
@@ -316,7 +398,8 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
     """Place one functional block from the roles of its parts, and return a Block (for frames(), and for its box).
 
       path   the parts the signal or the power passes through, in order, as chain() takes them. The first one's
-             entering pin lands on `at` (after the shunts of its net, if any) and the row runs `toward`.
+             entering pin lands on `at` (after the shunts of its net, if any) and the row runs `toward`. A row
+             can start at a source: (connector, None, pin) puts the connector before `at`, its pin on it.
       shunt  {net: [parts]}: parts hanging from a node of the path, on the net between two path parts or at
              either end. They stand `pitch` apart along the row and the path makes room for them. A part to GND
              hangs down, one to a supply up; (part, "up") says so. A list is parts in series from the node, as a
@@ -333,27 +416,32 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
 
     Only x, y and rot of the parts change; build(wire=...) then draws what lines up. Nothing checks that two rows
     don't run into each other: `pcbkit sch-lint` on the built sheet does."""
+    import math
     assert toward in ("right", "left"), "a block's path runs right or left"
     back = {"right": "left", "left": "right", "up": "down", "down": "up"}
     shunt = {k: list(v) for k, v in (shunt or {}).items() if v}
     series = _series(path)
     parts, rails, entry, rail = [], [], at, None
-    room = {id(item[0]): len(item[1]) for item in across if len(item) < 3 or item[2] == toward}
-    first = series[0][0]["pins"].get(series[0][1])
+    beside = {id(item[0]): len(item[1]) for item in across if len(item) < 3 or item[2] == toward}
+    first = series[0][0]["pins"].get(series[0][1]) if series[0][1] else None
     if first in shunt:
-        n, pts = _hang(first, shunt.pop(first), at, toward, pitch, gap, parts, room=room)
+        n, pts = _hang(first, shunt.pop(first), at, toward, pitch, gap, parts, room=beside)
         entry = step(at, toward, pitch * n)
         rail = dict(net=first, pts=pts, open=back[toward])
         rails.append(rail)
     for c, pin_in, pin_out in series:
-        put(c, pin_in, entry, toward)
+        put(c, pin_in or pin_out, entry, toward if pin_in else back[toward])  # a source lies before its pin
         parts.append(c)
         if rail:  # the node before this part runs on to its entering pin
             rail["pts"].append(pin(c, pin_in))
         end, net, rail = pin(c, pin_out), c["pins"].get(pin_out), None
-        entry = step(end, toward, gap)
+        room = gap
+        if net and net != "NC" and net not in POWER:  # a signal between two parts is named on its wire: room for the name
+            from .checks.sch_lint import text_width
+            room = max(gap, math.ceil((text_width(net, 1.27) + 2.54) / 2.54) * 2.54)
+        entry = step(end, toward, room)
         if net in shunt:
-            n, pts = _hang(net, shunt.pop(net), step(end, toward, pitch), toward, pitch, gap, parts, room=room)
+            n, pts = _hang(net, shunt.pop(net), step(end, toward, pitch), toward, pitch, gap, parts, room=beside)
             entry = step(end, toward, pitch * (n + 1))
             rail = dict(net=net, pts=[end] + pts, open=None)
             rails.append(rail)
@@ -362,8 +450,8 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
     assert not shunt, "no path part enters or leaves on %s" % ", ".join(sorted(shunt))
     for tap in taps:
         c, n, entries = tap[:3]
-        off, mid = _offsets(c)
-        dx, dy = off[str(n)][0] - mid[0], off[str(n)][1] - mid[1]
+        off, mid, half = _offsets(c)  # the side of the part the pin is on: where it reaches the edge
+        dx, dy = (off[str(n)][0] - mid[0]) / max(half[0], 0.01), (off[str(n)][1] - mid[1]) / max(half[1], 0.01)
         along = ("right" if dx > 0 else "left") if abs(dx) >= abs(dy) else ("down" if dy > 0 else "up")
         net = c["pins"][str(n)]
         used, pts = _hang(net, entries, step(pin(c, n), along, tap[3] if len(tap) > 3 else out), along, pitch, gap, parts, count=True)
@@ -371,6 +459,10 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
     for item in across:
         _across(item[0], item[1], item[2] if len(item) > 2 else None, (7.62, pitch), toward)
         parts += item[1]
+        for n in item[0]["pins"]:  # beside a part that lies flat, each pin is straight above or below its partner's
+            col = [pin(item[0], n)] + [q for o in item[1] for m, q in pins(o).items() if o["pins"][m] == item[0]["pins"][n]]
+            if len({q[0] for q in col}) == 1:
+                rails.append(dict(net=item[0]["pins"][n], pts=col, open=None))
     for r in rails:  # a part put across one that hangs from a rail has a pin on the rail's line too: run the rail to it
         flat = len({q[1] for q in r["pts"]}) == 1
         for o in [o for item in across for o in item[1]]:
@@ -379,36 +471,180 @@ def block(title, at, path, shunt=None, taps=(), across=(), toward="right", pitch
     return Block(title, parts, rails)
 
 
-def frames(sheet, blocks, margin=2.54, size=2.0):
-    """Draw a dashed frame around each block on a built sheet, with its title above the top left corner. The frame
-    takes in the block's parts with their fields, and the power symbols and labels on their pins. Run after build
-    (it edits the file, as mark_dnp does). Returns the frames, [(x0, y0, x1, y1)]."""
+def arrange(rows, origin=(25.4, 30.48), gap=7.62, pad=2.54):
+    """Set blocks out on the page: each list in `rows` is a row of blocks, left to right, the rows one under the
+    other from `origin`. Every block is moved as a whole. Its frame is its `extent` plus `pad`; the frames of a row
+    get the same height and stand `gap` apart, and every row starts at the same left edge. Call it after the
+    blocks are made (and after Block.add) and before build. Returns (x0, y0, x1, y1) of the lot.
+
+    A block's extent is an estimate until the sheet has been built once. For frames that line up exactly, build
+    twice: arrange, build, fields, then measure(sheet, blocks), and arrange, build, fields again, then frames."""
     import math
-    import uuid
-    from .checks.sch_lint import Sheet
+    from .checks.sch_lint import text_width
+    up = lambda v: round(math.ceil(v / 1.27 - 1e-6) * 1.27, 2)  # noqa: E731
+    y, right = origin[1], origin[0]
+    for row in rows:
+        ext = [b.extent for b in row]
+        # a block moves by whole grid steps, so it can sit up to one step inside its frame: that step is added
+        size = [(up(max(e[2] - e[0] + 2 * pad + 1.27, text_width(b.title, 2.0) + 1.27)), up(e[3] - e[1] + 2 * pad + 1.27)) for b, e in zip(row, ext)]
+        height, x = max(h for _, h in size), origin[0]
+        for b, e, (w, _) in zip(row, ext, size):
+            b.move(up(x + pad - e[0]), up(y + pad - e[1]))
+            b.frame = (round(x, 2), round(y, 2), round(x + w, 2), round(y + height, 2))
+            x += w + gap
+        right, y = max(right, x - gap), y + height + gap + 5.08  # and room for the next row's titles
+    return (origin[0], origin[1], round(right, 2), round(y - gap - 5.08, 2))
+
+
+def _field_at(m, left, mid_y, w, h, align):
+    """Where a field's anchor goes, with its angle and justify, so the text reads left to right in the box that
+    starts at `left` (align "left"), ends there ("right") or is centred on it ("center"), at height mid_y: the
+    file keeps the angle and justify as they were before the symbol was turned or mirrored."""
+    from .checks.sch_lint import _text_box, apply
+    for ang in (0, 90):
+        for hj in (("center",) if align == "center" else ("left", "right")):
+            x0, y0, x1, y1 = _text_box(0, 0, w, h, hj, "center", ang)
+            (ax, ay), (bx, by) = apply(m, x0, y0), apply(m, x1, y1)
+            d = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+            if d[2] - d[0] < d[3] - d[1]:
+                continue  # reads up the page
+            edge = {"left": d[0], "right": d[2], "center": (d[0] + d[2]) / 2}[align]
+            if abs(edge) < 0.01:
+                return round(left, 2), round(mid_y - (d[1] + d[3]) / 2, 2), ang, hj
+    raise AssertionError("no way to set the field level")
+
+
+def fields(sheet, refs=None, gap=1.0):
+    """Put the reference and value of every two-pin part (or of `refs`) where they read: level, beside a part that
+    stands (reference over value, to its right, or to its left when something is in the way there) and above and
+    below a part that lies flat. A part with more pins keeps its library positions unless it was turned so that
+    they read up the page; then they go over it, or under. Run after build; it edits the file. Returns how many
+    parts it set."""
+    from .checks.sch_lint import Sheet, overlap, seg_in_box, shrink, text_width
     S = sheet_path(sheet)
     sh = Sheet(S)
+    with open(S, encoding="utf-8") as f:
+        text = f.read()
+    whole = lambda s: (min([s["body"][0]] + [p[0] for _, p in s["pins"]]), min([s["body"][1]] + [p[1] for _, p in s["pins"]]),  # noqa: E731
+                       max([s["body"][2]] + [p[0] for _, p in s["pins"]]), max([s["body"][3]] + [p[1] for _, p in s["pins"]]))
+    done = 0
+    for sym in sh.symbols:
+        mine = {t["field"]: t for t in sh.texts if t["owner"] is sym and t.get("field") in ("Reference", "Value")}
+        if sym["power"] or not mine or not any(ch.isdigit() for ch in sym["ref"]) \
+                or (refs is not None and sym["ref"] not in refs) or text.count('(property "Reference" "%s"' % sym["ref"]) != 1:
+            continue
+        ends = sorted({p for _, p in sym["pins"]})
+        two = len(ends) == 2 and (ends[0][0] == ends[1][0] or ends[0][1] == ends[1][1])
+        if not two and all(t["box"][2] - t["box"][0] >= t["box"][3] - t["box"][1] for t in mine.values()):
+            continue  # a part with more pins whose fields read level already: leave them where the library has them
+        x0, y0, x1, y1 = sym["body"]
+        cx, cy, order = (x0 + x1) / 2, (y0 + y1) / 2, [k for k in ("Reference", "Value") if k in mine]
+        wide = {k: text_width(mine[k]["text"], 1.27) for k in order}
+
+        def boxes(option):
+            if option in ("right", "left"):  # the part stands: a column beside it
+                ys = [cy] if len(order) == 1 else [cy - 1.27, cy + 1.27]
+                edge = x1 + gap if option == "right" else x0 - gap
+                return {k: ((edge, yy - 0.7, edge + wide[k], yy + 0.7) if option == "right" else (edge - wide[k], yy - 0.7, edge, yy + 0.7), option == "right" and "left" or "right", edge, yy)
+                        for k, yy in zip(order, ys)}
+            if option in ("over", "under"):  # a part with more pins: two lines from its left edge
+                ys = [y0 - gap - 0.7 - 2.0, y0 - gap - 0.7] if option == "over" else [y1 + gap + 0.7, y1 + gap + 0.7 + 2.0]
+                return {k: ((x0, yy - 0.7, x0 + wide[k], yy + 0.7), "left", x0, yy) for k, yy in zip(order, ys[-len(order):] if option == "over" else ys)}
+            ys = [y0 - gap - 0.7, y1 + gap + 0.7] if option == "around" else [y0 - gap - 0.7 - 2.0, y0 - gap - 0.7]
+            return {k: ((cx - wide[k] / 2, yy - 0.7, cx + wide[k] / 2, yy + 0.7), "center", cx, yy) for k, yy in zip(order, ys[-len(order):] if option == "above" else ys)}
+
+        def free(option):
+            for box, _, _, _ in boxes(option).values():
+                small = shrink(box, 0.1)
+                if any(overlap(small, whole(o)) for o in sh.symbols if o is not sym) or any(seg_in_box(w, small) for w in sh.wires) \
+                        or any(overlap(small, t["box"]) for t in sh.texts if t["owner"] is not sym):
+                    return False
+            return True
+        options = ("over", "under") if not two else ("right", "left") if ends[0][0] == ends[1][0] else ("around", "above")
+        best = next((o for o in options if free(o)), options[0])
+        for k, (box, align, edge, yy) in boxes(best).items():
+            fx, fy, ang, hj = _field_at(sym["m"], edge, yy, wide[k], 1.27, align)
+            i = text.index('(property "%s"' % k, text.index('(property "Reference" "%s"' % sym["ref"]))
+            j = _close(text, i)
+            prop = re.sub(r"\(at [^)]*\)", "(at %s %s %d)" % (fx, fy, ang), text[i:j + 1], count=1)
+            prop = re.sub(r"\s*\(justify[^)]*\)", "", prop)
+            if hj != "center":
+                e = prop.index("(effects")
+                e = _close(prop, e)
+                prop = prop[:e].rstrip() + " (justify %s)" % hj + prop[e:]
+            text = text[:i] + prop + text[j + 1:]
+            mine[k]["box"] = box  # the next part sees it where it is now
+        done += 1
+    with open(S, "w", encoding="utf-8") as f:
+        f.write(text)
+    return done
+
+
+def _content(sh, b):
+    """(x0, y0, x1, y1) of what a block put on a built sheet: its parts with their fields, the wires from their
+    pins and the ones that carry on from those, and the power symbols and labels on them."""
+    from .checks.sch_lint import on_seg
     key = lambda p: (round(p[0], 2), round(p[1], 2))  # noqa: E731
-    add, out = [], []
+    refs = {c["ref"] for c in b.parts}
+    own = [s for s in sh.symbols if s["ref"] in refs]
+    assert own, "none of %s is on %s" % (sorted(refs), sh.path)
+    at = {key(p) for s in own for _, p in s["pins"]}
+    wires, grew = [], True
+    while grew:
+        more = [w for w in sh.wires if w not in wires and any(key(q) in at or any(on_seg(q, v) for v in wires) for q in w)]
+        wires += more
+        grew = bool(more)
+    at |= {key(q) for w in wires for q in w}
+    on = lambda q: key(q) in at or any(on_seg(q, w) for w in wires)  # noqa: E731
+    own += [s for s in sh.symbols if s["power"] and s["ref"] not in refs and any(on(p) for _, p in s["pins"])]
+    boxes = [s["body"] for s in own] + [(q[0], q[1], q[0], q[1]) for q in at]
+    boxes += [t["box"] for t in sh.texts if any(t["owner"] is s for s in own) or (t["owner"] is None and t["kind"] != "text" and on(t["at"]))]
+    return tuple(f(q[i] for q in boxes) for f, i in ((min, 0), (min, 1), (max, 2), (max, 3)))
+
+
+def measure(sheet, blocks):
+    """Note on each block what it takes on the built sheet, so the next arrange() sets the blocks out by their real
+    sizes. Returns the boxes."""
+    from .checks.sch_lint import Sheet
+    sh, out = Sheet(sheet_path(sheet)), []
     for b in blocks:
-        refs = {c["ref"] for c in b.parts}
-        own = [s for s in sh.symbols if s["ref"] in refs]
-        assert own, "frames: none of %s is on %s" % (sorted(refs), sheet)
-        at = {key(p) for s in own for _, p in s["pins"]}
-        at |= {key(step(max(r["pts"], key=lambda q: q[0] * DIRS[r["open"]][0] + q[1] * DIRS[r["open"]][1]), r["open"], 5.08))
-               for r in b.rails if r["open"] and r["net"] in POWER}
-        own += [s for s in sh.symbols if s["power"] and s["ref"] not in refs and any(key(p) in at for _, p in s["pins"])]
-        boxes = [s["body"] for s in own] + [(p[0], p[1], p[0], p[1]) for s in own for _, p in s["pins"]]
-        boxes += [t["box"] for t in sh.texts if any(t["owner"] is s for s in own) or (t["owner"] is None and key(t["at"]) in at)]
-        grid = lambda v, f: round(f(v / 1.27) * 1.27, 2)  # noqa: E731
-        x0, y0 = (grid(min(q[i] for q in boxes) - margin, math.floor) for i in (0, 1))
-        x1, y1 = (grid(max(q[i] for q in boxes) + margin, math.ceil) for i in (2, 3))
+        box, (x, y) = _content(sh, b), b.box[:2]
+        b.measured = tuple(round(v - d, 2) for v, d in zip(box, (x, y, x, y)))
+        out.append(box)
+    return out
+
+
+def frames(sheet, blocks, margin=2.54, size=2.0):
+    """Draw a dashed frame around each block on a built sheet, with its title above the top left corner. The frame
+    is the one arrange() gave the block, widened where needed (it says so) to take in its parts with their fields,
+    the wires from their pins, and the power symbols and labels on those. Run last (it edits the file, as mark_dnp
+    does); it prints the parts that are in no block. Returns the frames, [(x0, y0, x1, y1)]."""
+    import math
+    import uuid
+    from .checks.sch_lint import Sheet, text_width
+    S = sheet_path(sheet)
+    sh = Sheet(S)
+    grid = lambda v, f: round(f(v / 1.27 + (1e-6 if f is math.floor else -1e-6)) * 1.27, 2)  # noqa: E731
+    add, out, framed = [], [], set()
+    for b in blocks:
+        framed |= {c["ref"] for c in b.parts}
+        box = _content(sh, b)
+        x0, y0 = (grid(box[i] - margin, math.floor) for i in (0, 1))
+        x1, y1 = (grid(box[i] + margin, math.ceil) for i in (2, 3))
+        if b.frame:
+            x0, y0, x1, y1 = min(x0, b.frame[0]), min(y0, b.frame[1]), max(x1, b.frame[2]), max(y1, b.frame[3])
+            if (x0, y0, x1, y1) != tuple(b.frame):
+                print("frames: %r needs %s, arrange() gave it %s" % (b.title, (x0, y0, x1, y1), tuple(b.frame)))
+        x1 = max(x1, grid(x0 + text_width(b.title, size) + 1.27, math.ceil))
         out.append((x0, y0, x1, y1))
         add.append('\t(rectangle\n\t\t(start %s %s)\n\t\t(end %s %s)\n\t\t(stroke (width 0) (type dash))\n\t\t(fill (type none))\n'
                    '\t\t(uuid "%s")\n\t)\n' % (x0, y0, x1, y1, uuid.uuid4()))
         if b.title:
             add.append('\t(text "%s"\n\t\t(exclude_from_sim no)\n\t\t(at %s %s 0)\n\t\t(effects (font (size %s %s) (bold yes)) (justify left bottom))\n'
                        '\t\t(uuid "%s")\n\t)\n' % (b.title.replace("\\", "\\\\").replace('"', '\\"'), x0, round(y0 - 1.0, 2), size, size, uuid.uuid4()))
+    loose = sorted({s["ref"] for s in sh.symbols if s["ref"] not in framed and (not s["power"] or s["ref"].startswith("#FLG"))})
+    if loose:
+        print("frames: in no block:", " ".join(loose))
     with open(S, encoding="utf-8") as f:
         text = f.read()
     i = text.rindex(")")
@@ -517,14 +753,14 @@ def plan_wires(nets, boxes, points, segments, reach, max_pins=WIRE_PINS):
             if s[0][1] == s[1][1]:
                 res["label"] = (round(min(s[0][0], s[1][0]) + 1.27, 2), s[0][1], 0)
             else:
-                res["label"] = (s[0][0], round(max(s[0][1], s[1][1]) - 1.27, 2), 90)
+                res["label"] = (s[0][0], round(max(s[0][1], s[1][1]) - 1.27, 2), 0)  # level, beside an upright wire
         taken += mine
     return out
 
 
 def _name_spot(name, segs, boxes):
     """(x, y, rotation) for a net label on one of the wire segments: the longest one where the name is clear of
-    `boxes` (texts and symbol bodies), else the longest."""
+    `boxes` (texts and symbol bodies), else the longest. On an upright wire the name still reads level."""
     from .checks.sch_lint import overlap, text_width
     w, spots = text_width(name, 1.27), []
     for a, b in sorted(segs, key=lambda q: -(abs(q[0][0] - q[1][0]) + abs(q[0][1] - q[1][1]))):
@@ -532,28 +768,30 @@ def _name_spot(name, segs, boxes):
             x = round(min(a[0], b[0]) + 1.27, 2)
             spots.append(((x, a[1], 0), (x, a[1] - 1.9, x + w, a[1] - 0.2)))
         else:
-            y = round(max(a[1], b[1]) - 1.27, 2)
-            spots.append(((a[0], y, 90), (a[0] - 1.9, y - w, a[0] - 0.2, y)))
+            y = round(max(a[1], b[1]) - 1.27, 2)  # level, beside an upright wire
+            spots.append(((a[0], y, 0), (a[0] + 0.2, y - 1.9, a[0] + w, y - 0.2)))
     return next((spot for spot, box in spots if not any(overlap(box, q) for q in boxes)), spots[0][0])
 
 
-def _rails(blocks, L, pins_net):
-    """The rails of blocks, checked against the pin ends as placed. L: {(ref, pin): (x, y, ...)}; pins_net:
-    {(ref, pin): net}. Returns [dict(net, wires: [segment], pins: [(ref, pin)] on it, open: (x, y) or None)]."""
-    from .checks.sch_lint import on_seg
-    out = []
+def _rails(blocks, L, pins_net, comps=()):
+    """The rails of blocks, checked against the pin ends as placed and the drawings of `comps`. L: {(ref, pin):
+    (x, y, ...)}; pins_net: {(ref, pin): net}. Returns [dict(net, wires: [segment], pins: [(ref, pin)] on it, open: (x, y) or None)]."""
+    from .checks.sch_lint import on_seg, seg_in_box, shrink
+    out, bodies = [], [(c["ref"], shrink(Block("", [c]).body, 0.2)) for c in comps]
     for b in blocks:
         for r in b.rails:
             pts = sorted(set(r["pts"]))
             free = None
             if r["open"] and r["net"] in POWER:
                 dx, dy = DIRS[r["open"]]
-                free = step(max(pts, key=lambda q: q[0] * dx + q[1] * dy), r["open"], 5.08)
+                free = step(max(pts, key=lambda q: q[0] * dx + q[1] * dy), r["open"], FREE)
                 pts = sorted(set(pts + [free]))
             segs = list(zip(pts, pts[1:]))
             on = [(k, v[:2]) for k, v in L.items() if any(on_seg(v[:2], seg) for seg in segs)]
             wrong = sorted(k for k, _ in on if pins_net.get(k) != r["net"])
             assert not wrong, "block %r: the %s rail runs over %s" % (b.title, r["net"], ", ".join("%s.%s" % k for k in wrong))
+            through = sorted(ref for ref, box in bodies if any(seg_in_box(seg, box) for seg in segs))
+            assert not through, "block %r: the %s rail runs through %s" % (b.title, r["net"], ", ".join(through))
             out.append(dict(net=r["net"], wires=segs, pins=[k for k, _ in on], at=[q for _, q in on],
                             open=free))
     for i, a in enumerate(out):
@@ -591,28 +829,48 @@ def build(sheet, base, comps, hier, wires=(), junctions=(), extra_power=(), skip
         for p in comp["pins"]:
             L[(comp["reference"], p["number"])] = (round(p["x"], 2), round(p["y"], 2), p["orientation_degrees"])
     pw, nc, local, seen, hier_done, n = [], [], {}, set(), set(), [0]
-    rails = _rails(blocks, L, {(c["ref"], p): net for c in comps for p, net in c["pins"].items()}) if blocks else []
+    rails = _rails(blocks, L, {(c["ref"], p): net for c in comps for p, net in c["pins"].items()}, comps) if blocks else []
     wires, junctions, extra_power, skip, named = list(wires), list(junctions), list(extra_power), set(skip), []
+    by_net = {}
     for r in rails:
-        ends = [q for seg in r["wires"] for q in seg]
+        by_net.setdefault(r["net"], []).append(r)
+        wires += [(a[0], a[1], b_[0], b_[1]) for a, b_ in r["wires"]]
         if r["net"] in POWER:  # one symbol: at the free end, else on the first pin
-            skip |= set(r["pins"] if r["open"] else r["pins"][1:])
+            skip |= set(r["pins"] if r["open"] else sorted(r["pins"])[1:])
             if r["open"]:
                 extra_power.append((r["net"], r["open"][0], r["open"][1], POWER[r["net"]][2]))
         elif r["net"] in hier or r["net"] in glob:  # its label goes on the first pin, as without a rail
-            skip |= set(r["pins"][1:])
+            skip |= set(sorted(r["pins"])[1:])
         else:
             skip |= set(r["pins"])
-            named.append((r["net"], r["wires"]))
-        wires += [(a[0], a[1], b_[0], b_[1]) for a, b_ in r["wires"]]
-        for q in sorted(set(ends + r["at"])):
-            if ends.count(q) + r["at"].count(q) + (q == r["open"]) >= 3 and q not in junctions:
+    for net, rs in by_net.items():
+        ends = [q for r in rs for seg in r["wires"] for q in seg]
+        pin_at = {k: q for r in rs for k, q in zip(r["pins"], r["at"])}
+        for q in sorted(set(ends)):  # a dot where three or more things meet
+            if ends.count(q) + list(pin_at.values()).count(q) + sum(q == r["open"] for r in rs) >= 3 and q not in junctions:
                 junctions.append(q)
+        if net not in POWER and net not in hier and net not in glob:  # one name for the rails that touch
+            groups = []
+            for r in rs:
+                pts = {q for seg in r["wires"] for q in seg}
+                hit = [g for g in groups if g[0] & pts]
+                for g in hit:
+                    groups.remove(g)
+                groups.append((pts.union(*[g[0] for g in hit]), r["wires"] + [w for g in hit for w in g[1]]))
+            named += [(net, segs) for _, segs in groups]
+    # supply pins that are connected so far, (net, x, y, th): the ones on rails, then every symbol placed
+    placed = [(r["net"],) + tuple(L[k]) for r in rails if r["net"] in POWER for k in r["pins"] if k in skip]
 
     def pwr(net, x, y, th):
         if (x, y) in seen:
             return
         seen.add((x, y))
+        for net2, x2, y2, th2 in placed:  # two pins of one supply side by side: a short wire to the symbol that is there
+            if net2 == net and th2 == th and 0 < abs(x - x2) + abs(y - y2) < 2.6 and (x == x2 or y == y2):
+                wires.append((x2, y2, x, y))
+                placed.append((net, x, y, th))
+                return
+        placed.append((net, x, y, th))
         lib, val, nat = POWER[net]
         n[0] += 1
         e = {"lib_id": lib, "reference": f"#PWR{base + n[0]:04d}", "x": x, "y": y, "rotation": (th - nat) % 360}

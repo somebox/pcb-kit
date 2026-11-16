@@ -343,7 +343,9 @@ from pcbkit import schematic as sch          # schematic sheets from Python data
                                              # sch.build(..., wire=25.4) draws small local nets as wires, not labels;
                                              # sch.pin/put/step/chain place a part by one of its pins;
                                              # sch.block places a whole block from its parts' roles (path, shunt,
-                                             # taps, across), build(blocks=) draws its rails, sch.frames frames it
+                                             # taps, across), build(blocks=) draws its rails, sch.arrange sets the
+                                             # blocks out in rows, sch.fields tidies references and values,
+                                             # sch.frames frames each block
 from pcbkit.konnect import Konnect           # the MCP client itself
 from pcbkit.parts import resistor, capacitor # stock R/C with LCSC numbers; parts.catalog() reads library/PARTS.md
 from pcbkit.silk import Placer               # silkscreen label placement around an anchor box

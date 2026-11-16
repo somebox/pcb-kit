@@ -227,7 +227,7 @@ class Sheet:
         corners = [sheet_pt(px, py) for px, py in pts] or [p for _, p in pins] or [(x, y)]
         body = norm(min(c[0] for c in corners), min(c[1] for c in corners),
                     max(c[0] for c in corners), max(c[1] for c in corners))
-        sym = dict(ref=ref, lib=lib_id, at=(x, y), body=body, pins=pins,
+        sym = dict(ref=ref, lib=lib_id, at=(x, y), m=m, body=body, pins=pins,
                    power=ref.startswith("#") or lib_id.startswith("power:"))
         self.symbols.append(sym)
         for p in sexp.find(s, "property"):

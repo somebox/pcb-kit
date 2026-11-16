@@ -82,6 +82,28 @@ class Blocks(Lib):
         self.assertEqual((ends(a), ends(c)), (((50.8, 50.8), (43.18, 50.8)), ((30.48, 50.8), (30.48, 58.42))))
         self.assertEqual(b.rails[0]["open"], "left")
 
+    def test_a_row_can_start_at_a_source(self):
+        u, r = REG(), R("R1", "SW", "OUT")
+        b = sch.block("", AT, [(u, None, "3"), r])
+        self.assertEqual((sch.pin(u, 3), sch.pin(u, 1)), ((50.8, 50.8), (35.56, 50.8)))   # the part lies before its pin
+        self.assertEqual(ends(r), ((58.42, 50.8), (66.04, 50.8)))           # after room for the name SW
+        self.assertEqual(b.rails, [])
+
+    def test_a_signal_between_two_path_parts_gets_room_for_its_name(self):
+        a, c = R("R1", "IN", "A_LONG_NET_NAME"), R("R2", "A_LONG_NET_NAME", "OUT")
+        sch.block("", AT, [a, c])
+        self.assertEqual(round(sch.pin(c, 1)[0] - sch.pin(a, 2)[0], 2), 22.86)   # 15 capitals and a margin, on the 2.54 grid
+        a, c = R("R1", "IN", "+5V"), R("R2", "+5V", "OUT")
+        sch.block("", AT, [a, c])
+        self.assertEqual(round(sch.pin(c, 1)[0] - sch.pin(a, 2)[0], 2), 5.08)   # a supply has a symbol, not a name
+
+    def test_a_one_pin_part_hangs_too(self):
+        flag = dict(ref="#FLG01", lib="t:R", x=0, y=0, rot=0, pins={"1": "+5V"})
+        b = sch.block("", AT, [R("R1", "IN", "+5V")], shunt={"+5V": [R("C1", "+5V", "GND"), flag]})
+        self.assertEqual(sch.pin(flag, 1), (71.12, 50.8))                   # over the capacitor: a supply goes up
+        self.assertEqual(sch.pin(flag, 2), (71.12, 43.18))
+        self.assertEqual(b.rails[0]["pts"], [(58.42, 50.8), (71.12, 50.8)])
+
     def test_a_net_that_is_not_on_the_path_is_an_error(self):
         with self.assertRaisesRegex(AssertionError, "no path part enters or leaves on FB"):
             sch.block("", AT, [R("R1", "IN", "OUT")], shunt={"FB": [R("R2", "FB", "GND")]})
@@ -105,6 +127,8 @@ class Blocks(Lib):
         b = sch.block("", AT, [r], across=[(r, [c])])
         self.assertEqual(ends(c), ((58.42, 43.18), (50.8, 43.18)))          # above it, each pin over the pin on its net
         self.assertEqual([p["ref"] for p in b.parts], ["R1", "C2"])
+        self.assertEqual(b.rails, [dict(net="IN", pts=[(50.8, 50.8), (50.8, 43.18)], open=None),      # joined pin to pin
+                                   dict(net="OUT", pts=[(58.42, 50.8), (58.42, 43.18)], open=None)])
 
     def test_across_a_part_that_hangs_takes_the_next_place(self):
         top, bottom, ff, cout = R("R8", "OUT", "FB"), R("R9", "FB", "GND"), R("C25", "FB", "OUT"), R("C9", "OUT", "GND")
@@ -126,8 +150,8 @@ class Rails(Lib):
         u, cin, d = REG(vin="+5V"), R("C1", "+5V", "GND"), R("D1", "SW", "GND")
         b = sch.block("buck", AT, [(u, "1", "3")], shunt={"+5V": [cin], "SW": [d]})
         supply, sw = sch._rails([b], *self.placed(b.parts))
-        self.assertEqual(supply["wires"], [((45.72, 50.8), (50.8, 50.8)), ((50.8, 50.8), (63.5, 50.8))])
-        self.assertEqual((supply["open"], sorted(supply["pins"])), ((45.72, 50.8), [("C1", "1"), ("U1", "1")]))
+        self.assertEqual(supply["wires"], [((43.18, 50.8), (50.8, 50.8)), ((50.8, 50.8), (63.5, 50.8))])
+        self.assertEqual((supply["open"], sorted(supply["pins"])), ((43.18, 50.8), [("C1", "1"), ("U1", "1")]))
         self.assertEqual((sw["wires"], sw["open"]), ([((78.74, 50.8), (91.44, 50.8))], None))   # a signal stops at its last pin
 
     def test_a_rail_over_another_nets_pin_is_refused(self):
@@ -136,11 +160,79 @@ class Rails(Lib):
         with self.assertRaisesRegex(AssertionError, "block 'buck': the OUT rail runs over R7.1"):
             sch._rails([b], *self.placed(b.parts + [stray]))
 
+    def test_a_rail_through_a_part_is_refused(self):
+        b = sch.block("buck", AT, [R("R1", "IN", "OUT")], shunt={"OUT": [R("C1", "OUT", "GND"), R("C2", "OUT", "GND")]})
+        stray = dict(R("R7", "A", "B"), x=77.47, y=50.8)                    # upright, its middle on the rail
+        L, nets = self.placed(b.parts + [stray])
+        with self.assertRaisesRegex(AssertionError, "block 'buck': the OUT rail runs through R7"):
+            sch._rails([b], L, nets, b.parts + [stray])
+
     def test_the_name_goes_where_it_is_clear(self):
         segs = [((50.8, 50.8), (63.5, 50.8)), ((63.5, 50.8), (71.12, 50.8))]
         self.assertEqual(sch._name_spot("FB", segs, []), (52.07, 50.8, 0))                  # the longest stretch
         self.assertEqual(sch._name_spot("FB", segs, [(51, 48, 56, 50.5)]), (64.77, 50.8, 0))   # a value in the way there
-        self.assertEqual(sch._name_spot("FB", [((50.8, 50.8), (50.8, 63.5))], []), (50.8, 62.23, 90))
+        self.assertEqual(sch._name_spot("FB", [((50.8, 50.8), (50.8, 63.5))], []), (50.8, 62.23, 0))   # level, beside the wire
+
+
+class Arrange(Lib):
+    def blocks(self):
+        one = sch.block("one", AT, [R("R1", "IN", "OUT")], shunt={"OUT": [R("C1", "OUT", "GND")]})
+        two = sch.block("two", AT, [R("R2", "IN", "OUT")], shunt={"OUT": [[R("R3", "OUT", "FB"), R("R4", "FB", "GND")]]})
+        return one, two, sch.block("three", AT, [R("R5", "A", "B")])
+
+    def test_rows_of_frames_with_one_height_and_one_gap(self):
+        one, two, three = self.blocks()
+        box = sch.arrange([[one, two], [three]], origin=(25.4, 25.4), gap=7.62)
+        self.assertEqual((one.frame[0], one.frame[1], two.frame[1], three.frame[0]), (25.4, 25.4, 25.4, 25.4))
+        self.assertEqual(one.frame[3], two.frame[3])                         # the taller block sets the row
+        self.assertEqual(round(two.frame[0] - one.frame[2], 2), 7.62)
+        self.assertEqual(round(three.frame[1] - one.frame[3], 2), 12.7)      # the gap and room for a title
+        self.assertEqual(box, (25.4, 25.4, two.frame[2], three.frame[3]))
+        for b in (one, two, three):                                          # each block inside its frame, on the grid
+            e, f = b.extent, b.frame
+            self.assertTrue(f[0] + 2.54 <= e[0] and f[1] + 2.54 <= e[1] and e[2] <= f[2] - 2.54 and e[3] <= f[3] - 2.54, (e, f))
+            self.assertTrue(all(abs(v / 1.27 - round(v / 1.27)) < 1e-6 for c in b.parts for v in (c["x"], c["y"])))
+        self.assertEqual(one.rails[0]["pts"][0], sch.pin(one.parts[0], 2))   # the rails moved with the parts
+
+    def test_the_extent_holds_fields_and_symbols_until_it_is_measured(self):
+        one, _, _ = self.blocks()
+        b, e = one.box, one.extent
+        self.assertTrue(e[0] <= b[0] and e[1] < b[1] and e[2] > b[2] and e[3] > b[3], (b, e))
+        one.measured = (-1.0, -2.0, 30.0, 12.0)                              # from the block's top left corner
+        self.assertEqual(one.extent, (b[0] - 1.0, b[1] - 2.0, b[0] + 30.0, b[1] + 12.0))
+        one.move(2.54, 0)
+        self.assertEqual(one.extent[0], round(b[0] + 1.54, 2))
+
+
+class Fields(unittest.TestCase):
+    def tidy(self, *items):
+        text = '(kicad_sch (version 20260306) (generator "eeschema") (paper "A4") %s %s\n)\n' % (SHEET_LIB, " ".join(items))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.kicad_sch")
+            with open(path, "w") as f:
+                f.write(text)
+            n = sch.fields(path)
+            page = sch_lint.Sheet(path)
+        return n, {(t["owner"]["ref"], t["field"]): tuple(round(v, 2) for v in t["box"]) for t in page.texts if t["kind"] == "field"}
+
+    def test_beside_a_part_that_stands(self):
+        for rot in (0, 180):                                                 # either way up: the text starts at the body
+            n, box = self.tidy(placed("R1", 50, 50, rot=rot, ref_at=(40, 40), val_at=(60, 60)))
+            ref, val = box[("R1", "Reference")], box[("R1", "Value")]
+            self.assertEqual((n, ref[0], val[0]), (1, 52.02, 52.02), rot)    # 1 mm right of the body, one under the other
+            self.assertEqual((round((ref[1] + ref[3]) / 2, 2), round((val[1] + val[3]) / 2, 2)), (48.73, 51.27), rot)
+            self.assertTrue(ref[2] - ref[0] > ref[3] - ref[1], rot)          # level
+
+    def test_to_the_left_when_the_right_is_taken(self):
+        _, box = self.tidy(placed("R1", 50, 50), placed("R2", 54, 50))       # R2's body where R1's fields would go
+        self.assertEqual(box[("R1", "Reference")][2], 47.98)                 # ends 1 mm left of the body
+
+    def test_above_and_below_a_part_that_lies_flat(self):
+        _, box = self.tidy(placed("R1", 50, 50, rot=90))
+        ref, val = box[("R1", "Reference")], box[("R1", "Value")]
+        self.assertEqual((round((ref[0] + ref[2]) / 2, 2), round((val[0] + val[2]) / 2, 2)), (50.0, 50.0))   # centred on it
+        self.assertTrue(ref[3] < 48.98 < 51.02 < val[1])                     # clear of the body, one each side
+        self.assertTrue(ref[2] - ref[0] > ref[3] - ref[1])
 
 
 class Frames(unittest.TestCase):
@@ -153,7 +245,9 @@ class Frames(unittest.TestCase):
             path = os.path.join(d, "t.kicad_sch")
             with open(path, "w") as f:
                 f.write(text)
-            box, = sch.frames(path, [sch.Block('The "divider"', [dict(ref="R1"), dict(ref="R2")])])
+            b = sch.Block('The "divider"', [dict(ref="R1"), dict(ref="R2")])
+            self.assertEqual(tuple(round(v, 2) for v in sch._content(sch_lint.Sheet(path), b)), (48.98, 46.19, 65.49, 66.64))   # to R2's value and the GND symbol's
+            box, = sch.frames(path, [b])
             page = sch_lint.Sheet(path)
             with open(path) as f:
                 out = f.read()
@@ -163,6 +257,16 @@ class Frames(unittest.TestCase):
         self.assertIn("(stroke (width 0) (type dash))", out)
         self.assertEqual([t["at"] for t in page.texts if t["text"] == 'The "divider"'], [(45.72, 42.18)])
         self.assertEqual(len(page.symbols), 4)
+
+    def test_the_frame_arrange_gave_is_kept(self):
+        text = '(kicad_sch (version 20260306) (generator "eeschema") (paper "A4") %s %s\n)\n' % (SHEET_LIB, placed("R1", 50, 50))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.kicad_sch")
+            with open(path, "w") as f:
+                f.write(text)
+            b = sch.Block("R", [dict(ref="R1")])
+            b.frame = (25.4, 25.4, 76.2, 76.2)
+            self.assertEqual(sch.frames(path, [b]), [(25.4, 25.4, 76.2, 76.2)])
 
 
 if __name__ == "__main__":

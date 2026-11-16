@@ -21,6 +21,28 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   esp32-s3-ha-node's power sheet, four blocks (input, two bucks, the feedback network) gave the same 74 nets and a
   clean ERC with 48 power symbols where there were 60; a block on siebenuhr's LED power sheet left its nets the
   same too. Rows that run into each other are not prevented: `pcbkit sch-lint` shows them.
+- **A page set out on purpose: `pcbkit.schematic.arrange`, `measure` and `fields`.** `arrange([[a, b], [c]])` puts
+  blocks in rows from the top left and moves each as a whole: the frames of a row share a top and a height and
+  stand one gap apart. A block's size is an estimate until the sheet has been built; `measure(sheet, blocks)` notes
+  the real one, so building twice (arrange, build, fields, measure; then again) gives frames that are exactly the
+  ones arranged. `fields(sheet)` puts the reference and value of every two-pin part level: beside a part that
+  stands (to the left when the right is taken), above and below one that lies flat; a part with more pins is
+  touched only when it was turned so its fields read up the page. `frames` now takes in everything that hangs
+  on a block (the wires from its pins and the labels and power symbols on them) and prints the parts that are in
+  no block. A block's row can start at a connector (`(j2, None, "2")`), a flag or test point can hang from a
+  rail, `Block.add` takes in a part placed by hand, a signal between two path parts gets room for its name, and a
+  part put across one that lies flat is wired to it. On the same copy of esp32-s3-ha-node's power sheet, with
+  every part in one of six blocks: the same 74 nets, a clean ERC, 38 power symbols for 60, 15 of 16 small local
+  nets wired where 3 of 13 were, and no text on text where `sch-lint` found six (it still finds a zener's value
+  next to a gate resistor, and the feedback pin joined to its divider by a label).
+
+### Changed
+- **`pcbkit.schematic.build` joins supply pins that sit side by side.** Two pins of one part on the same supply,
+  2.54 mm apart and facing the same way (the GND and pad pins of a regulator), got a power symbol each, the values
+  printed over each other. They now share one symbol through a short wire. The netlist is the same.
+- **`pcbkit.schematic.put` turns a part by the edge its pin is on.** It took the rotation with most of the part
+  behind the pin, which turned a tall connector on its side when the pin was near a corner.
+- **A net name on an upright wire reads level**, beside the wire, where `build(wire=...)` wrote it up the page.
 - **Placing schematic parts by pin: `pcbkit.schematic.pin`, `put`, `step` and `chain`.** A sheet script gave every
   part an absolute x, y, so a part ended up wherever there was room, away from the pin it works with. `pin(c, n)` is
   where a component's pin ends on the sheet, read from the symbol library (KiCad's, or the project's through the
@@ -49,8 +71,6 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   it needs neither KiCad nor konnect; text sizes are estimated, and it exits 0 unless `--strict`. On the generated
   sheets of four projects most small local nets are joined by labels (siebenuhr's mcu sheet: 0 wired, 40 by label).
   The reading rules come from [modular-schematic-layout](https://github.com/Ausanx/modular-schematic-layout).
-
-### Changed
 - **More JLC rotations from the preview (2026-11-15).** KiCad's `TSOT-23-6` gets -90 like its SOT-23-6, which it is
   laid out as: it matched the never-checked `^TSOT-23` (+180), a quarter turn off for an LMR51625. Two part rules
   for parts whose JLC footprint lies a quarter turn from the part their package rule was checked on: the TPS2116DRLR

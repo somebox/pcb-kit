@@ -8,6 +8,19 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ## [Unreleased]
 
 ### Added
+- **Schematic blocks placed by role: `pcbkit.schematic.block`, `build(blocks=...)` and `frames`.** A sheet script
+  was a flat list of parts with coordinates, so nothing said which resistor is whose feedback divider, and the
+  script's author did the arithmetic. `block(title, at, path=[...], shunt={net: [...]}, taps=[...], across=[...])`
+  takes the parts by what they do: `path` is what the power or signal passes through, in a row; `shunt` is what
+  hangs from a node of that row (to GND downwards, to a supply upwards, a list in series as a divider is), and the
+  row makes room for it; `taps` hang parts from a pin that is not on the path; `across` puts a part in parallel
+  with another. It sets x, y and rot only. `build(..., blocks=[...])` draws each node row as a rail: one wire
+  through the pins, named once, or with one power symbol at its free end where every pin had its own; it stops with
+  an error if a rail would run over another net's pin. `frames(sheet, blocks)` draws a dashed frame round each
+  block on the built sheet, fields and power symbols included, with the title above it. On a copy of
+  esp32-s3-ha-node's power sheet, four blocks (input, two bucks, the feedback network) gave the same 74 nets and a
+  clean ERC with 48 power symbols where there were 60; a block on siebenuhr's LED power sheet left its nets the
+  same too. Rows that run into each other are not prevented: `pcbkit sch-lint` shows them.
 - **Placing schematic parts by pin: `pcbkit.schematic.pin`, `put`, `step` and `chain`.** A sheet script gave every
   part an absolute x, y, so a part ended up wherever there was room, away from the pin it works with. `pin(c, n)` is
   where a component's pin ends on the sheet, read from the symbol library (KiCad's, or the project's through the

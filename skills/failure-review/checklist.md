@@ -49,7 +49,9 @@ Examples name the board where it mattered.
   voltage, an electrolytic at no more than 80 %. The capacitance left at DC bias goes into every calculation.
 - Electrolytic and polymer capacitors: ripple current, and life at the temperature of the part beside them.
 - Diodes and LEDs: average and peak current, reverse voltage. A TVS: the energy of the event against its pulse
-  rating, since one that can't absorb it fails short (the sign controller's, with a 9–19 V adapter in its 5 V jack).
+  rating. One that can't absorb it fails short (the sign controller's, with a 9–19 V adapter in its 5 V jack);
+  then what interrupts the current, a fuse or the source's own limit, and what the board is left with if nothing
+  does.
 - PTC fuses: hold and trip current at the enclosure's temperature, the time to trip at the fault current, and
   what limits first (the sign controller's PTC is guaranteed to trip within 5 s only at 8 A; the adapter's own
   protection acts before it, and the whole sign goes dark).

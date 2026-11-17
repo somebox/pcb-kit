@@ -24,6 +24,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
 
 ### Changed
+- **Three corrections to the skills, from a review of all nine.** bom-cost: `bomi list --check` can report a cached
+  stock figure (124 of a TPS259470A on 2026-11-16, when JLC and LCSC had none), so a part with thin stock is read
+  on JLC's own part page before an order is called ready. visual-review said JLC can't plug a via in or within
+  0.35 mm of a pad; that holds for solder-mask ink, and such a via can be filled with epoxy or copper and capped
+  instead (JLC's "Via Covering" page, 2026-11-16). pcb-kit: how to generate a schematic sheet was one table cell
+  of 2,900 characters and is now `skills/pcb-kit/schematic-sheets.md`, in headed sections with every instruction
+  and example kept; the table says what it covers and links to it.
 - **The README leads with pictures.** It opens with eleven boards from the projects, rendered alike, and its tour
   of what the kit does is a few lines and a picture each. New pictures: a schematic sheet drawn in blocks
   (siebenuhr's LED power), three overview and review pages built in the projects (Orbitchron, DodecaRGB, the

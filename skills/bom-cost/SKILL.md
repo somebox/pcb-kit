@@ -59,7 +59,10 @@ At 5 boards, Orbitchron's double-sided driver came to $182.25 of assembly. $122.
 
 ## Rules
 
-- Stock and price numbers carry a date. Re-run `bomi list --check` before an order and update BOM.md.
+- Stock and price numbers carry a date. Re-run `bomi list --check` before an order and update BOM.md. Its stock
+  figure may be a cached one: on 2026-11-16 it showed 124 of a TPS259470A while JLC and LCSC both had none. For a
+  part with thin stock, read the count on JLC's own part page (`jlcpcb.com/partdetail/<LCSC code>`) before the order
+  is called ready.
 - A substitute that needs a circuit change (a divider, inverted logic) goes into DESIGN.md as a decision, not just BOM.md.
 - Basic parts first for passives (`pcbkit.parts` has the stock R/C table); Extended only where the function needs it.
 - Hand-soldering pays only when it takes a whole side off the assembly order: setup, stencil and that side's loading.

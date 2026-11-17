@@ -1,4 +1,5 @@
-"""A project's pcbkit.toml: which boards it has, how they are released, where its production record lives.
+"""A project's pcbkit.toml: which boards it has, how they are released, where its production record and its
+overview page live.
 
 Every key is optional; the defaults are the layout in docs/CONVENTIONS.md (boards/<name>/, releases/<board>/,
 docs/previews/<board>/, production/). The file sits at the project's root; pcbkit finds it from the current folder
@@ -43,6 +44,14 @@ DEFAULTS = {
         "dir": "production",           # orders/<name>/order.toml, stock.toml
         "part": [],                    # rules: what a board needs besides its hand-soldered parts (pcb, field,
                                        # match, part; buy, group, replace: production.py)
+    },
+    "overview": {
+        "dir": "docs/overview",        # r1.toml, r2.toml, ... (one a design round) and img/, the rounds' pictures
+        "page": "docs/overview.html",  # the project on one page, made from them by pcbkit overview
+        "frames": 16,                  # pictures a side in a board's turntable
+        "size": "800x600",             # of each of them
+        "layer_width": 1400,           # pixels across a layer picture
+        "base": "",                    # a URL the page's sources link to (the repo's file view) instead of the files
     },
 }
 DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity"], "assembly": True,

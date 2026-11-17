@@ -47,3 +47,11 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # buy = "Thonk"                        # where it comes from, for the shopping list in each ORDER.md
 # group = ""                           # e.g. "cable": matched apart, so a connector can give a part and a cable
 # replace = false                      # true: the footprint's own hand part is dropped (counted elsewhere)
+
+# [overview]                           # docs/overview.html, the project on one page (pcbkit overview)
+# dir = "docs/overview"                # its rounds, r1.toml, r2.toml, ..., and img/, their pictures
+# page = "docs/overview.html"
+# frames = 16                          # pictures a side in a board's turntable
+# size = "800x600"                     # of each
+# layer_width = 1400                   # pixels across a layer picture
+# base = ""                            # a URL its sources link to, e.g. the repo's .../blob/main

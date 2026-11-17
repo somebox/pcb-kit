@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ overview</title>
+<style>
+/* A drawing sheet: the title block on top with the rounds as its revision table, then the round shown, ruled into
+   blocks. Colour means status and nothing else: the six marks are the only hues on the page. No network: the fonts
+   are the system's (DIN on Apple, Bahnschrift on Windows), there is no script but the one at the end. */
+:root {
+  --paper: #e9eceb; --sheet: #fbfcfb; --ink: #141917; --ink2: #45504a; --ink3: #68736d; --rule: #cbd2ce; --stage: #dadfdc;
+  --wash: #f0f3f1;
+  --done: #1b7a4c; --work: #1c61b8; --todo: #68736d; --attention: #9a5a00; --blocked: #b3261e; --decision: #6a3dc2;
+  --display: "DIN Alternate", "Bahnschrift", "DIN Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: "Avenir Next", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #0e1211; --sheet: #161b19; --ink: #e8edea; --ink2: #b6bfba; --ink3: #8d9892; --rule: #2b3430; --stage: #1e2623;
+  --wash: #1b211f;
+  --done: #5fc69a; --work: #80b4f6; --todo: #8d9892; --attention: #e6ab4c; --blocked: #f18c82; --decision: #b9a0f8;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --paper: #0e1211; --sheet: #161b19; --ink: #e8edea; --ink2: #b6bfba; --ink3: #8d9892; --rule: #2b3430; --stage: #1e2623;
+  --wash: #1b211f;
+  --done: #5fc69a; --work: #80b4f6; --todo: #8d9892; --attention: #e6ab4c; --blocked: #f18c82; --decision: #b9a0f8;
+  color-scheme: dark }
+* { box-sizing: border-box }
+html { -webkit-text-size-adjust: 100% }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 400 16px/1.5 var(--body);
+  padding: 0 max(16px, env(safe-area-inset-right, 0px)) 56px max(16px, env(safe-area-inset-left, 0px)) }
+.wrap { max-width: 1120px; margin: 0 auto }
+a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 2px }
+a:focus-visible, button:focus-visible, .stage:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px }
+p { margin: 0 0 8px }
+code { font: 0.92em var(--mono); background: var(--wash); padding: 0 3px }
+h1, h2, h3, h4, h5 { font-family: var(--display); margin: 0; line-height: 1.15; text-wrap: balance }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+time { font-variant-numeric: tabular-nums }
+
+/* the six marks: a sign, then the record's own word */
+.mk { display: inline-flex; align-items: center; gap: 0.4em; font-weight: 600; line-height: 1.25 }
+.mk .g { width: 1em; height: 1em; flex: none; color: var(--c); fill: currentColor }
+.mk-done { --c: var(--done) } .mk-work { --c: var(--work) } .mk-todo { --c: var(--todo) }
+.mk-attention { --c: var(--attention) } .mk-blocked { --c: var(--blocked) } .mk-decision { --c: var(--decision) }
+.mk.small { font-size: 0.94em }
+
+/* title block */
+header.tb { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin-top: 20px; background: var(--sheet); border: 1.5px solid var(--ink) }
+.tb-title { padding: 14px 18px 16px }
+h1 { font-size: clamp(28px, 4.6vw, 44px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.02 }
+.about { margin: 6px 0 0; color: var(--ink2); max-width: 62ch }
+nav.rev { display: flex; align-items: stretch; border-left: 1.5px solid var(--ink); overflow-x: auto }
+.rev-h { writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; padding: 8px 5px; font: 600 13px var(--body); color: var(--ink3) }
+nav.rev a { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 104px; max-width: 150px; padding: 8px 14px;
+  text-decoration: none; border-left: 1px solid var(--rule) }
+nav.rev a b { font: 700 26px/1 var(--display) }
+nav.rev a span { font-size: 13.5px; line-height: 1.25; font-weight: 600 }
+nav.rev a time { font-size: 12.5px; color: var(--ink3) }
+nav.rev a:hover { background: var(--wash) }
+nav.rev a[aria-current="true"] { background: var(--ink); color: var(--sheet) }
+nav.rev a[aria-current="true"] time { color: inherit; opacity: 0.8 }
+ul.legend { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 7px 18px; list-style: none;
+  border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--ink2) }
+ul.legend .mk { font-weight: 500 }
+
+/* a round */
+section.round { background: var(--sheet); border: 1.5px solid var(--ink); border-top: 0 }
+html:not(.js) section.round + section.round { margin-top: 28px; border-top: 1.5px solid var(--ink) }
+.earlier { margin: 0; padding: 9px 18px; background: var(--ink); color: var(--sheet); font-weight: 500 }
+.status { padding: 20px 18px 18px }
+.status h2 { font-size: clamp(24px, 3.6vw, 34px); font-weight: 700 }
+.status h2 .mk { font-weight: 700; align-items: center; gap: 0.35em }
+.status h2 .g { width: 0.82em; height: 0.82em }
+.status h2 .mk > span { display: inline-block }
+.status h2 .mk > span::first-letter { text-transform: uppercase }
+.st-round { margin: 5px 0 0; color: var(--ink3); font-size: 14px }
+.st-body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px 36px; margin-top: 14px }
+.st-sum > p { max-width: 64ch }
+.st-open { margin-top: 12px }
+.st-open a { text-decoration: none; border-bottom: 1.5px solid var(--decision); padding-bottom: 1px }
+.st-next h3, .updates h3, .st-sum h3 { font: 600 14px var(--body); color: var(--ink3); margin-bottom: 4px }
+ul.changes { margin: 0 0 8px; padding-left: 1.2em; max-width: 68ch }
+ul.changes li { margin-bottom: 3px }
+.st-sum h3 { margin-top: 12px }
+.st-next ol { margin: 0; padding-left: 1.3em }
+.st-next li { margin-bottom: 3px }
+.updates { padding: 11px 18px 12px; background: var(--wash); border-top: 1px solid var(--rule) }
+.updates ul { margin: 0; padding: 0; list-style: none }
+.updates li { margin-top: 3px; padding-left: 10px; border-left: 3px solid var(--ink) }
+.updates li time, .note time { font-weight: 700; margin-right: 5px }
+.updates li a { font-weight: 600; margin-right: 4px }
+.note { margin: 8px 0 0; padding-left: 10px; border-left: 3px solid var(--ink); font-size: 15px }
+.src { display: block; margin-top: 6px; font-size: 13px; color: var(--ink3) }
+.sub { color: var(--ink2); font-size: 14.5px; margin: 3px 0 0 }
+.ref { font: 700 0.86em var(--body); border: 1px solid var(--ink3); color: var(--ink2); padding: 0 5px; margin-right: 4px; white-space: nowrap; vertical-align: 1px }
+
+/* viewer and boards */
+.look { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); border-top: 1.5px solid var(--ink) }
+.look.one { grid-template-columns: minmax(0, 1fr) }
+.viewer { padding: 14px 18px 12px; border-right: 1px solid var(--rule) }
+.look.one .viewer { border-right: 0; max-width: 760px }
+.vtabs, .vmodes, .seg { display: flex; flex-wrap: wrap; row-gap: 4px }
+.vtabs { margin-bottom: 8px }
+.vmodes { margin-bottom: 8px }
+.viewer button { font: 600 14px var(--body); min-height: 36px; padding: 5px 12px; margin-right: -1px; border: 1px solid var(--ink);
+  background: transparent; color: var(--ink); cursor: pointer; border-radius: 0 }
+.viewer button[aria-pressed="true"] { background: var(--ink); color: var(--sheet) }
+.vmodes button, .vctl button { border-color: var(--ink3); font-weight: 500; min-height: 34px }
+.vmodes button[aria-pressed="true"], .vctl button[aria-pressed="true"] { border-color: var(--ink) }
+.stagebox { display: grid; justify-items: center; background: var(--stage) }
+.stage { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; touch-action: pan-y; cursor: grab;
+  user-select: none; -webkit-user-select: none }
+.stage:active { cursor: grabbing }
+.stage.layers { background: #0e1012 }   /* KiCad's canvas: the layers are in its colours */
+.stage.zoomed { touch-action: none }
+.pan { width: 100%; height: 100%; transform-origin: 0 0 }
+.flip { position: relative; width: 100%; height: 100% }
+.flip.mirror { transform: scaleX(-1) }
+.flip img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none }
+.vctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px }
+.vctl input[type="range"] { flex: 1 1 160px; min-width: 120px; accent-color: var(--ink); height: 28px }
+.vctl .zoom button { min-width: 38px }
+.vkey { display: flex; flex-wrap: wrap; gap: 0 16px; margin-top: 6px; font-size: 14px }
+.vkey label { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; cursor: pointer }
+.vkey input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink) }
+.vkey i { width: 12px; height: 12px; border: 1px solid var(--ink3) }
+.vkey small { color: var(--ink3); font-size: 13px }
+.vcap { margin: 6px 0 0; font-size: 13px; color: var(--ink3); min-height: 1.5em }
+.boards { padding: 14px 18px }
+.block h3, .boards h3 { font-size: 21px; font-weight: 700; margin-bottom: 10px }
+table { width: 100%; border-collapse: collapse }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px 8px 0; border-top: 1px solid var(--rule) }
+thead th { border-top: 0; font: 600 13px var(--body); color: var(--ink3); padding-top: 0 }
+tbody th { font: 700 16px var(--display) }
+td.ver { font-variant-numeric: tabular-nums; white-space: nowrap }
+td .src { margin-top: 4px }
+tbody th, td.ver { white-space: nowrap; padding-right: 16px }
+
+/* blocks */
+.block { padding: 18px 18px 20px; border-top: 1.5px solid var(--ink) }
+.decision { padding: 13px 16px 14px; border: 1px solid var(--rule); border-left: 5px solid var(--decision); margin-top: 12px }
+.decision.closed { border-left-color: var(--done) }
+.decision > header, .topic > header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap }
+.decision h4 { font-size: 19px; font-weight: 700; max-width: 40ch }
+.decision > p { max-width: 70ch; margin-top: 6px }
+.blocks { color: var(--ink2) }
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 10px }
+.option { padding: 10px 12px 9px; border: 1px solid var(--rule) }
+.option.rec { border: 1.5px solid var(--ink) }
+.option.cho { border: 1.5px solid var(--done) }
+.option h5 { font: 600 15.5px/1.3 var(--body) }
+.flag { display: table; font: 700 12.5px/1.5 var(--body); background: var(--ink); color: var(--sheet); padding: 0 7px; margin-bottom: 6px }
+.flag.chosen { background: var(--done) }
+.option dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 7px 0 0; font-size: 14.5px }
+.option dt { color: var(--ink3) } .option dd { margin: 0 }
+.why { margin-top: 10px }
+.topics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 36px }
+.topic { padding: 11px 0 12px; border-top: 1px solid var(--rule) }
+.topic h4 { font-size: 18px; font-weight: 700 }
+.tbody { margin-top: 4px }
+.tbody > p:not(.note) { color: var(--ink2); margin-bottom: 4px }
+.tag { font: 600 12px/1.4 var(--body); border: 1px solid var(--ink2); color: var(--ink2); padding: 0 6px; margin-left: 4px; vertical-align: 2px }
+.tag.new { background: var(--ink2); color: var(--sheet) }
+.tpic { display: block; max-width: 100%; max-height: 200px; margin-top: 8px; cursor: zoom-in; background: #fff }
+.tpic.big { max-height: none; cursor: zoom-out }
+.gone { margin: 10px 0 0; color: var(--ink3); font-size: 14px }
+ul.decided { margin: 0; padding: 0; list-style: none }
+ul.decided li { padding: 7px 0; border-top: 1px solid var(--rule) }
+ul.decided .src { display: inline; margin-left: 6px }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) }
+.fact { padding: 0 16px 2px; border-left: 1px solid var(--rule) }
+.fact:first-child { padding-left: 0; border-left: 0 }
+.fact h4 { font: 600 14px var(--body); color: var(--ink3) }
+.val { font: 700 21px/1.2 var(--display); margin: 3px 0 6px }
+.asof { margin: 6px 0 0; font-size: 13px; color: var(--ink3) }
+.asof .src { display: inline; margin: 0 }
+footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
+
+@media (max-width: 860px) {
+  header.tb { grid-template-columns: minmax(0, 1fr) }
+  nav.rev { border-left: 0; border-top: 1.5px solid var(--ink) }
+  .rev-h { display: none }
+  nav.rev a:first-of-type { border-left: 0 }
+  .st-body, .look, .topics { grid-template-columns: minmax(0, 1fr) }
+  .viewer { border-right: 0; border-bottom: 1px solid var(--rule) }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px }
+  .fact:nth-child(odd) { padding-left: 0; border-left: 0 }
+}
+@media (max-width: 520px) {
+  .tb-title, .status, .updates, .viewer, .boards, .block, ul.legend, .earlier { padding-left: 14px; padding-right: 14px }
+  .facts { grid-template-columns: minmax(0, 1fr) }
+  .fact { padding-left: 0; border-left: 0 }
+  .viewer button { min-height: 40px }
+  thead { display: none }
+  tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 8px 0; border-top: 1px solid var(--rule) }
+  tbody th, tbody td { border: 0; padding: 0 }
+  tbody td:nth-child(3) { grid-column: 1 / -1; margin-top: 3px }
+}
+@media print {
+  body { background: #fff; padding: 0 }
+  nav.rev a:not([aria-current]), .vtabs, .vmodes, .vctl, .vcap, .earlier a { display: none }
+  .decision, .topic, .fact { break-inside: avoid }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+<symbol id="g-done" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.3"/><path d="M4.5 8.3l2.4 2.4 4.6-5.2" style="fill:none;stroke:var(--sheet);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round"/></symbol>
+<symbol id="g-work" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" style="fill:none;stroke:currentColor;stroke-width:2"/><path d="M8 1.7a6.3 6.3 0 0 1 0 12.6z"/></symbol>
+<symbol id="g-todo" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.3" style="fill:none;stroke:currentColor;stroke-width:2"/></symbol>
+<symbol id="g-attention" viewBox="0 0 16 16"><path d="M8 1.6 15 14.2H1z" style="stroke:currentColor;stroke-width:1.4;stroke-linejoin:round"/><path d="M8 6.2v3.9" style="fill:none;stroke:var(--sheet);stroke-width:1.8;stroke-linecap:round"/><circle cx="8" cy="12.3" r="1" style="fill:var(--sheet)"/></symbol>
+<symbol id="g-blocked" viewBox="0 0 16 16"><rect x="1.2" y="1.2" width="13.6" height="13.6" rx="2.2"/><path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" style="fill:none;stroke:var(--sheet);stroke-width:1.9;stroke-linecap:round"/></symbol>
+<symbol id="g-decision" viewBox="0 0 16 16"><path d="M8 .9 15.1 8 8 15.1.9 8z" style="stroke:currentColor;stroke-width:.9;stroke-linejoin:round"/><path d="M6.3 6.5a1.75 1.75 0 1 1 2.7 1.5c-.6.4-1 .8-1 1.5" style="fill:none;stroke:var(--sheet);stroke-width:1.5;stroke-linecap:round"/><circle cx="8" cy="11.7" r=".95" style="fill:var(--sheet)"/></symbol>
+</defs></svg>
+<div class="wrap">
+<header class="tb">
+  <div class="tb-title"><h1>__TITLE__</h1><p class="about">__ABOUT__</p></div>
+  <nav class="rev" aria-label="Rounds"><span class="rev-h">Rounds</span>__NAV__</nav>
+  <ul class="legend" aria-label="What the marks mean">__LEGEND__</ul>
+</header>
+<main>__ROUNDS__</main>
+<footer>Made by <code>pcbkit overview</code> from the project's round files. A new round is a new file; a small change is a dated note under its item.</footer>
+</div>
+<script>
+(() => {
+  const D = document, newest = "__NEWEST__";
+  D.documentElement.classList.add("js");
+  const rounds = [...D.querySelectorAll("section.round")], links = [...D.querySelectorAll("nav.rev a")];
+
+  // the viewer: tabs (a board, or the project's own pictures), then a turntable, the layers as a stack, or pictures
+  function viewer(v) {
+    const tabs = JSON.parse(v.querySelector("script").textContent), $ = c => v.querySelector(c);
+    const boxTabs = $(".vtabs"), boxModes = $(".vmodes"), box = $(".stagebox"), stage = $(".stage"), pan = $(".pan");
+    const flip = $(".flip"), ctl = $(".vctl"), key = $(".vkey"), cap = $(".vcap");
+    const s = { tab: 0, mode: 0, side: 0, frame: null, pic: 0, on: null, z: 1, tx: 0, ty: 0, aspect: 4 / 3 };
+    const seen = {}, ptrs = new Map();
+    let slider = null, pinch = null, turn = null;
+    const mode = () => tabs[s.tab].modes[s.mode];
+    const frames = () => mode().sides[s.side].frames;
+    const preload = () => frames().forEach(u => { if (!seen[u]) { seen[u] = new Image(); seen[u].src = u; } });
+
+    function seg(el, names, cur, pick, label) {
+      el.textContent = "";
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", label);
+      el.hidden = names.length < 2;
+      names.forEach((text, i) => {
+        const b = D.createElement("button");
+        b.type = "button";
+        b.textContent = text;
+        b.setAttribute("aria-pressed", String(i === cur));
+        b.addEventListener("click", () => pick(i));
+        el.appendChild(b);
+      });
+    }
+    function place() {
+      pan.style.transform = `translate(${s.tx}px,${s.ty}px) scale(${s.z})`;
+      stage.classList.toggle("zoomed", s.z > 1);
+    }
+    function clamp() {
+      const w = stage.clientWidth, h = stage.clientHeight;
+      s.tx = Math.min(0, Math.max(w - w * s.z, s.tx));
+      s.ty = Math.min(0, Math.max(h - h * s.z, s.ty));
+    }
+    function size() {
+      if (!box.clientWidth) return;                       // its round is not shown
+      const w = Math.min(box.clientWidth, Math.max(220, Math.min(window.innerHeight * 0.7, 700)) * s.aspect);
+      stage.style.width = w + "px";
+      stage.style.height = (w / s.aspect) + "px";
+      stage.style.aspectRatio = "auto";
+      clamp();
+      place();
+    }
+    function zoomAt(f, cx, cy) {
+      const nz = Math.min(8, Math.max(1, s.z * f));
+      if (nz === s.z) return;
+      s.tx = cx - (cx - s.tx) * (nz / s.z);
+      s.ty = cy - (cy - s.ty) * (nz / s.z);
+      s.z = nz;
+      clamp();
+      place();
+    }
+    function fit() { s.z = 1; s.tx = 0; s.ty = 0; place(); }
+    function show(list, alt, mirror) {                      // the pictures on the stage, the lowest first
+      flip.className = "flip" + (mirror ? " mirror" : "");
+      flip.textContent = "";
+      list.forEach(src => {
+        const i = new Image();
+        i.alt = "";
+        i.draggable = false;
+        i.decoding = "async";
+        i.src = src;
+        flip.appendChild(i);
+      });
+      const first = flip.querySelector("img");
+      if (!first) return;
+      first.alt = alt;
+      const fitTo = () => { if (first.naturalWidth) { s.aspect = first.naturalWidth / first.naturalHeight; size(); } };
+      if (first.complete) fitTo(); else first.addEventListener("load", fitTo, { once: true });
+    }
+    function paint() {
+      const t = tabs[s.tab], m = mode();
+      if (m.kind === "turn") {
+        const f = frames();
+        s.frame = ((s.frame % f.length) + f.length) % f.length;
+        if (flip.children.length !== 1 || flip.classList.contains("mirror")) show([f[s.frame]], "", false);
+        const img = flip.firstElementChild;
+        if (img.getAttribute("src") !== f[s.frame]) img.src = f[s.frame];
+        img.alt = `${t.name}, ${m.sides[s.side].name.toLowerCase()}, turned ${Math.round(360 * s.frame / f.length)} degrees`;
+        if (slider) slider.value = s.frame;
+      } else if (m.kind === "layers") {
+        // what is nearest the eye is drawn last: the front layers from the front; from the back the stack is turned over
+        const back = s.side === 1, order = (back ? m.layers.slice() : m.layers.slice().reverse()).filter(l => s.on[l.id]);
+        const stack = order.filter(l => l.id !== "Edge.Cuts").concat(order.filter(l => l.id === "Edge.Cuts"));
+        show(stack.map(l => l.src), `${t.name}: ${stack.map(l => l.name).join(", ") || "no layer"}, seen from the ${back ? "back" : "front"}`, back);
+      } else {
+        show([m.pics[s.pic].src], `${t.name}: ${m.pics[s.pic].label}`, false);
+      }
+    }
+    function defaults(m, back) {
+      const top = back ? ["B.Cu", "B.Silkscreen", "Edge.Cuts"] : ["F.Cu", "F.Silkscreen", "Edge.Cuts"], on = {};
+      m.layers.forEach(l => { on[l.id] = top.includes(l.id); });
+      if (!m.layers.some(l => on[l.id] && l.id !== "Edge.Cuts")) m.layers.forEach(l => { on[l.id] = true; });
+      return on;
+    }
+    function zoomButtons() {
+      const el = D.createElement("div");
+      el.className = "seg zoom";
+      [["+", "Zoom in", () => zoomAt(1.6, stage.clientWidth / 2, stage.clientHeight / 2)],
+       ["−", "Zoom out", () => zoomAt(1 / 1.6, stage.clientWidth / 2, stage.clientHeight / 2)],
+       ["Fit", "Show all of it", fit]].forEach(([text, label, act]) => {
+        const b = D.createElement("button");
+        b.type = "button";
+        b.textContent = text;
+        b.setAttribute("aria-label", label);
+        b.addEventListener("click", act);
+        el.appendChild(b);
+      });
+      return el;
+    }
+    function build() {
+      const t = tabs[s.tab], m = mode(), row = D.createElement("div"), note = t.note ? t.note + ". " : "";
+      seg(boxTabs, tabs.map(x => x.name), s.tab, i => { Object.assign(s, { tab: i, mode: 0, side: 0, pic: 0, frame: null, on: null }); fit(); build(); }, "What to look at");
+      seg(boxModes, t.modes.map(x => x.name), s.mode, i => { Object.assign(s, { mode: i, side: 0, pic: 0, on: null }); fit(); build(); }, "Kind of picture");
+      ctl.textContent = "";
+      key.textContent = "";
+      key.hidden = m.kind !== "layers";
+      slider = null;
+      row.className = "seg";
+      stage.className = "stage " + m.kind;
+      if (m.kind === "turn") {
+        if (s.frame === null) s.frame = Math.floor(frames().length / 8);
+        seg(row, m.sides.map(x => x.name), s.side, i => { s.side = i; build(); }, "Side");
+        ctl.appendChild(row);
+        slider = D.createElement("input");
+        Object.assign(slider, { type: "range", min: 0, max: frames().length - 1, step: 1 });
+        slider.setAttribute("aria-label", "Turn the board");
+        slider.addEventListener("input", () => { s.frame = +slider.value; preload(); paint(); });
+        ctl.appendChild(slider);
+        cap.textContent = note + "Drag the board to turn it.";
+      } else if (m.kind === "layers") {
+        if (!s.on) s.on = defaults(m, s.side === 1);
+        seg(row, ["Front", "Back"], s.side, i => { s.side = i; s.on = defaults(m, i === 1); build(); }, "Side");
+        ctl.appendChild(row);
+        ctl.appendChild(zoomButtons());
+        m.layers.forEach(l => {
+          const lab = D.createElement("label"), cb = D.createElement("input"), sw = D.createElement("i"), sm = D.createElement("small");
+          cb.type = "checkbox";
+          cb.checked = !!s.on[l.id];
+          cb.addEventListener("change", () => { s.on[l.id] = cb.checked; paint(); });
+          sw.style.background = l.colour;
+          sm.textContent = l.name;
+          lab.append(cb, sw, l.id + " ", sm);
+          key.appendChild(lab);
+        });
+        cap.textContent = note + (s.side ? "Seen from the back, mirrored. " : "Seen from the front. ") + "Drag to move; pinch, double-click or the buttons to zoom.";
+      } else {
+        seg(row, m.pics.map(p => p.label), s.pic, i => { s.pic = i; fit(); build(); }, "Picture");
+        ctl.appendChild(row);
+        ctl.appendChild(zoomButtons());
+        cap.textContent = note + "Drag to move; pinch, double-click or the buttons to zoom.";
+      }
+      paint();
+    }
+    stage.addEventListener("pointerdown", e => {
+      stage.setPointerCapture(e.pointerId);
+      if (mode().kind === "turn") { turn = { x: e.clientX, frame: s.frame }; preload(); return; }
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = Math.hypot(a.x - b.x, a.y - b.y); }
+    });
+    stage.addEventListener("pointermove", e => {
+      if (turn) {
+        s.frame = turn.frame + Math.round((e.clientX - turn.x) / (stage.clientWidth / frames().length * 1.2));
+        paint();
+        return;
+      }
+      const p = ptrs.get(e.pointerId);
+      if (!p) return;
+      if (ptrs.size === 2 && pinch) {
+        ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = stage.getBoundingClientRect();
+        zoomAt(d / pinch, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+        pinch = d;
+        return;
+      }
+      s.tx += e.clientX - p.x;
+      s.ty += e.clientY - p.y;
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      clamp();
+      place();
+    });
+    const up = e => { turn = null; ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
+    stage.addEventListener("pointerup", up);
+    stage.addEventListener("pointercancel", up);
+    stage.addEventListener("wheel", e => {
+      if (mode().kind === "turn" || !(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    stage.addEventListener("dblclick", e => {
+      if (mode().kind === "turn") return;
+      const r = stage.getBoundingClientRect();
+      zoomAt(2, e.clientX - r.left, e.clientY - r.top);
+    });
+    stage.addEventListener("keydown", e => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0, m = mode();
+      if (m.kind === "turn" && d) { e.preventDefault(); s.frame += d; preload(); paint(); }
+      else if (m.kind === "pics" && d) { e.preventDefault(); s.pic = (s.pic + d + m.pics.length) % m.pics.length; fit(); build(); }
+      else if (m.kind !== "turn" && (e.key === "+" || e.key === "=")) zoomAt(1.6, stage.clientWidth / 2, stage.clientHeight / 2);
+      else if (m.kind !== "turn" && e.key === "-") zoomAt(1 / 1.6, stage.clientWidth / 2, stage.clientHeight / 2);
+      else if (m.kind !== "turn" && e.key === "0") fit();
+    });
+    window.addEventListener("resize", size);
+    build();
+  }
+
+  // one round at a time; #r2 shows round 2, #r2-power goes to its item. A round's viewer starts when it is first shown
+  function route() {
+    const m = /^#(r\d+)(-.+)?$/.exec(location.hash), key = m && D.getElementById(m[1]) ? m[1] : newest;
+    rounds.forEach(r => { r.hidden = r.id !== key; });
+    links.forEach(a => { if (a.dataset.round === key) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+    D.querySelectorAll(`#${key} .viewer`).forEach(v => { if (!v.dataset.on) { v.dataset.on = "1"; viewer(v); } });
+    window.dispatchEvent(new Event("resize"));
+    const el = m && m[2] && D.getElementById(m[1] + m[2]);
+    if (el) el.scrollIntoView(); else if (m) window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", route);
+  route();
+  D.querySelectorAll(".tpic").forEach(img => img.addEventListener("click", () => img.classList.toggle("big")));
+})();
+</script>
+</body>
+</html>

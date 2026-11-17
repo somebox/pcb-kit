@@ -7,8 +7,11 @@ in for kicad-cli, so the tests cover what the page says and what is kept, not ho
 """
 import copy
 import datetime
+import contextlib
+import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -290,9 +293,31 @@ class Orders(unittest.TestCase):
         later = dict(date=D(2026, 11, 20), status="shipped")
         got = overview.order_summary(self.order("shipped", "shipped", events=[whole, later]))
         self.assertEqual((got["value"], got["date"]), ("2026-11-16-first: shipped, 202.02 USD", D(2026, 11, 20)))
-        a, b = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD"), dict(date=D(2026, 11, 16), status="draft", price=76.47)
+        a = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD")
+        b = dict(date=D(2026, 11, 16), status="draft", price=76.47, currency="USD")
         o = dict(name="o", events=[a, b], board=[dict(pcb="x", status="draft", events=[a]), dict(pcb="y", status="draft", events=[b])])
         self.assertEqual(overview.order_summary(o)["value"], "o: draft, 202.02 USD")
+
+    def test_a_price_corrected_without_a_currency_keeps_the_one_it_had(self):
+        quoted = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD")
+        corrected = dict(date=D(2026, 11, 18), status="submitted", price=131.20)
+        o = dict(name="o", events=[quoted, corrected],
+                 board=[dict(pcb="x", status="submitted", currency="USD", events=[quoted, corrected])])    # as load_orders resolves it
+        self.assertEqual(overview.order_summary(o)["value"], "o: submitted, 131.20 USD")
+        del o["board"][0]["currency"]                                  # and from the events alone
+        self.assertEqual(overview.order_summary(o)["value"], "o: submitted, 131.20 USD")
+
+    def test_amounts_in_different_currencies_are_not_added(self):
+        a = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD")
+        b = dict(date=D(2026, 11, 16), status="draft", price=68.00, currency="EUR")
+        c = dict(date=D(2026, 11, 16), status="draft", price=10.00, currency="USD")
+        boards = [dict(pcb=n, status="draft", events=[e]) for n, e in (("x", a), ("y", b), ("z", c))]
+        self.assertEqual(overview.order_summary(dict(name="o", events=[a, b, c], board=boards))["value"],
+                         "o: draft, 135.55 USD + 68.00 EUR")
+        bare = dict(date=D(2026, 11, 16), status="draft", price=76.47)                # no currency anywhere: not taken for USD
+        boards = [dict(pcb="x", status="draft", events=[a]), dict(pcb="y", status="draft", events=[bare])]
+        self.assertEqual(overview.order_summary(dict(name="o", events=[a, bare], board=boards))["value"],
+                         "o: draft, 125.55 USD + 76.47")
 
 
 class OrdersFromTheRecords(Case):
@@ -786,6 +811,50 @@ class Note(Case):
 
 
 class Check(Case):
+    def main(self, *args):
+        """The command as typed, in this project; (exit code, what it said on stderr)."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            try:
+                overview.main(list(args) + ["--project", self.root])
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, err.getvalue()
+
+    def test_check_is_refused_with_anything_that_writes(self):
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        path = os.path.join(self.P["dir"], "r1.toml")
+        with open(path, encoding="utf-8") as fh:
+            before = fh.read()
+        index = open(self.P["index"], encoding="utf-8").read()
+        for args in (("note", "Paid.", "--check"), ("new", "--check"), ("--check", "--render"), ("--check", "--single")):
+            with self.subTest(args=args):
+                code, said = self.main(*args)
+                self.assertEqual(code, 2)
+                self.assertIn("--check only reads", said)
+        with open(path, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), before)                        # no note was added
+        self.assertEqual(sorted(f for f in os.listdir(self.P["dir"]) if f.endswith(".toml")), ["r1.toml"])   # and no round
+        self.assertEqual(open(self.P["index"], encoding="utf-8").read(), index)
+        self.assertEqual(self.main("--check")[0], 0)
+
+    def test_check_does_not_go_looking_for_kicad(self):
+        # pcbkit.kicad finds KiCad as it is imported, and on macOS may make its background copy of kicad-cli: writing
+        # files and running commands. A released board's fingerprint and the page's template both used to import it.
+        os.makedirs(os.path.join(self.root, "releases", "demo"))
+        tomlw.dump(dict(key="demo", release=[dict(version="1.0.0", label="v1.0", date=D(2026, 11, 16), source="x", note="n")]),
+                   os.path.join(self.root, "releases", "demo", "releases.toml"))
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        code = ("import sys; sys.path.insert(0, %r)\n"
+                "from pcbkit import overview, config\n"
+                "fab = config.Project(%r).fab_settings(dict(config.DEFAULT_PROFILE))\n"
+                "rc = overview.build(config.Project(%r), check=True, say=lambda line: None)\n"
+                "sys.exit(3 if 'pcbkit.kicad' in sys.modules else 4 if 'rotations' not in fab else rc)\n" % (ROOT, self.root, self.root))
+        self.assertEqual(subprocess.run([sys.executable, "-c", code]).returncode, 0)
+
     def test_the_page_must_be_what_the_rounds_say(self):
         self.put(1, base())
         self.assertEqual(self.build(check=True), 1)

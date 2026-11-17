@@ -67,6 +67,13 @@ def _merge(base, over):
     return base
 
 
+def data_path(*parts):
+    """A file of the package's data (pcbkit/data/...). The same place as kicad.data_path, without importing
+    pcbkit.kicad: that module finds KiCad as it loads, and on macOS may make its background copy of kicad-cli, which
+    a command that only reads (pcbkit overview --check, pcbkit production --check) has no business doing."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", *parts)
+
+
 def find_root(start=None):
     d = os.path.abspath(start or os.getcwd())
     while True:
@@ -150,7 +157,6 @@ class Project:
         if profile["assembly"]:
             import csv
             import hashlib
-            from .kicad import data_path
             with open(data_path("jlc", "corrections.csv"), newline="", encoding="utf-8") as fh:
                 table = "".join(",".join(r[:4]) + "\n" for r in csv.reader(fh))
             settings["rotations"] = hashlib.sha1(table.encode()).hexdigest()

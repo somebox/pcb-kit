@@ -4,7 +4,7 @@
     pcbkit overview new             start the next round: the last one carried forward, boards from the records
     pcbkit overview note "TEXT" [--on ID] [--mark MARK] [--state "WORDS"] [--chose OPTION] [--round N]
                                     add a dated note to a round (the newest), then build
-    pcbkit overview --check         problems (exit 1) and watch lines; writes nothing
+    pcbkit overview --check         problems (exit 1) and watch lines; writes nothing, so it goes with none of the others
     pcbkit overview --single [OUT]  also a copy with its pictures inside, to send or publish
 
 A round file is the briefing, not the record: the status, the boards, a few lines per topic, the decisions waiting for
@@ -38,7 +38,7 @@ import tempfile
 import urllib.parse
 
 from . import tomlw
-from .config import Project
+from .config import Project, data_path
 
 MARKS = (("done", "Done"), ("work", "In work"), ("todo", "Not started"), ("attention", "Needs attention"),
          ("blocked", "Blocked"), ("decision", "Your decision"))
@@ -389,15 +389,21 @@ def order_summary(order):
         mark = "done" if "received" in states else ORDER_MARK["cancelled"]
     else:
         mark = "work"
-    priced = {}                                   # each board's latest price; an event about several counts once
+    # each board's latest price, in the currency it inherits as load_orders has it (the latest event that names
+    # one, so a price corrected without a currency keeps it); an event about several boards counts once; amounts
+    # in different currencies are not added
+    priced, totals = {}, {}
     for b in boards:
-        e = next((e for e in reversed(b.get("events", [])) if isinstance(e.get("price"), (int, float))), None)
-        if e is not None:
-            priced[id(e)] = e
-    total = sum(e["price"] for e in priced.values())
-    cur = next((e["currency"] for e in priced.values() if e.get("currency")), "")
+        events = b.get("events", [])
+        e = next((e for e in reversed(events) if isinstance(e.get("price"), (int, float))), None)
+        if e is not None and id(e) not in priced:
+            cur = e.get("currency") or b.get("currency") or next((x["currency"] for x in reversed(events) if x.get("currency")), "")
+            priced[id(e)] = (e["price"], cur)
+    for amount, cur in priced.values():
+        totals[cur] = totals.get(cur, 0) + amount
+    money = " + ".join(f"{amount:.2f} {cur}".rstrip() for cur, amount in totals.items() if amount)
     dates = [e["date"] for e in order.get("events", []) if isinstance(e.get("date"), datetime.date)]
-    return dict(value=f"{order['name']}: {said}" + (f", {total:.2f} {cur}".rstrip() if total else ""), mark=mark,
+    return dict(value=f"{order['name']}: {said}" + (f", {money}" if money else ""), mark=mark,
                 date=max(dates) if dates else None)
 
 
@@ -1075,7 +1081,6 @@ def round_html(pg, rnd, prev, rounds):
 def page_html(rounds, P, index, single=False, base=""):
     """(the page, {round key: picture bytes}). Nothing in it depends on when it is made: the same files give the
     same page, so --check can compare."""
-    from .kicad import data_path
     pg = Page(P, index, single, base)
     newest = rounds[-1]
     nav = "".join('<a href="#%s" data-round="%s"%s><b>%d</b><span>%s</span><time>%s</time></a>' % (
@@ -1172,6 +1177,8 @@ def main(argv=None):
     ap.add_argument("--dir", help="where the round files are (default: docs/overview)")
     ap.add_argument("--out", help="the page to write (default: docs/overview.html)")
     a = ap.parse_args(argv)
+    if a.check and (a.action != "build" or a.render or a.single is not None):
+        ap.error("--check only reads: it goes without new, note, --render and --single")
     project = Project(a.project)
     P = paths(project, a.dir, a.out)
     if a.action == "new":

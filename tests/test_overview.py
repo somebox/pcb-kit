@@ -230,6 +230,23 @@ class Standing(Case):
         self.assertIn('<article class="decision" id="r1-antenna">', page)
         self.assertIn('<span class="sr">Blocked: </span>waits for the range test', decision)
 
+    def test_a_choice_stands_whatever_a_later_note_marks_it(self):
+        r = self.rnd(dict(on="antenna", chose="b", text="Decided: u.FL (D2)."),
+                     dict(on="antenna", date=D(2026, 11, 20), mark="blocked", state="u.FL out of stock", text="None at LCSC."))
+        self.assertEqual(overview.effective(r, "antenna"), ("blocked", "b", "u.FL out of stock"))
+        self.assertTrue(overview.decided(r, "antenna"))
+        self.assertEqual(overview.open_decisions(r), [])                # taken: not a question any more
+        self.put(1, r)
+        self.assertEqual(self.build(), 0, self.said)
+        page = self.page()
+        self.assertNotIn("decision for you", page)
+        decision = page[page.index('id="r1-antenna"') - 40:page.index("</article>", page.index('id="r1-antenna"'))]
+        self.assertIn('class="decision closed"', decision)
+        self.assertIn('<span class="flag chosen">Chosen</span>A u.FL one', decision)
+        self.assertIn('<span class="sr">Blocked: </span>u.FL out of stock', decision)   # what stands in the way of doing it
+        rnd = tomlw.load(overview.new_round(self.project, self.P, today=D(2026, 12, 1)))
+        self.assertNotIn("decision", rnd)                              # and the next round does not ask it again
+
     def test_a_decision_in_a_round_file_can_say_what_it_waits_for_but_not_that_it_is_done(self):
         r = base()
         r["decision"][0].update(mark="blocked", state="waits for the range test")
@@ -762,6 +779,25 @@ class Pictures(Case):
         self.assertEqual(sets["r1"]["sets"], sets["r2"]["sets"])
         self.assertNotEqual(sets["r3"]["sets"]["demo"], sets["r2"]["sets"]["demo"])
 
+    def test_models_are_found_however_the_board_names_them(self):
+        folder = os.path.join(self.root, "boards", "demo")
+        pcb = os.path.join(folder, "demo.kicad_pcb")
+        names = {"${KIPRJMOD}/a.step": "a.step", "$(KIPRJMOD)/b.step": "b.step", "models/c.wrl": os.path.join("models", "c.wrl"),
+                 r"${KIPRJMOD}/odd \"name\".step": 'odd "name".step', os.path.join(self.root, "lib", "d.step"): os.path.join(self.root, "lib", "d.step")}
+        board = '(kicad_pcb (version 20260206) (footprint "J" %s (model "${KICAD10_3DMODEL_DIR}/R.step") (model "kicad-embed://e.step")))\n'
+        write(pcb, board % " ".join('(model "%s")' % n for n in names))
+        for rel in names.values():
+            write(os.path.join(folder, rel), "ISO-10303-21; first\n")
+        from pcbkit.release import freeze
+        self.assertEqual(sorted(os.path.basename(p) for _, p in freeze.model_files(pcb)), ["a.step", "b.step", "c.wrl", "d.step", 'odd "name".step'])
+        first = overview.models_print(pcb)
+        for rel in names.values():                                     # each of them changes what a render shows
+            with self.subTest(model=rel):
+                write(os.path.join(folder, rel), "ISO-10303-21; changed\n")
+                self.assertNotEqual(overview.models_print(pcb), first)
+                write(os.path.join(folder, rel), "ISO-10303-21; first\n")
+                self.assertEqual(overview.models_print(pcb), first)
+
     def test_a_board_without_models_of_the_project_is_named_as_before(self):
         pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
         self.assertEqual(overview.models_print(pcb), "")
@@ -824,6 +860,19 @@ class Pictures(Case):
         self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-3")
         self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if n.startswith("demo-")), [shared, shared + "-3"])
         self.assertEqual(len(self.calls), 3)
+
+    def test_a_new_round_takes_the_set_that_was_drawn_again_not_the_first(self):
+        self.put(1, base())
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        shared = self.index()["r1"]["sets"]["demo"]
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # round 2's pictures put right: a KiCad model, say
+        self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-2")
+        self.put(3, base())                                            # the board file is still the same
+        self.assertEqual(self.build(), 0, self.said)
+        sets = self.index()
+        self.assertEqual([sets[r]["sets"]["demo"] for r in ("r1", "r2", "r3")], [shared, shared + "-2", shared + "-2"])
+        self.assertEqual(len(self.calls), 2)                           # nothing was drawn for round 3
 
     def test_a_build_that_fails_removes_nothing_the_page_on_disk_shows(self):
         other = os.path.join(self.root, "boards", "other", "other.kicad_pcb")

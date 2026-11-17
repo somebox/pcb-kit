@@ -140,11 +140,18 @@ def effective(rnd, id_):
     return mark, chose, state
 
 
+def decided(rnd, id_):
+    """Whether a decision was taken: a note chose one of its options, or marked it done. A choice stands whatever a
+    later note marks it (blocked: the part chosen is out of stock): that is about carrying it out."""
+    mark, chose, _ = effective(rnd, id_)
+    return bool(chose) or mark == "done"
+
+
 def open_decisions(rnd):
-    """The decisions of a round that are not finished: neither chosen nor marked done. One that a note marked
-    blocked or in work (waiting for a measurement) is as open as before, and is carried into the next round."""
+    """The decisions of a round that are not taken yet. One that a note marked blocked or in work (waiting for a
+    measurement) without choosing is as open as before, and is carried into the next round."""
     its = items(rnd)
-    return [d for d in rnd.get("decision", []) if d.get("id") in its and effective(rnd, d["id"])[0] != "done"]
+    return [d for d in rnd.get("decision", []) if d.get("id") in its and not decided(rnd, d["id"])]
 
 
 def squeeze(v):
@@ -690,20 +697,18 @@ def sha(path, extra=""):
 
 
 def models_print(pcb):
-    """A hash of the 3-D model files a board uses that are the project's own (${KIPRJMOD}/...), "" when it uses
-    none. A render shows them and the board file only names them, so a model put right changes the picture and
-    not the board. KiCad's own library models are not followed: they change with KiCad, and --render is for that."""
-    with open(pcb, encoding="utf-8", errors="replace") as fh:
-        names = sorted({n for n in re.findall(r'\(model "((?:[^"\\]|\\.)*)"', fh.read()) if "${KIPRJMOD}" in n})
+    """A hash of the 3-D model files a board uses that are not KiCad's own, "" when it uses none: the project's
+    (${KIPRJMOD}/... or $(KIPRJMOD)/..., a bare relative path) and any other file it names, as the release freeze
+    resolves them. A render shows them and the board file only names them, so a model put right changes the picture
+    and not the board. KiCad's own library models are not followed: they change with KiCad, and --render is for that."""
+    from .release import freeze as F
     h, found = hashlib.sha1(), False
-    for name in names:
-        path = os.path.normpath(name.replace("${KIPRJMOD}", os.path.dirname(os.path.abspath(pcb))))
-        if os.path.isfile(path):
-            found = True
-            h.update(name.encode())
-            with open(path, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
+    for name, path in F.model_files(pcb):
+        found = True
+        h.update(name.encode())
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
     return h.hexdigest() if found else ""
 
 
@@ -820,6 +825,18 @@ def stills_set(P, project, info, pcb):
     return name, None, watch
 
 
+def latest_set(P, index, board, base, but=None):
+    """The newest set of this very board file that a round is recorded with: BASE, or one drawn again beside it
+    (base-2, ...) by --render. A later round takes that one, so pictures put right are the ones that go on, and
+    the rounds before keep what they had. None when there is none."""
+    fits = re.compile(re.escape(base) + r"(-\d+)?$")
+    for key in sorted(index["round"], key=lambda k: int(k[1:]) if k[1:].isdigit() else 0, reverse=True):
+        name = index["round"][key].get("sets", {}).get(board)
+        if key != but and name and fits.match(name) and os.path.exists(os.path.join(P["img"], name, "set.json")):
+            return name
+    return base if os.path.exists(os.path.join(P["img"], base, "set.json")) else None
+
+
 def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set):
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
     rendered under the hash of the board file and of the project's own 3-D models it uses (or found there, when
@@ -852,7 +869,7 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
             pcb = os.path.join(P["root"], pcbs[b]["path"])
             recipe = "%s %s %s %s" % (RECIPE, cfg["frames"], cfg["size"], cfg["layer_width"])
             base = "%s-%s" % (safe(b), sha(pcb, (recipe + " " + models_print(pcb)).strip()))
-            have = os.path.exists(os.path.join(P["img"], base, "set.json"))
+            have = latest_set(P, index, b, base, but=rnd["_key"])
             name = None
             if render and (again or not have):
                 tmp = os.path.join(P["img"], base + ".new-%d" % os.getpid())
@@ -872,7 +889,7 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
                 else:
                     shutil.rmtree(tmp, ignore_errors=True)
             if name is None and have:
-                name = base                                      # drawn before, from this very board file
+                name = have                                      # drawn before, from this very board file
             if name is None:
                 name, problem, note = stills_set(P, project, pcbs[b], pcb)
                 if problem:
@@ -1144,7 +1161,7 @@ def round_html(pg, rnd, prev, rounds):
             head = mark_html(m, "decided" if m == "done" else state or ("open" if m == "decision" else ""))
             ref = '<span class="ref">%s</span> ' % esc(d["ref"]) if d.get("ref") else ""
             out.append('<article class="decision%s" id="%s-%s"><header><h4>%s%s</h4>%s</header>' % (
-                " closed" if m == "done" else "", key, d["id"], ref, pg.inline(squeeze(d.get("question"))), head))
+                " closed" if decided(rnd, d["id"]) else "", key, d["id"], ref, pg.inline(squeeze(d.get("question"))), head))
             if d.get("text"):
                 out.append(pg.text(d["text"]))
             if d.get("blocks"):

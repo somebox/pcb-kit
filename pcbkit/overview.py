@@ -15,8 +15,8 @@ the viewer shows. Every fact names its source in the project. A new round is a n
 note gave it.
 
 Pictures are kept as they were when their round was first built, in docs/overview/img/ (index.toml there says which
-round uses which): a board's turntable and layers under the hash of the board file, so a board that did not change
-costs nothing in the next round. `--render` draws the newest round's again, whatever is there, and leaves a set an
+round uses which): a board's turntable and layers under the hash of the board file and of the project's own 3-D
+models it uses, so a board that did not change costs nothing in the next round. `--render` draws the newest round's again, whatever is there, and leaves a set an
 earlier round uses as it is. Where nothing can be rendered (`--no-render`, no KiCad) the stills of `pcbkit previews`
 stand in, if they are of this board (their SOURCE.txt) or don't say. The page links the pictures; `--single` puts
 them inside the file (all of the newest round's, one a view for the earlier ones).
@@ -196,9 +196,18 @@ def seal(index, rnd):
     e["notes"] = note_prints(rnd)
 
 
-def source_parts(source):
-    """"DESIGN.md#5a O9" -> ("DESIGN.md", "5a", "O9"): the file, a place in it, what to look for there."""
-    first, _, label = str(source).strip().partition(" ")
+def source_parts(source, root=None):
+    """"DESIGN.md#5a O9" -> ("DESIGN.md", "5a", "O9"): the file, a place in it, what to look for there. A path may
+    have spaces in it ("boards/LED board/LED board.kicad_pcb", as pcbkit overview new writes a board's): with the
+    project's ROOT the file is the longest beginning of the text that is in the project, and only without one, or
+    when none is, the text up to its first space."""
+    text = str(source).strip()
+    if root and not re.match(r"^https?://", text):
+        for i in reversed([i for i, c in enumerate(text) if c == " "] + [len(text)]):
+            path, _, frag = text[:i].partition("#")
+            if path and " " not in frag and os.path.exists(os.path.join(root, path)):     # a place in a file is one word
+                return path, frag, text[i:].strip()
+    first, _, label = text.partition(" ")
     path, _, frag = first.partition("#")
     return path, frag, label.strip()
 
@@ -306,7 +315,7 @@ def check_rounds(rounds, P, project, index):
                     late(f"{kind} {it.get('id', it.get('ref'))!r} names no source")
                 named += sources(it.get("source"))
         for src in named:
-            path, _, label = source_parts(src)
+            path, _, label = source_parts(src, P["root"])
             full = os.path.join(P["root"], path)
             if re.match(r"^https?://", path):
                 continue
@@ -676,6 +685,24 @@ def sha(path, extra=""):
     return h.hexdigest()[:8]
 
 
+def models_print(pcb):
+    """A hash of the 3-D model files a board uses that are the project's own (${KIPRJMOD}/...), "" when it uses
+    none. A render shows them and the board file only names them, so a model put right changes the picture and
+    not the board. KiCad's own library models are not followed: they change with KiCad, and --render is for that."""
+    with open(pcb, encoding="utf-8", errors="replace") as fh:
+        names = sorted({n for n in re.findall(r'\(model "((?:[^"\\]|\\.)*)"', fh.read()) if "${KIPRJMOD}" in n})
+    h, found = hashlib.sha1(), False
+    for name in names:
+        path = os.path.normpath(name.replace("${KIPRJMOD}", os.path.dirname(os.path.abspath(pcb))))
+        if os.path.isfile(path):
+            found = True
+            h.update(name.encode())
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+    return h.hexdigest() if found else ""
+
+
 def board_layers(text):
     """The layers of a board for the viewer, from its file, front to back: [(layer, what it is)]. Both silkscreens
     and masks, the outline, and every copper layer the board has, however many are inside."""
@@ -780,7 +807,8 @@ def stills_set(P, project, info, pcb):
 
 def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set, say=print):
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
-    rendered under the board file's hash (or found there, when the board has not changed since another round).
+    rendered under the hash of the board file and of the project's own 3-D models it uses (or found there, when
+    neither has changed since another round).
     REFRESH does the newest round's again, whatever is there, as a set with a name of its own beside the one it
     had. Nothing in the store is replaced or removed here, so a build that fails leaves the page on disk with all
     its pictures (prune, once the build is written, removes what no round uses). Returns (problems, watch)."""
@@ -807,7 +835,8 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
             if not b or (b in e["sets"] and not again) or b not in pcbs:
                 continue
             pcb = os.path.join(P["root"], pcbs[b]["path"])
-            base = "%s-%s" % (safe(b), sha(pcb, "%s %s %s %s" % (RECIPE, cfg["frames"], cfg["size"], cfg["layer_width"])))
+            recipe = "%s %s %s %s" % (RECIPE, cfg["frames"], cfg["size"], cfg["layer_width"])
+            base = "%s-%s" % (safe(b), sha(pcb, (recipe + " " + models_print(pcb)).strip()))
             have = os.path.exists(os.path.join(P["img"], base, "set.json"))
             name = None
             if render and (again or not have):
@@ -947,7 +976,7 @@ class Page:
         """Where the project records it: each as the file's name and what to look for there, linked."""
         out = []
         for src in sources(source):
-            path, frag, label = source_parts(src)
+            path, frag, label = source_parts(src, self.P["root"])
             # a document at the project's root by its name and the place in it; a file deeper in by its label
             deep = "/" in path or re.match(r"^https?://", path)
             shown = esc(label if deep and label else path + (" " + label if label else ""))

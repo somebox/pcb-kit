@@ -288,6 +288,36 @@ class BoardNames(Case):
         write(path, overview.write_round(rnd))
         self.assertEqual(self.check()[0], [])
 
+    def test_a_round_started_for_a_board_in_a_folder_with_a_space_can_be_finished(self):
+        # pcbkit overview new names an unreleased board's file as its source: "boards/LED board/LED board.kicad_pcb"
+        os.rename(os.path.join(self.root, "boards", "demo"), os.path.join(self.root, "boards", "LED board"))
+        os.rename(os.path.join(self.root, "boards", "LED board", "demo.kicad_pcb"), os.path.join(self.root, "boards", "LED board", "LED board.kicad_pcb"))
+        path = overview.new_round(self.project, self.P, today=D(2026, 11, 17))
+        rnd = tomlw.load(path)
+        self.assertEqual(rnd["board"][0]["source"], "boards/LED board/LED board.kicad_pcb")
+        rnd.update(label="Start", state="started", summary="A start.")
+        write(path, overview.write_round(rnd))
+        self.assertEqual(self.check()[0], [])
+        self.assertEqual(self.build(), 0, self.said)
+        self.assertIn('<a href="../boards/LED%20board/LED%20board.kicad_pcb">boards/LED board/LED board.kicad_pcb</a>', self.page())
+
+    def test_a_sources_file_is_found_whatever_spaces_its_path_has(self):
+        write(os.path.join(self.root, "docs", "Bench notes.md"), "F4 measured.\n")
+        parts = lambda text: overview.source_parts(text, self.root)     # noqa: E731
+        self.assertEqual(parts("DESIGN.md D1"), ("DESIGN.md", "", "D1"))
+        self.assertEqual(parts("DESIGN.md#decisions D1"), ("DESIGN.md", "decisions", "D1"))
+        self.assertEqual(parts("docs/Bench notes.md F4"), ("docs/Bench notes.md", "", "F4"))
+        self.assertEqual(parts("docs/Bench notes.md The bench, day 2"), ("docs/Bench notes.md", "", "The bench, day 2"))
+        self.assertEqual(parts("NOTES.md of some kind"), ("NOTES.md", "", "of some kind"))    # not in the project: as before
+        self.assertEqual(overview.source_parts("docs/Bench notes.md F4"), ("docs/Bench", "", "notes.md F4"))
+        r = base()
+        r["topic"][0]["source"] = "docs/Bench notes.md F4"
+        self.put(1, r)
+        self.assertEqual(self.check()[0], [])
+        r["topic"][0]["source"] = "docs/Bench notes.md F9"             # and the number is still looked for in that file
+        self.put(1, r)
+        self.assertIn("docs/Bench notes.md has no F9", "\n".join(self.check()[0]))
+
     def test_topics_and_decisions_keep_the_slug_rule_and_the_pages_own_anchors(self):
         self.assertIn("lower-case", self.problems(lambda r: r["topic"][0].update(id="Power_in")))
         self.assertIn("which the page already uses", self.problems(lambda r: r["topic"][0].update(id="topics")))
@@ -644,6 +674,33 @@ class Pictures(Case):
         self.assertEqual(len(self.calls), 1)
         sets = self.index()
         self.assertEqual(sets["r1"]["sets"], sets["r2"]["sets"])
+
+    def test_a_3d_model_of_the_projects_own_that_changed_draws_the_board_again(self):
+        pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        model = os.path.join(self.root, "lib", "3dmodels", "conn.step")
+        write(pcb, '(kicad_pcb (version 20260206) (footprint "J" (model "${KIPRJMOD}/../../lib/3dmodels/conn.step")'
+                   ' (model "${KICAD10_3DMODEL_DIR}/R.step")))\n')
+        write(model, "ISO-10303-21; as drawn first\n")
+        self.assertTrue(overview.models_print(pcb))
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)                   # neither changed: one set for both rounds
+        self.assertEqual(len(self.calls), 1)
+        write(model, "ISO-10303-21; turned the right way round\n")     # the board file still names it the same
+        self.put(3, base())
+        self.assertEqual(self.build(), 0, self.said)
+        sets = self.index()
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(sets["r1"]["sets"], sets["r2"]["sets"])
+        self.assertNotEqual(sets["r3"]["sets"]["demo"], sets["r2"]["sets"]["demo"])
+
+    def test_a_board_without_models_of_the_project_is_named_as_before(self):
+        pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        self.assertEqual(overview.models_print(pcb), "")
+        write(pcb, open(pcb).read().replace('(footprint "R_0402")', '(footprint "R_0402" (model "${KICAD10_3DMODEL_DIR}/R.step")'
+                                                                    ' (model "${KIPRJMOD}/gone.step"))'))
+        self.assertEqual(overview.models_print(pcb), "")               # KiCad's own, and one that is not there
 
     def test_a_changed_board_gets_its_own_set_and_the_earlier_round_keeps_its(self):
         self.put(1, base())

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 import warnings
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -435,6 +436,78 @@ class ThePage(Case):
         self.assertIn('<a href="https://example.org/repo/blob/main/DESIGN.md">DESIGN.md D1</a>', self.page())
 
 
+PLOT = ('<?xml version="1.0" standalone="no"?>\n<svg width="10mm" height="5mm" viewBox="0 0 10 5">\n'
+        '<g style="fill:#000000; fill-opacity:1.0000;stroke:#000000; stroke-opacity:1.0000;">\n%s</g>\n</svg>\n')
+PAD = '<g style="fill:%s; stroke:%s;">\n<circle cx="2" cy="2" r="0.2" />\n</g>\n'      # one small pad: a few bytes of plot
+SIX = ('(kicad_pcb (version 20260206) (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (8 "In3.Cu" signal)'
+       ' (10 "In4.Cu" power) (2 "B.Cu" signal) (5 "F.SilkS" user "F.Silkscreen") (1 "F.Mask" user) (3 "B.Mask" user)'
+       ' (25 "Edge.Cuts" user)) (gr_line (layer "In9.Cu")))\n')
+
+
+class Layers(Case):
+    """Which layers a board's viewer gets, and which of them are left out."""
+
+    def test_every_copper_layer_the_board_has_and_both_masks(self):
+        two = '(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (1 "F.Mask" user)))'
+        self.assertEqual([layer for layer, _ in overview.board_layers(two)],
+                         ["F.Silkscreen", "F.Mask", "F.Cu", "B.Cu", "B.Mask", "B.Silkscreen", "Edge.Cuts"])
+        self.assertEqual(overview.board_layers(SIX)[2:8],
+                         [("F.Cu", "front copper"), ("In1.Cu", "inner 1"), ("In2.Cu", "inner 2"), ("In3.Cu", "inner 3"),
+                          ("In4.Cu", "inner 4"), ("B.Cu", "back copper")])
+
+    def test_a_plot_is_empty_when_it_draws_nothing_not_when_it_is_small(self):
+        self.assertEqual(overview.plot_facts(PLOT % ""), (False, None))
+        self.assertEqual(overview.plot_facts(PLOT % (PAD % ("#02FFEE", "#02FFEE"))), (True, "#02ffee"))
+        self.assertEqual(overview.plot_facts(PLOT % (PAD % ("#000000", "#000000"))), (True, "#000000"))
+        holes = (PAD % ("#FFFFFF", "#FFFFFF")) * 5                     # a plane with more drill holes than shapes of its own
+        self.assertEqual(overview.plot_facts(PLOT % (PAD % ("#7FC87F", "#7FC87F") + holes)), (True, "#7fc87f"))
+
+    def render(self, board, plots):
+        """render_set on a board written here, with kicad-cli's part played: each layer's plot is PLOTS' or empty."""
+        from pcbkit.release import previews
+        pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        write(pcb, board)
+        dest = os.path.join(self.root, "set")
+        os.makedirs(dest)
+
+        def layer_png(pcb, layers, png, width=3600, mirror=False, tmp=None, background="white"):
+            write(png, PNG, "wb")                                      # every picture is the same few bytes
+            write(os.path.join(tmp, os.path.splitext(os.path.basename(png))[0] + ".svg"), PLOT % plots.get(layers, ""))
+            return (10.0, 5.0)
+
+        with mock.patch.object(previews, "layer_png", layer_png), mock.patch.object(previews, "turntable", lambda *a, **k: {}), \
+                mock.patch.object(previews, "webp", lambda png: None):
+            return overview.render_set(pcb, dest, self.project.cfg["overview"]), dest
+
+    def test_a_sparse_layer_stays_and_an_empty_one_goes(self):
+        plots = {"F.Cu": PAD % ("#C83434", "#C83434"), "In3.Cu": PAD % ("#4FCBCB", "#4FCBCB"), "In4.Cu": PAD % ("#DB628B", "#DB628B"),
+                 "B.Mask": PAD % ("#02FFEE", "#02FFEE"), "Edge.Cuts": PAD % ("#D0D2CD", "#D0D2CD")}
+        man, dest = self.render(SIX, plots)
+        self.assertEqual([(x["id"], x["name"], x["colour"]) for x in man["layers"]],
+                         [("F.Cu", "front copper", "#c83434"), ("In3.Cu", "inner 3", "#4fcbcb"), ("In4.Cu", "inner 4", "#db628b"),
+                          ("B.Mask", "back mask openings", "#02ffee"), ("Edge.Cuts", "outline", "#d0d2cd")])
+        self.assertEqual(sorted(os.listdir(dest)), sorted(x["file"] for x in man["layers"]))   # the empty ones' pictures are gone
+        self.assertEqual(man["mm"], [10.0, 5.0])
+
+    def test_a_board_that_is_only_its_outline_still_has_a_picture(self):
+        man, _ = self.render(SIX, {"Edge.Cuts": PAD % ("#D0D2CD", "#D0D2CD")})
+        self.assertEqual([x["id"] for x in man["layers"]], ["Edge.Cuts"])
+
+    def test_the_viewers_key_is_the_sets_own_and_an_older_set_still_reads(self):
+        def six(pcb, dest, cfg):
+            for name in ("layer-In4_Cu.webp", "layer-B_Mask.webp", "layer-F_Cu.webp"):
+                write(os.path.join(dest, name), PNG, "wb")
+            return dict(made="test", layers=[dict(id="F.Cu", file="layer-F_Cu.webp"),                    # as sets were written before
+                                             dict(id="In4.Cu", name="inner 4", colour="#db628b", file="layer-In4_Cu.webp"),
+                                             dict(id="B.Mask", name="back mask openings", colour="#123456", file="layer-B_Mask.webp")])
+        self.put(1, base())
+        self.assertEqual(overview.build(self.project, say=self.said.append, renderer=six), 0, self.said)
+        page = self.page()
+        self.assertIn('{"id":"F.Cu","name":"front copper","colour":"#c83434"', page)
+        self.assertIn('{"id":"In4.Cu","name":"inner 4","colour":"#db628b"', page)
+        self.assertIn('{"id":"B.Mask","name":"back mask openings","colour":"#123456"', page)
+
+
 class Pictures(Case):
     def index(self):
         return tomlw.load(self.P["index"])["round"]
@@ -510,6 +583,36 @@ class Pictures(Case):
         self.assertEqual(self.build(refresh=True), 0, self.said)       # and again: round 2's own set is drawn over
         self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-2")
         self.assertEqual(len(self.calls), 3)
+
+    def test_a_build_that_fails_removes_nothing_the_page_on_disk_shows(self):
+        other = os.path.join(self.root, "boards", "other", "other.kicad_pcb")
+        demo = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        write(other, '(kicad_pcb (version 20260206) (footprint "R_0402"))\n')
+        self.project = Project(self.root)
+        rnd = base()
+        rnd["view"].append(dict(board="other"))
+        self.put(1, rnd)
+        self.assertEqual(self.build(), 0, self.said)
+        with open(self.P["index"], encoding="utf-8") as fh:
+            index = fh.read()
+        page, was = self.page(), self.index()["r1"]["sets"]
+        for pcb in (demo, other):                                      # both boards change; only one can be drawn again
+            write(pcb, open(pcb).read().replace("R_0402", "R_0603"))
+        good = fake_renderer(self.calls)
+        broken = lambda pcb, dest, cfg: {} if pcb == other else good(pcb, dest, cfg)     # noqa: E731
+        self.said = []
+        self.assertEqual(overview.build(self.project, say=self.said.append, renderer=broken, refresh=True), 1)
+        self.assertIn("no pictures of other", "\n".join(self.said))
+        with open(self.P["index"], encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), index)
+        self.assertEqual(self.page(), page)
+        for name in was.values():                                      # what the page on disk links is all still there
+            self.assertTrue(os.path.exists(os.path.join(self.P["img"], name, "set.json")), name)
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # and once a build is written, the unused goes
+        now = self.index()["r1"]["sets"]
+        self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if os.path.isdir(os.path.join(self.P["img"], n))),
+                         sorted(now.values()))
+        self.assertFalse(set(was.values()) & set(now.values()))
 
     def test_without_a_renderer_the_previews_stills_stand_in(self):
         write(os.path.join(self.root, "docs", "previews", "demo", "render-top.png"), PNG, "wb")

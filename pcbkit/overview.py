@@ -25,6 +25,7 @@ the page is for. `[overview]` in pcbkit.toml: dir, page, frames, size, layer_wid
 """
 import argparse
 import base64
+import collections
 import datetime
 import hashlib
 import html
@@ -33,6 +34,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import urllib.parse
 
 from . import tomlw
@@ -47,14 +49,17 @@ BOARD_MARK = {"released": "done", "changed": "work", "mockup": "attention", "che
 ORDER_MARK = {"draft": "work", "submitted": "work", "in-production": "work", "shipped": "work", "received": "done",
               "problem": "attention", "cancelled": "todo"}
 FACTS = (("cost", "Cost"), ("supply", "Supply"), ("fab", "Fab"), ("orders", "Orders"))
-# the layers of the viewer's stack, front to back, in KiCad's own colours: (layer, what it is, its colour in the key)
-LAYERS = (("F.Silkscreen", "front silk", "#f2eda1"), ("F.Mask", "front mask openings", "#d864ff"),
-          ("F.Cu", "front copper", "#c83434"), ("In1.Cu", "inner 1", "#7fc880"), ("In2.Cu", "inner 2", "#cd7d2d"),
-          ("B.Cu", "back copper", "#4d7fc5"), ("B.Silkscreen", "back silk", "#e8b3a7"), ("Edge.Cuts", "outline", "#d0d1ce"))
-EMPTY = 5000                       # bytes: a layer picture smaller than this has nothing on it
+# the viewer's layers outside the copper, front then back: (layer, what it is). board_layers() puts the copper between
+FRONT = (("F.Silkscreen", "front silk"), ("F.Mask", "front mask openings"))
+BACK = (("B.Mask", "back mask openings"), ("B.Silkscreen", "back silk"), ("Edge.Cuts", "outline"))
+# a layer's colour in the viewer's key when its plot doesn't give one (KiCad's default theme), and for sets made
+# before the plot was asked
+COLOURS = {"F.Silkscreen": "#f2eda1", "F.Mask": "#d864ff", "F.Cu": "#c83434", "In1.Cu": "#7fc880", "In2.Cu": "#cd7d2d",
+           "B.Cu": "#4d7fc5", "B.Mask": "#02ffee", "B.Silkscreen": "#e8b3a7", "Edge.Cuts": "#d0d1ce"}
+DRAWN = re.compile(r"<(path|circle|rect|polyline|polygon|line|ellipse|text|image|use)\b")   # what a plot draws with
 STILLS = (("render-top.png", "Front"), ("render-bottom.png", "Back"))      # pcbkit previews', when nothing renders
 LIMITS = dict(summary=320, topic=420, topics=10, note=240, state=30, next=5, options=4, notes=8, changes=7)
-RECIPE = 3                         # part of a picture set's name: raise it when the pictures are made differently
+RECIPE = 4                         # part of a picture set's name: raise it when the pictures are made differently
 ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 RESERVED = ("status", "viewer", "decisions", "topics", "decided", "facts")     # the page's own anchors in a round
 ROUND = re.compile(r"^r(\d+)\.toml$")
@@ -613,9 +618,27 @@ def sha(path, extra=""):
     return h.hexdigest()[:8]
 
 
+def board_layers(text):
+    """The layers of a board for the viewer, from its file, front to back: [(layer, what it is)]. Both silkscreens
+    and masks, the outline, and every copper layer the board has, however many are inside."""
+    inner = sorted({int(n) for n in re.findall(r'\(\d+ "In(\d+)\.Cu"', text)})
+    copper = [("F.Cu", "front copper")] + [("In%d.Cu" % n, "inner %d" % n) for n in inner] + [("B.Cu", "back copper")]
+    return list(FRONT) + copper + list(BACK)
+
+
+def plot_facts(svg):
+    """What kicad-cli's SVG of one layer says about it: (whether anything is drawn, the colour it is drawn in).
+    A layer with nothing on it is a file with no shapes, whatever its picture weighs; one small pad is a shape."""
+    seen = collections.Counter(c.lower() for c in re.findall(r"#[0-9A-Fa-f]{6}", svg))
+    black, white = seen.pop("#000000", 0), seen.pop("#ffffff", 0)    # black opens every plot; white is its drill holes
+    colour = seen.most_common(1)[0][0] if seen else "#000000" if black > 2 else "#ffffff" if white else None
+    return bool(DRAWN.search(svg)), colour
+
+
 def render_set(pcb, dest, cfg):
     """A board's pictures into DEST: the turntable of both sides, and each layer on its own on a clear background,
-    all in one frame so they stack; set.json says what is there."""
+    all in one frame so they stack; set.json says what is there. A layer is left out only when its plot draws
+    nothing."""
     from .release import previews as V
     w, h = (int(v) for v in str(cfg["size"]).lower().split("x"))
     with open(pcb, encoding="utf-8", errors="replace") as fh:
@@ -624,22 +647,26 @@ def render_set(pcb, dest, cfg):
     turn = V.turntable(pcb, dest, int(cfg["frames"]), (w, h)) if "(footprint " in text else {}
     if turn:
         man["turn"] = turn
-    layers = []
-    for lid, _, _ in LAYERS:
-        if lid.startswith("In") and f'"{lid}"' not in text:
-            continue
-        png = os.path.join(dest, "layer-%s.png" % lid.replace(".", "_"))
-        try:
-            mm = V.layer_png(pcb, lid, png, int(cfg["layer_width"]), background=None)
-        except (OSError, Exception):      # noqa: BLE001 - no rsvg-convert, or a layer kicad-cli won't plot
-            break
-        man["mm"] = [round(v, 1) for v in mm] if mm else man.get("mm")
-        made = V.webp(png) or png
-        if os.path.getsize(made) < EMPTY and lid != "Edge.Cuts":
-            os.remove(made)                # nothing on this layer
-        else:
-            layers.append(dict(id=lid, file=os.path.basename(made)))
-    if len(layers) > 1:
+    layers, tmp = [], tempfile.mkdtemp()
+    try:
+        for lid, what in board_layers(text):
+            stem = "layer-%s" % lid.replace(".", "_")
+            png = os.path.join(dest, stem + ".png")
+            try:
+                mm = V.layer_png(pcb, lid, png, int(cfg["layer_width"]), background=None, tmp=tmp)
+                with open(os.path.join(tmp, stem + ".svg"), encoding="utf-8", errors="replace") as fh:
+                    drawn, colour = plot_facts(fh.read())
+            except (OSError, Exception):      # noqa: BLE001 - no rsvg-convert, or a layer kicad-cli won't plot
+                continue
+            man["mm"] = [round(v, 1) for v in mm] if mm else man.get("mm")
+            if not drawn:
+                os.remove(png)
+                continue
+            made = V.webp(png) or png
+            layers.append(dict(id=lid, name=what, colour=colour or COLOURS.get(lid, "#9aa39e"), file=os.path.basename(made)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if layers:
         man["layers"] = layers
     return man
 
@@ -697,7 +724,8 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
     rendered under the board file's hash (or found there, when the board has not changed since another round).
     REFRESH does the newest round's again, whatever is there: a set an earlier round uses stays as it is and the
-    new one gets a name of its own. Returns (problems, watch)."""
+    new one gets a name of its own. Nothing is removed here (prune, once the build is written). Returns
+    (problems, watch)."""
     problems, watch, cfg = [], [], project.cfg["overview"]
     pcbs = {p["key"]: p for p in project.pcbs()}
     os.makedirs(P["img"], exist_ok=True)
@@ -751,13 +779,18 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
                 if note:
                     watch.append(f"{rnd['_key']}: {note}")
             e["sets"][b] = name
+    return problems, watch
+
+
+def prune(P, index):
+    """Remove the sets and pictures of the store that no round uses any more. Only for after the index and the page
+    are written: until then the page on disk may still show what a failed build was about to replace."""
     used = {n for e in index["round"].values() for n in list(e.get("sets", {}).values()) + list(e.get("pictures", {}).values())}
-    for name in os.listdir(P["img"]):                               # a set or picture no round uses any more
+    for name in os.listdir(P["img"]) if os.path.isdir(P["img"]) else []:
         full = os.path.join(P["img"], name)
         ours = re.match(r"^([0-9a-f]{8}-.+|.+-[0-9a-f]{8}(-\d+)?(-stills)?(\.new-\d+)?)$", name)
         if ours and name not in used:
             shutil.rmtree(full) if os.path.isdir(full) else os.remove(full)
-    return problems, watch
 
 
 def set_of(P, index, rnd, board):
@@ -886,9 +919,10 @@ def viewer_html(pg, rnd, newest):
                 # all of them, or for an earlier round of a single page that has no turntable, the front as it opens
                 front = [x for x in man["layers"] if x["id"] in ("F.Cu", "F.Silkscreen", "Edge.Cuts")]
                 kept = man["layers"] if full else front if len(front) > 1 else man["layers"][:2]
-                what = {lid: (name, colour) for lid, name, colour in LAYERS}
+                what = dict(board_layers(""))
                 modes.append(dict(kind="layers", name="Layers", layers=[
-                    dict(id=x["id"], name=what[x["id"]][0], colour=what[x["id"]][1], src=where(x["file"]))
+                    dict(id=x["id"], name=x.get("name") or what.get(x["id"], x["id"]),
+                         colour=x.get("colour") or COLOURS.get(x["id"], "#9aa39e"), src=where(x["file"]))
                     for x in kept]))
             if man.get("stills") and "stills" in show:
                 pics = man["stills"] if full else man["stills"][:1]
@@ -1102,6 +1136,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
             os.makedirs(os.path.dirname(P["page"]), exist_ok=True)
             with open(P["page"], "w", encoding="utf-8") as fh:
                 fh.write(page)
+            prune(P, index)
             say(f"{shown(P['page'], P['root'])}: {len(rounds)} round(s), {size(len(page.encode()))}; pictures "
                 + ", ".join(f"{r['_key']} {size(used.get(r['_key'], 0))}" for r in rounds))
             if single is not None:

@@ -1,19 +1,157 @@
 # pcb-kit
 
-KiCad tooling and agent skills for designing, checking and ordering circuit boards with Claude Code. It started as
-the scripts that every board in the somebox hardware projects ended up copying (DRC summaries, fab files, previews, a
-schematic builder) and grew into a way of working with an agent on a board: describe the design in text, check it
-with scripts, and look at pictures of it along the way.
+KiCad tooling and agent skills for designing, checking and ordering circuit boards with Claude Code. The design is
+described in text, checked by scripts, and looked at in pictures at every step.
 
-The kit holds the engine; each project keeps its own data. Placement tables, net lists, power-stage geometry and
-design notes stay in the board's repo and call `pcbkit`.
+<img src="docs/images/boards.webp" width="880" alt="Eleven assembled circuit boards rendered in 3-D on a dark background: round, rectangular and many-sided boards with modules, connectors, LEDs and controllers">
 
-Three parts:
+Eleven boards from seven projects that use the kit, as they stood on 2026-11-17. Top: DodecaRGB's control board,
+siebenuhr's controller, Orbitchron's driver and its 528-LED face. Middle: esp32-s3-ha-node, the ESP candle's top and
+base, the spotlight's driver. Bottom: the spotlight's LED board, the message sign's controller and its 5 × 7 module.
 
-- **`pcbkit`**, a Python package and CLI: checks, release files, enclosure outlines, EasyEDA import, net views,
-  placement scoring, a maze router, a negotiated router, simulation runs, a schematic builder for konnect.
-- **`skills/`**, agent skills in SKILL.md form, used by Claude Code and pi.
-- **`templates/`** and **`library/`**: the project skeleton, conventions and trusted parts.
+- **`pcbkit`**, a Python package and CLI: checks, release files, schematics from scripts, net views, placement
+  scoring, two routers, simulation runs, the project's overview page.
+- **`skills/`**, ten agent skills in SKILL.md form, for Claude Code and pi.
+- **`templates/`** and **`library/`**: the project skeleton, the conventions and the parts that worked.
+
+The kit holds the engine. Each project keeps its own data (placement tables, net lists, design notes) and calls
+`pcbkit`.
+
+## What it does
+
+### Draw the schematic from a script
+
+A sheet is Python data. Each part is placed by what it does in its block: on the power path, hanging from a node,
+or on another pin. `pcbkit.schematic` sets the blocks out in rows, frames them, draws small local nets as wires and
+writes the sheet through konnect. `pcbkit sch-lint` then says how the result reads.
+
+<img src="docs/images/schematic-blocks.webp" width="880" alt="A KiCad schematic sheet in six dashed frames, each with a title: a TPS55288 buck-boost stage, its output capacitors and shunt, a temperature sensor, an INA226 monitor, an over-voltage supervisor and the LED data output">
+
+siebenuhr's LED power sheet, from `scripts/sch_led_power.py`. Two of its six blocks, and the lint's line for it:
+
+```python
+ntc = block("Converter temperature: NTC", path=[R44], shunt={"NTC_SENSE": [TH1, C44]})
+ina = block("INA226 monitor", path=[R34, (U6, "10", "3"), R33],
+            shunt={"INA_INP": [C38], "PWR_INT": [(R32, "up"), (TP7, "up")]})
+```
+
+```
+led_power.kicad_sch: 66 parts, 88 wire segments; small local nets: 22 wired, 0 by label nearby, 2 by label apart
+```
+
+### Keep the whole project on one page
+
+After each design round the user gets one page: where the project stands, a viewer of the boards, a few lines per
+block, the decisions waiting for them with a recommendation, and what it costs. Earlier rounds stay on the page.
+
+<img src="docs/images/overview-orbitchron.webp" width="880" alt="Orbitchron's overview page: round tabs and a legend of status marks at the top, a status panel with each board's version and state and what is next, and a viewer showing the 528-LED face with tabs for each board, render, layers and assembly map">
+
+Orbitchron before its first order: three rounds along the top, one legend of status marks, every board as a
+render, layer by layer, or as an assembly map.
+
+<img src="docs/images/review-dodeca.webp" width="880" alt="DodecaRGB's order review page: the title, eight status chips, four numbers (size, parts, cost per board, open findings) and a 3-D render of the control board, above a row of section links">
+
+<img src="docs/images/review-dodeca-areas.webp" width="880" alt="The Board areas section of the same page: a tab per block, a map of where the block sits on the board, two net-coloured close-ups, and the block's findings and decisions as cards with status chips">
+
+DodecaRGB's control board before its order. The state is in chips and four numbers; each block then has its map,
+its close-ups, its findings and its decisions.
+
+<img src="docs/images/review-spotlight.webp" width="436" alt="The spotlight's lamp housing in a 3-D viewer with a button for each of seven rounds, sliders for the door shape and the numbers that follow from them"> <img src="docs/images/overview-generated.webp" width="436" alt="Orbitchron's page as pcbkit overview draws it: the rounds as a revision table, a legend of six marks, the status Cleared to pay with what this round did and what is next, and a dated note added since">
+
+Left, the spotlight's housing at round 7: any of its seven rounds in 3-D, the door shape on sliders. Right,
+Orbitchron's page as `pcbkit overview` draws it: the rounds as a revision table, six marks, notes added since.
+
+The first three pages were built by hand in their projects. `pcbkit overview` makes one from a small file per
+round, draws each board's turntable and layers, and keeps the earlier rounds as they were. The project-overview
+skill has the pattern they share.
+
+```bash
+pcbkit overview new                 # the next round's file, started from the last one and the releases
+pcbkit overview                     # docs/overview.html
+pcbkit overview note "Paid: JLC W20261118." --mark work --state "boards ordered"
+```
+
+### Find what could fail before ordering
+
+The failure-review skill checks each block against its datasheets and reference designs, lists what could go wrong
+once the boards are back and how each failure would show on the bench, and settles the doubtful cases by
+calculation or simulation. Each fix it recommends is tested like a finding, and the changes get a review of their
+own before the order. The DodecaRGB page above is one such review, as its user read it.
+
+### Look at the copper
+
+`pcbkit netview` draws a region of one layer with every net in its own colour. `--compare` puts several versions
+of the board side by side, beside the datasheet's own figure, with the numbers that decide between them.
+
+<img src="docs/images/netview-power-mux.png" height="300" alt="Net-coloured view of a supply-mux region on the dodeca control board"> <img src="docs/images/copper-check.png" height="300" alt="Rasterised copper layer with two flagged items marked in blue and green">
+
+<img src="docs/images/via-options-tps55288.webp" width="880" alt="Four panels of the TPS55288's pads: TI's layout figure with vias beside the strip pads, the board before with five via holes ringed red inside the strips, and two options with vias moved to the corners and beside the strips, numbers under each">
+
+siebenuhr's controller: five open via holes under the paste of a buck-boost's strip pads, and the option that
+moved them out while keeping 95 % of the via copper.
+
+### Simulate the power path
+
+`pcbkit spice` runs an ngspice deck with vendor models and returns its measurements. On the dodeca control board a
+simulation found a supply-mux case where a firmware test would have misread good boards, which changed the part.
+
+<img src="docs/images/sim-load-steps.png" width="880" alt="Six panels of simulated LED rail voltage and inductor current for load steps, overload and start-up">
+
+### Place by the ratsnest, then route
+
+A ratsnest score takes milliseconds where a full route takes most of an hour. `pcbkit place-score` counts
+crossings, length and blocked via fields, and searches placements with them. `pcbkit reroute` then lays a board's
+signals again: it moves small parts where that helps, routes every net together, and reports the old routing and
+the new one on the same measures. On six boards it took vias from 633 to 480 and 90-degree corners from 248 to 49.
+It is experimental: none of these routes has been built yet. [docs/ROUTER.md](docs/ROUTER.md) has the method.
+
+<img src="docs/images/ratsnest-before-after.webp" width="880" alt="The ratsnest round a microcontroller before and after its small parts were moved: coloured lines per net, with fewer long crossings in the second panel">
+
+siebenuhr's controller round its MCU: the ratsnest as placed, and after the small parts were moved.
+
+### Fit a board to a box
+
+Measure the enclosure, write the numbers into an `enclosure.json`, and `pcbkit outline` draws the outline, the
+mounting holes and the keep-outs. `--fit-check` prints it 1:1 to cut out and screw into the box.
+
+<img src="docs/images/enclosure-fit-check.png" height="440" alt="1:1 fit-check print: board outline notched around the lid bosses, mounting holes, part outlines, dimension lines"> <img src="docs/images/enclosure-fit-photo.jpg" height="440" alt="A fit-check print cut out and screwed into a project box, with a steel ruler and dial calipers measuring between two mounting screws">
+
+### See the design before it exists
+
+A placement mock-up drops stock footprints onto the outline, without nets, to show how full the board gets and
+which edges the connectors need. One sheet can then carry a whole design for someone new to it.
+
+<img src="docs/images/placement-mockup.webp" height="330" alt="3-D render of a placement mock-up: ESP32-S3 module at the top, screw terminals and USB-C on the right edge, JST connectors and side buttons on the left"> <img src="docs/images/overview-analog-voice.webp" height="330" alt="Overview sheet of the analog voice Eurorack module: front panel render in three-quarter view, back of the PCB with colour-coded sections, signal-flow block diagram, knob colour legend and a to-scale side view">
+
+esp32-s3-ha-node's mock-up, and the one-sheet overview of synth-blocks' analog voice.
+
+### Know what the board costs
+
+bomi keeps the BOM in step with the schematic and refreshes stock and price from JLC and LCSC. A project's BOM.md
+lists the cost drivers, the Extended-part fees and the parts whose stock is thin.
+[library/PARTS.md](library/PARTS.md) holds the parts that built boards have proven, with the notes that made
+them work.
+
+<img src="docs/images/bom-cost-drivers.png" width="560" alt="BOM.md excerpt: cost drivers table with LCSC codes, unit cost at 1 and 100 boards, and notes on Extended-part fees">
+
+### Check, release, order
+
+```bash
+pcbkit drc board.kicad_pcb          # DRC by type, net and footprint; erc, nets and sch-lint for the schematic
+pcbkit check board.kicad_pcb        # what DRC misses: floating copper, stubs, loops, thin feeds, bad courtyards
+pcbkit release                      # the next version for each changed board, its fab files in a release folder
+pcbkit production                   # versions, orders, costs and stock in PRODUCTION.md
+```
+
+A release stamps the version into the board and its schematic, writes JLC's Gerbers, BOM and placement file with
+rotations corrected, and a checklist of every part whose orientation matters, for JLC's placement viewer. The
+fab-order skill then puts the order into the cart, in the user's browser, and never pays.
+
+### Start or import a project
+
+`pcbkit new` scaffolds a hardware repo with its documents, an empty KiCad project and a first commit.
+`pcbkit import-easyeda` brings an EasyEDA schematic and board across, with symbols, footprints and 3-D models, and
+runs ERC, DRC and parity on the result.
 
 ## What you need
 
@@ -34,7 +172,7 @@ only describe the steps.
 - **Claude Code:** the repo is its own plugin marketplace. Add it one of three ways, then
   `claude plugin install pcb-kit@pcb-kit`; the skills are `/pcb-kit:failure-review` and so on. Marketplace names are
   unique, so a machine has one of the three, not two.
-  - `claude plugin marketplace add somebox/pcb-kit#v0.3.0` installs that release and stays on it. To move to a later
+  - `claude plugin marketplace add somebox/pcb-kit#v0.5.0` installs that release and stays on it. To move to a later
     one, `claude plugin marketplace remove pcb-kit`, then add and install again with the new tag.
   - `claude plugin marketplace add somebox/pcb-kit` follows `main`. A fresh install takes `main` as it is, which can
     include commits not released yet under the current version number. Claude Code keeps one copy per version, so
@@ -44,214 +182,6 @@ only describe the steps.
 - **pi:** `pi install /path-to/pcb-kit` (the `package.json` here declares the skills), or `pi --skill /path-to/pcb-kit/skills/pcb-kit`.
 - **KiCad:** nothing to install; the commands drive `kicad-cli` and KiCad's Python, and konnect (the KiCad MCP server) is
   used from both agents and `pcbkit.schematic`.
-
-## What it does
-
-### Start or import a project
-
-`pcbkit new` scaffolds a hardware repo: README, DESIGN, LAYOUT and PRODUCTION documents with status lines, an empty
-KiCad project with library tables, `scripts/`, a bomi project and a first commit. `pcbkit import-easyeda` brings an
-EasyEDA Std schematic and PCB across with symbols and footprints into the project library and runs ERC, DRC and
-parity on the result. It converts every sheet and merges into the library, so a rerun leaves the library as it was
-and several boards can share one. The esp32-ha-protoboard was converted this way, and esp32-s3-ha-node was started
-with `new`.
-
-### Fit a board to a box
-
-Measure the enclosure (drawing, calipers, or a photo against a ruler), write the numbers into an `enclosure.json`,
-and `pcbkit outline` draws the board outline with notches around the lid bosses, the mounting holes with their
-standoff rings (and a keep-out under the screw head when the screws go in from the top), keep-outs, and the box's
-walls for reference. `--fit-check` exports a 1:1 PDF with dimension lines and a scale bar to print, cut out and
-screw into the box. `--parts` adds the placed parts, for a last check of the connectors against the walls.
-
-The print, and one cut out and screwed onto its box's standoffs, with calipers checking the hole spacing against the
-dimension lines:
-
-<img src="docs/images/enclosure-fit-check.png" height="480" alt="1:1 fit-check print: board outline notched around the lid bosses, mounting holes, part outlines, dimension lines"> <img src="docs/images/enclosure-fit-photo.jpg" height="480" alt="A fit-check print cut out and screwed into a project box, with a steel ruler and dial calipers measuring between two mounting screws">
-
-### See how dense a board gets before drawing the schematic
-
-A placement mock-up drops stock footprints for the proposed parts onto the outline, grouped by block, without nets.
-A 3-D render then shows how full the board is, which edges the connectors need, and what the alternatives look
-like, such as three terminal-block pitches. The esp32-s3-ha-node layout was settled over several rounds of this, before any schematic existed.
-
-<img src="docs/images/placement-mockup.webp" width="420" alt="3-D render of a placement mock-up: ESP32-S3 module at the top, screw terminals and USB-C on the right edge, JST connectors and side buttons on the left">
-
-### Show the whole design on one page
-
-For someone new to a design, one sheet can carry it: renders of both sides next to a block diagram, each block in
-the same colour in all of them. synth-blocks' analog voice, a semi-modular Eurorack voice, has one at its
-placement mock-up stage: the front panel in three-quarter view with each section marked along its edge, the back of
-the PCB with each section's strip tinted, the signal flow with its normalled connections, the knob colours, and a
-to-scale side view of the panel stack. Its `scripts/overview.py` renders the views with `kicad-cli`, composes them in
-an SVG and rasterises it with `rsvg-convert`; the visual-review skill has the recipe.
-
-<img src="docs/images/overview-analog-voice.webp" width="720" alt="Overview sheet of the analog voice Eurorack module: front panel render in three-quarter view, back of the PCB with colour-coded sections, signal-flow block diagram, knob colour legend and a to-scale side view">
-
-### Keep the whole project on one page
-
-After each design round the user gets `docs/overview.html`: the project's status and what is next, a viewer that
-turns each board by drag and switches its layers, a few lines per block, the decisions waiting for them with the
-options side by side and one recommended, and cost, supply, fab and orders in a line each. One set of six marks
-says what state everything is in. Every round stays on the page and can be switched to; a small change is a dated
-note under its item. An agent writes a small file per round, `docs/overview/r<N>.toml`, from what the project
-records, and `pcbkit overview` draws the boards and makes the page; the project-overview skill has the method.
-
-```bash
-pcbkit overview new                 # the next round's file, started from the last one and the releases
-pcbkit overview --check             # a bad mark, a missing source, an edited earlier round, a stale page
-pcbkit overview                     # docs/overview.html, with each board's turntable and layers
-pcbkit overview note "Paid: JLC W20261118." --mark work --state "boards ordered"
-pcbkit overview --single build/overview.html    # one file with its pictures inside, to send
-```
-
-### Place by the ratsnest, route the winner
-
-A full route of a dense board can take most of an hour; a ratsnest score takes milliseconds. `pcbkit place-score`
-counts crossings between nets' ratsnest edges (only where they could meet on one layer), their length, courtyard
-area over zones to keep clear (such as where the other side's vias will go), and solves free choices like which
-register output drives which gate. With a study file it moves groups of parts through their candidate positions and
-keeps the best; `--svg` draws the ratsnest with the crossings circled. Only the winner gets routed: on Orbitchron's
-driver board the first scored placement cut the full route's unconnected items from 7 to 3.
-
-### Route from a script
-
-`pcbkit.route` is a maze router for a project's routing script. `complete_nets` takes a plan of net patterns, layers
-and widths and joins each net's copper islands one at a time, with A* on a 0.1 mm grid across the copper layers:
-vias where they clear, narrower track onto small pins, and every route ending on a pad centre. Pads are obstacles
-by their real shape on each layer they reach, so the pins of a chip set at an angle stay reachable; modelling them
-that way took Orbitchron's driver from 8 routed connections on its two angled chips to 46. A connection that can't
-be found otherwise spends its whole search budget, so `CONN_SECONDS` caps each one and `DEADLINE` the whole run,
-and what is left is reported for hand routing. Around it: GND stitching, plane and escape vias, neck-down, snapping
-other routes' ends to pad centres, and an audit of every track end. esp32-s3-ha-node's `scripts/route_pcb.py`
-routes its power nets and most signals this way in a run capped at 15 minutes; the rest was finished by hand.
-`pcbkit cleanup --dangling` then removes the dead ends a route leaves.
-
-When the inner layers are planes, the two outer layers can be held to one direction each: with
-`DIR={F_Cu: "h", B_Cu: "v"}` a move across a layer's direction costs four times as much (`DIR_COST`), so tracks
-change layer to turn instead of wandering round chips, and `ORDER="longest"` routes the plan's longest connections
-first. `fanout` gives a fine-pitch chip its dog-bone vias before routing: out from each signal pad in two staggered
-rows, with a 45-degree jog where a via has to sit to the side. On the message sign's controller (QFN-60 at 0.4 mm,
-two TSSOP-20s, 24 signal nets) fan-out plus both options routed 34 of 36 connections in 51 s, against 26 in 192 s
-without them, with the routed F.Cu 90 % horizontal and B.Cu 94 % vertical; the price is more vias and longer tracks.
-
-### Lay a board's signals again
-
-`pcbkit reroute` takes a placed board whose power copper and ground are drawn and lays its signals again: it moves small
-parts where that helps, routes every signal net together with other nets' copper a rising cost instead of a wall, polishes
-each net alone, places test pads where their nets ended up, repairs what is left, and reports the old routing and the new
-one on the same measures. It leaves the result beside your board and never writes it. On six boards, four of them
-four-layer, it left no failed connection, and took vias from 633 to 480, track from 9220 to 8287 mm and 90-degree corners
-from 248 to 49. It is experimental: none of these routes has been built yet. It runs under its own Python, which
-`pcbkit setup-router` installs; [docs/ROUTER.md](docs/ROUTER.md) has the method, the settings and the limits.
-
-```bash
-pcbkit setup-router
-pcbkit reroute scripts/reroute-driver.json     # {"board": "../boards/driver/driver.kicad_pcb", "keep": ["GND", "USB_DP", "USB_DN"]}
-```
-
-### Look at the copper
-
-`pcbkit netview` draws one layer of a board region with every net in its own colour, pads labelled and courtyards
-dashed. It is the fastest way to review a power stage against the datasheet's layout guidance, or to see which net
-a stray pour belongs to.
-
-<img src="docs/images/netview-power-mux.png" width="480" alt="Net-coloured view of a supply-mux region on the dodeca control board">
-
-When a check flags something small, a tight raster of the layer with the flagged items marked shows what it
-actually refers to before anything gets edited:
-
-<img src="docs/images/copper-check.png" width="320" alt="Rasterised copper layer with two flagged items marked in blue and green">
-
-### Compare layout options side by side
-
-When there are a few ways to lay something out, build each as a copy of the board and draw them together.
-`pcbkit netview --compare` puts the same window of each board on one sheet, after the datasheet's own figure: each
-net in one colour across every panel, paste hatched, mask openings dashed, any via hole that lands in paste ringed
-red, and the numbers that decide it under each panel. On siebenuhr's controller v3 it showed five open via holes
-inside the strip pads of a TPS55288 buck-boost, under the paste. The option chosen moves every via off the pads, to
-the part's corners and beside the strips where TI's figure and EVM put them, and keeps 95 % of the VOUT via copper:
-
-<img src="docs/images/via-options-tps55288.webp" width="720" alt="Four panels of the TPS55288's pads: TI's layout figure with vias beside the strip pads, the board before with five via holes ringed red inside the strips, and two options with vias moved to the corners and beside the strips, numbers under each">
-
-### Check a board
-
-`pcbkit drc`, `erc` and `nets` wrap `kicad-cli` and summarise by type, net and footprint. `pcbkit sch-lint` reads the
-schematic files and says how they read: texts on top of each other, and feedback or switch-node nets joined by a
-label on each pin where a wire would show the circuit. `pcbkit check` finds what
-DRC doesn't: floating copper, stubs, loops, pours that reach a single pad, power pads fed only through thin track,
-and courtyards that don't describe their part. DRC's placement checks trust each footprint's courtyard, so one that
-misses pads or the body lets a part be placed on it; `pcbkit courtyards` lists those on a board or in a footprint
-library and with `--fix` redraws them round the pads and body (`--easyeda` draws an imported board's bodies first).
-`pcbkit cleanup` removes duplicate and zero-length segments by editing the file text, because pcbnew's own
-`Remove()` corrupts its bindings mid-run; `--dangling` also peels a router's dead ends, one leaf at a time, so no
-net is ever split. Before an order, KiCadRoutingTools' checkers give a second opinion.
-
-### Simulate the power path
-
-`pcbkit spice` runs an ngspice deck with PSpice compatibility on, which vendor models need, and returns its
-measurements. It reports a run as aborted when ngspice gives up, because a failed run still prints zeros. The
-dodeca control board used this to size a boost converter's load-step margin and to find a supply-mux case where a
-firmware test would have given the wrong answer, which changed the part. siebenuhr's controller
-followed the same approach for its LED converter. The plot below shows its averaged TPS55288 buck-boost model, with
-LED rail voltage and inductor current through load steps, an overload and start-up.
-
-<img src="docs/images/sim-load-steps.png" width="720" alt="Six panels of simulated LED rail voltage and inductor current for load steps, overload and start-up">
-
-### Find what could fail before ordering
-
-The failure-review skill checks each block against its datasheets, the vendor's reference design and what earlier
-boards taught, lists what could go wrong once the boards are back, with how each failure would show up on the
-bench and how to tell it from the others, and settles the doubtful ones by calculation or simulation. It plans test
-points, 0 Ω links and DNP options for the measurements and rework a finding might need, and ends with a briefing for
-the user to decide from before anything is changed. Each recommendation is tested like a finding, and once the
-accepted changes are made they get a review of their own before the order. Its examples are the dodeca v1.3 power
-review, where a simulation caught a test that would have misread good boards, siebenuhr's analysis of a controller
-that failed in the field, and the sign controller's review of the changes since its first review.
-
-### Know what the board costs
-
-bomi keeps the BOM in sync with the schematic and refreshes stock and price from JLC/LCSC; `pcbkit jlc` searches
-the local parts cache for quick look-ups. A project's BOM.md lists the cost drivers, the Extended-part fees per
-order, the cheap swaps, and any part whose stock is low enough to worry about.
-
-<img src="docs/images/bom-cost-drivers.png" width="560" alt="BOM.md excerpt: cost drivers table with LCSC codes, unit cost at 1 and 100 boards, and notes on Extended-part fees">
-
-### Reuse parts that worked
-
-[library/PARTS.md](library/PARTS.md) collects the ICs and drivers that have been on built boards, with the circuit
-notes that made them work and the ones that went wrong: level shifters that isolate an unpowered rail versus ones that
-back-power it, LED drivers that need only a resistor, the USB-PD sink whose 5 V contract couldn't carry a clock's LEDs.
-`pcbkit parts` lists the catalog with current stock and price from the parts cache and flags anything that has run low.
-Two of the proven parts show zero stock in the 2026-09-29 cache, which is the reason to check when a design starts.
-
-### Order it
-
-`pcbkit previews` makes the schematic PDF, copper PNGs, a hand-assembly map, a 1:1 print and 3-D renders.
-`pcbkit fab` writes the JLC Gerber zip, and BOM and CPL variants with rotation corrections for each way JLC can
-assemble it (the front, the back, both sides: Economic PCBA does one side). Beside them, `PLACEMENT-<board>.md` is
-a checklist for JLC's placement preview, to go through before paying: every placed part whose orientation matters
-(more than two pads, or a polarity mark), with the rotation rule behind its CPL angle, when that rule was last seen
-right in the preview, and where its pad 1 should be, in the Gerbers' frame. With `--houses jlcpcb,pcbway`, it also
-writes PCBWay's BOM (manufacturer and part number, from konnect's parts cache, which it then needs) and centroid.
-The Gerbers have the mask openings subtracted from the silkscreen; a board that prints inside them on purpose takes
-`--keep-silk-in-mask`, or `keep_silk_in_mask = true` in its `pcbkit.toml` profile. `pcbkit panel` builds KiKit
-assembly panels with rails, fiducials and tooling holes, and runs DRC on each.
-
-`pcbkit release` is the step before an order. It checks every board, and gives each one that changed since its last
-release the next version, stamped into the title blocks of the board and its schematic, so the KiCad files always
-say which version they are, and the silkscreen's `${REVISION}` and `${ISSUE_DATE}` print it: a minor version (v1.0
-to v1.1) when its netlist or BOM changed, a patch (v1.0.1) when only its layout did, a major one when you say so (a
-new pinout, outline or GPIO map). `--dry-run` says which, and what changed; `pcbkit changelog` drafts the project's
-CHANGELOG.md from the same comparison, with the layout's changes too. That
-version's Gerbers, BOMs, placement files and PDFs go into a committed release folder, with a frozen copy of its KiCad
-project that opens beside any other version. A KiCad save that only reshuffles the file, or a schematic note, doesn't
-count as a change: only a different netlist, BOM or fab output does, and zone fills that another KiCad refills within
-0.005 mm of the release's don't.
-`pcbkit production` keeps one overview in PRODUCTION.md: every board's version, the orders in production with their
-state, order numbers and prices, parts costs, boards and parts in stock, and what is short. Orders and stock are
-small TOML files that you or an agent edit as things happen. A project's `pcbkit.toml` says where everything goes and
-can turn either feature off.
 
 ## Skills
 
@@ -400,4 +330,6 @@ Since then: EasyEDA import, enclosure outlines and fit-check prints (2026-10-10/
 from the dodeca v1.3 simulations), the proven-parts catalog (2026-10-11), the router (2026-10-12), placement
 scoring with the router's pad and hole fixes (2026-10-14, from Orbitchron), the router's time limits
 (2026-10-17, for esp32-s3-ha-node), the failure-review skill (2026-10-18, from the dodeca and siebenuhr reviews), and the
-negotiated router (2026-11-01, from siebenuhr's routing research).
+negotiated router (2026-11-01, from siebenuhr's routing research), schematic sheets drawn in blocks and
+`sch-lint` (2026-11-16, from siebenuhr's sheets), and the overview page (2026-11-17, from Orbitchron and the
+message sign).

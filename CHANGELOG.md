@@ -31,6 +31,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   instead (JLC's "Via Covering" page, 2026-11-16). pcb-kit: how to generate a schematic sheet was one table cell
   of 2,900 characters and is now `skills/pcb-kit/schematic-sheets.md`, in headed sections with every instruction
   and example kept; the table says what it covers and links to it.
+- **The README leads with pictures.** It opens with eleven boards from the projects, rendered alike, and its tour
+  of what the kit does is a few lines and a picture each. New pictures: a schematic sheet drawn in blocks
+  (siebenuhr's LED power), three overview and review pages built in the projects (Orbitchron, DodecaRGB, the
+  spotlight's housing), the same project as `pcbkit overview` draws it, and a ratsnest before and after its small
+  parts moved. The paragraphs it lost are in the skills, docs/ROUTER.md, docs/HARVEST.md and this file.
+- **The project-overview skill has "The pattern".** What the three pages built by hand share: where it stands
+  at the top, what changed since the user last looked, a viewer to work, one block at a time, decisions sorted by
+  whose move it is, a source on every card, one set of status chips, and the rounds kept.
 
 ## [0.5.0] - 2026-11-16
 

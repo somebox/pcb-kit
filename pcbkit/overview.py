@@ -16,10 +16,11 @@ note gave it.
 
 Pictures are kept as they were when their round was first built, in docs/overview/img/ (index.toml there says which
 round uses which): a board's turntable and layers under the hash of the board file and of the project's own 3-D
-models it uses, so a board that did not change costs nothing in the next round. `--render` draws the newest round's again, whatever is there, and leaves a set an
-earlier round uses as it is. Where nothing can be rendered (`--no-render`, no KiCad) the stills of `pcbkit previews`
-stand in, if they are of this board (their SOURCE.txt) or don't say. The page links the pictures; `--single` puts
-them inside the file (all of the newest round's, one a view for the earlier ones).
+models it uses, so a board that did not change costs nothing in the next round. `--render` draws the newest round's
+again, whatever is there, and leaves a set an earlier round uses as it is. Where nothing can be rendered
+(`--no-render`, no KiCad) the stills of `pcbkit previews` stand in, if they are of this board (their SOURCE.txt) or
+don't say. The page links the pictures; `--single` puts them inside the file (all of the newest round's, one a view
+for the earlier ones).
 
 The fields are listed in skills/project-overview/round-file.md; docs/CONVENTIONS.md, "The overview page", says what
 the page is for. `[overview]` in pcbkit.toml: dir, page, frames, size, layer_width, base (a URL the sources link to).

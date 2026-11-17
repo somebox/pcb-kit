@@ -11,6 +11,11 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 
 ## Ground rules
 
+- **The order is the last step, and it is done once.** Before a cart is touched, tell the user which released
+  versions go in and what changed since the last review or order, list any design change still open, and wait for
+  their OK. The forms, the BOM page and the viewer are many steps. A change to the board after that is its next
+  release, a patch at least, and the steps again. The one fix made in the order itself is a part turned in JLC's
+  viewer (below); its corrected rule gives the board its next version at the next release.
 - **The user pays.** Leave every order in the cart, unpaid and unticked for checkout. Then tell the user what each
   cart holds and what it costs.
 - The carts may hold items from other projects. Leave them alone. Removing or replacing one of this project's own
@@ -25,8 +30,8 @@ JLC's placement viewer caught rotation errors in three kinds of part from the ki
 1. The checks in this kit's `docs/CONVENTIONS.md`, "Checks before an order", and the project's PRODUCTION.md, and
    the version's section in the project's CHANGELOG.md, checked against `pcbkit changelog`: what changed in the
    boards being ordered, and anything a change needs elsewhere (a firmware setting, a part bought by hand).
-2. The files from `pcbkit release`, or from `pcbkit fab` for a quote. Regenerate them after any change to the kit's
-   rotation table. Write down the placement count of the files you will upload: `pcbkit fab` prints it for each
+2. The files from `pcbkit release` for an order; `pcbkit fab`'s will do for a quote alone. Regenerate them after
+   any change to the kit's rotation table. Write down the placement count of the files you will upload: `pcbkit fab` prints it for each
    variant; for a release it is the CPL's rows less the header. JLC's BOM page must come to the same total.
    Beside the BOM and CPL is the checklist for the placement viewer: `PLACEMENT-<board>-<label>-jlcpcb.md` in the
    release folder and the order's `upload/`, or `PLACEMENT-<board>.md` from `pcbkit fab`. It lists every placed part
@@ -79,7 +84,8 @@ has the fee table.
 1. The side, Standard or Economic, the quantity, and the BOM and CPL for those sides. A release folder holds one
    pair, `BOM-<board>-<label>-jlcpcb.csv` and `CPL-<board>-<label>-jlcpcb.csv`, for the sides the board's placed
    parts are on: the front or the back when the other side has none, both otherwise. For another split, upload
-   `pcbkit fab`'s `-front`, `-back` or `-both` pair. The sides in the form must be the CPL's: `top` and `bottom`
+   `pcbkit fab`'s `-front`, `-back` or `-both` pair, made from the board as released: `pcbkit release --dry-run`
+   must give the board no new version. The sides in the form must be the CPL's: `top` and `bottom`
    rows need both sides assembled, only `top` rows the top side, only `bottom` rows the bottom side.
 2. **The BOM page:**
    - It must say "Your BOM: JLCPCB Part #", so parts are matched by LCSC number, not by value.

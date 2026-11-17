@@ -187,9 +187,10 @@ The failure-review skill checks each block against its datasheets, the vendor's 
 boards taught, lists what could go wrong once the boards are back, with how each failure would show up on the
 bench and how to tell it from the others, and settles the doubtful ones by calculation or simulation. It plans test
 points, 0 Ω links and DNP options for the measurements and rework a finding might need, and ends with a briefing for
-the user to decide from before anything is changed. Its examples are the dodeca v1.3 power review, where a
-simulation caught a test that would have misread good boards, and siebenuhr's analysis of a controller that failed
-in the field.
+the user to decide from before anything is changed. Each recommendation is tested like a finding, and once the
+accepted changes are made they get a review of their own before the order. Its examples are the dodeca v1.3 power
+review, where a simulation caught a test that would have misread good boards, siebenuhr's analysis of a controller
+that failed in the field, and the sign controller's review of the changes since its first review.
 
 ### Know what the board costs
 
@@ -303,8 +304,8 @@ agent which commands to run, under Claude Code's usual permission prompts:
   database (from bouni/kicad-jlcpcb-tools) into `~/.konnect/`, and `pcbkit jlc` and `pcbkit parts` read that copy
   offline.
 - bomi looks parts up on jlcpcb.com (stock, price, details) and downloads datasheet PDFs from lcsc.com. Its
-  datasheet summaries, which the failure-review skill asks for, send the datasheet to OpenRouter with the key you
-  set up in bomi; without a key, read the PDF instead.
+  datasheet summaries, which the failure-review skill uses to find a section before it reads the PDF, send the
+  datasheet to OpenRouter with the key you set up in bomi; without a key, read the PDF alone.
 - The failure-review skill has the agent search the web for datasheets, reference designs, application notes, open
   designs using a part and vendor forums. Power-sim projects download vendors' SPICE models with a script of their
   own.

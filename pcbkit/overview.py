@@ -119,32 +119,42 @@ def notes_on(rnd, id_):
     return sorted((n for n in rnd.get("note", []) if n.get("on", "status") == id_), key=lambda n: str(n.get("date", "")))
 
 
-def effective(rnd, id_):
-    """An item as it stands: (mark, chosen option id or "", state). The mark is its own, then that of its latest
-    note that has one; the state word likewise, and a note that changes the mark without giving a state leaves the
-    mark's own name, since the old word no longer describes it. A decision needs no mark of its own: it is the
-    user's (decision) unless it says what it waits for (blocked, in work), and it is open until a note chooses an
-    option or marks it done."""
+def standing(rnd, id_):
+    """An item as it stands after its notes, in the order they were made: (mark, chosen option id or "", state,
+    whether a decision is taken). The mark is its own, then that of its latest note that has one; the state word
+    likewise, and a note that changes the mark without giving a state leaves the mark's own name, since the old
+    word no longer describes it. A decision needs no mark of its own: it is the user's (decision) unless it says
+    what it waits for (blocked, in work). It is taken once a note chooses an option or marks it done, and stays
+    taken whatever a later note marks it (blocked: the part chosen is out of stock), which is about carrying it
+    out. Only a note that marks it decision again gives it back to the user: open, with no choice."""
     kind, it = items(rnd)[id_]
     mark, chose, state = it.get("mark", "decision" if kind == "decision" else "todo"), "", squeeze(it.get("state"))
+    taken = False
     for n in notes_on(rnd, id_):
         was = mark
         if n.get("chose"):
-            chose, mark = n["chose"], "done"
+            chose, mark, taken = n["chose"], "done", True
         if n.get("mark"):
             mark = n["mark"]
+            if mark == "done":
+                taken = True
+            elif mark == "decision":
+                chose, taken = "", False
         if n.get("state"):
             state = squeeze(n["state"])
         elif mark != was:
             state = ""
-    return mark, chose, state
+    return mark, chose, state, taken
+
+
+def effective(rnd, id_):
+    """An item's mark, chosen option and state as they stand (standing)."""
+    return standing(rnd, id_)[:3]
 
 
 def decided(rnd, id_):
-    """Whether a decision was taken: a note chose one of its options, or marked it done. A choice stands whatever a
-    later note marks it (blocked: the part chosen is out of stock): that is about carrying it out."""
-    mark, chose, _ = effective(rnd, id_)
-    return bool(chose) or mark == "done"
+    """Whether a decision is taken as it stands (standing)."""
+    return standing(rnd, id_)[3]
 
 
 def open_decisions(rnd):

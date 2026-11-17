@@ -141,6 +141,9 @@ them once, under its title.
 - An open decision needs no mark: it shows `decision` until a note chooses an option (`--chose`) or marks it
   `done`. One that has to wait can say so, in the round file or by a note (`--on antenna --mark blocked --state
   "waits for the range test"`): it stays among the decisions, and the next round starts with it as it stands.
+- A decision that was taken stays taken. A later note may mark it `blocked` or `attention` (the part chosen is out
+  of stock): that shows beside the choice and does not ask again. Only a note that marks it `decision` gives it
+  back to the user, without the choice.
 - Do not invent a seventh mark or use a mark as decoration. If two marks fit, take the one that tells the user
   whether they have to act.
 

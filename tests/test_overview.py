@@ -247,6 +247,37 @@ class Standing(Case):
         rnd = tomlw.load(overview.new_round(self.project, self.P, today=D(2026, 12, 1)))
         self.assertNotIn("decision", rnd)                              # and the next round does not ask it again
 
+    def test_the_order_of_notes_on_a_decision(self):
+        cases = [
+            ("chosen, then blocked", [dict(chose="b"), dict(mark="blocked")], ("blocked", "b", ""), True),
+            ("dropped, then blocked", [dict(mark="done"), dict(mark="blocked")], ("blocked", "", ""), True),
+            ("dropped, then a risk noted", [dict(mark="done"), dict(mark="attention", state="see F4")], ("attention", "", "see F4"), True),
+            ("chosen, then given back", [dict(chose="b"), dict(mark="decision")], ("decision", "", ""), False),
+            ("dropped, then given back", [dict(mark="done"), dict(mark="decision", state="asked again")], ("decision", "", "asked again"), False),
+            ("given back, then chosen again", [dict(chose="b"), dict(mark="decision"), dict(chose="a")], ("done", "a", ""), True),
+            ("waited, then chosen", [dict(mark="blocked"), dict(chose="a")], ("done", "a", ""), True),
+            ("chosen twice", [dict(chose="a"), dict(chose="b")], ("done", "b", ""), True),
+            ("only waiting", [dict(mark="blocked"), dict(mark="work")], ("work", "", ""), False),
+        ]
+        for what, notes, stands, taken in cases:
+            with self.subTest(what=what):
+                r = self.rnd(*[dict(dict(on="antenna", date=D(2026, 11, 17 + i), text="A note."), **n) for i, n in enumerate(notes)])
+                self.assertEqual(overview.effective(r, "antenna"), stands)
+                self.assertEqual(overview.decided(r, "antenna"), taken)
+                self.assertEqual(bool(overview.open_decisions(r)), not taken)
+
+    def test_a_decision_given_back_is_asked_again_in_the_next_round(self):
+        one = self.rnd(dict(on="antenna", chose="b", text="Decided: u.FL."),
+                       dict(on="antenna", date=D(2026, 11, 20), mark="decision", text="The u.FL does not fit the case: yours again."))
+        self.put(1, one)
+        self.assertEqual(self.build(), 0, self.said)
+        page = self.page()
+        self.assertIn("1 decision for you", page)
+        self.assertNotIn('<span class="flag chosen">', page)
+        rnd = tomlw.load(overview.new_round(self.project, self.P, today=D(2026, 12, 1)))
+        self.assertEqual([d["id"] for d in rnd["decision"]], ["antenna"])
+        self.assertNotIn("mark", rnd["decision"][0])
+
     def test_a_decision_in_a_round_file_can_say_what_it_waits_for_but_not_that_it_is_done(self):
         r = base()
         r["decision"][0].update(mark="blocked", state="waits for the range test")

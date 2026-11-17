@@ -7,6 +7,22 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Added
+- **`pcbkit overview` and the project-overview skill: the project on one page, a round at a time.** The overview
+  page of 0.5.0's conventions had no way to be made. A round is now a small file, `docs/overview/r<N>.toml`, that
+  an agent writes from the project's records: status, boards, topics, the decisions waiting for the user with
+  their options and the one recommended, cost, supply, fab and orders, each naming its source. `pcbkit overview`
+  makes `docs/overview.html` from the rounds: one drawing sheet with the rounds as its revision table, six status
+  marks (done, in work, not started, needs attention, blocked, your decision) with one legend, and a viewer that
+  turns each board by drag (frames from `kicad-cli pcb render`) and switches its layers (each on its own, stacked,
+  from the front or mirrored from the back), with the project's own pictures as further tabs. No network, light and
+  dark, phone width. `pcbkit overview new` starts the next round from the last, `note` adds a dated note that can
+  change an item's mark and state, `--check` names a bad mark, a decision without a recommendation, a source the
+  project doesn't have, an edited earlier round and a stale page, and `--single` writes a copy with its pictures
+  inside. Each round's pictures are kept as they were in `docs/overview/img/`, a board unchanged between rounds
+  once. `pcbkit previews`' pictures are unchanged; its SVG and render steps are now `layer_png` and `render_png`,
+  with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
+
 ## [0.5.0] - 2026-11-16
 
 ### Added

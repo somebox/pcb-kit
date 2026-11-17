@@ -88,6 +88,23 @@ an SVG and rasterises it with `rsvg-convert`; the visual-review skill has the re
 
 <img src="docs/images/overview-analog-voice.webp" width="720" alt="Overview sheet of the analog voice Eurorack module: front panel render in three-quarter view, back of the PCB with colour-coded sections, signal-flow block diagram, knob colour legend and a to-scale side view">
 
+### Keep the whole project on one page
+
+After each design round the user gets `docs/overview.html`: the project's status and what is next, a viewer that
+turns each board by drag and switches its layers, a few lines per block, the decisions waiting for them with the
+options side by side and one recommended, and cost, supply, fab and orders in a line each. One set of six marks
+says what state everything is in. Every round stays on the page and can be switched to; a small change is a dated
+note under its item. An agent writes a small file per round, `docs/overview/r<N>.toml`, from what the project
+records, and `pcbkit overview` draws the boards and makes the page; the project-overview skill has the method.
+
+```bash
+pcbkit overview new                 # the next round's file, started from the last one and the releases
+pcbkit overview --check             # a bad mark, a missing source, an edited earlier round, a stale page
+pcbkit overview                     # docs/overview.html, with each board's turntable and layers
+pcbkit overview note "Paid: JLC W20261118." --mark work --state "boards ordered"
+pcbkit overview --single build/overview.html    # one file with its pictures inside, to send
+```
+
 ### Place by the ratsnest, route the winner
 
 A full route of a dense board can take most of an hour; a ratsnest score takes milliseconds. `pcbkit place-score`
@@ -249,6 +266,7 @@ can turn either feature off.
 | [routing](skills/routing/SKILL.md) | laying a board's signals again with `pcbkit reroute`: settings, reading the result, what to check before adopting it |
 | [failure-review](skills/failure-review/SKILL.md) | before an order: datasheets and reference designs, failure modes and how to diagnose them, test points, a briefing before any change |
 | [fab-order](skills/fab-order/SKILL.md) | the order itself, in the user's browser: what JLC assembles, the PCB and assembly forms, the BOM page's traps, checking every part in the placement viewer against the release's placement checklist, the LCSC cart for hand assembly; never paying |
+| [project-overview](skills/project-overview/SKILL.md) | the project on one page for the user, `docs/overview.html`: what goes into a round, a new round or a note, the six status marks, keeping it brief |
 
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the project layout and writing style they all assume: dated status
 lines, numbered decisions, generated files that say what made them.
@@ -333,6 +351,7 @@ agent which commands to run, under Claude Code's usual permission prompts:
 | `pcbkit netview BOARD OUT.svg X0 Y0 X1 Y1 [--layer] [--detail] [--compare BOARD=TITLE] [--png]` | a region of one layer coloured by net, for reviewing power stages; `--detail` adds mask, paste and via holes in paste, `--compare` puts several boards side by side |
 | `pcbkit place-score BOARD [--study S.py] [--planes GND,..] [--search] [--write P.json] [--svg OUT.svg] [--png]` | ratsnest score of a placement (side-aware crossings, length, zones, free pin/gate choices); with a study, coordinate descent over groups of parts; the ratsnest picture |
 | `pcbkit spice DECK.cir [--vendor DIR] [--gear-retry] [--keep DIR]` | ngspice with PSpice compatibility in a scratch directory; prints `.meas` values and `wrdata` files, exit 1 when the run aborted |
+| `pcbkit overview [new \| note TEXT --on ID] [--check] [--single [OUT]] [--render]` | the project on one page, `docs/overview.html`, from `docs/overview/r1.toml`, `r2.toml`, ...: status, a viewer that turns each board and switches its layers, topics, decisions with options, cost and orders, every round kept. `new` starts the next round from the last, `note` adds a dated note to one, `--check` names what is wrong, `--single` writes a copy with its pictures inside |
 | `pcbkit new DIR --board NAME [--title ..] [--description ..]` | scaffold a project: README/DESIGN/LAYOUT/PRODUCTION from the templates, `boards/NAME/` empty KiCad project with lib tables, `lib/`, `scripts/` (previews, fab, builder glue), bomi, first git commit |
 | `pcbkit outline BOARD enclosure.json [--fit-check PDF] [--parts]` | board outline (rounded, notched or cut around bosses), NPTH mounting holes with standoff courtyards (and a screw-head keep-out with `"head"`), keep-out rule areas over bosses, reference geometry and notes, from a JSON measured off the enclosure; rerunnable. `--fit-check` adds the 1:1 print, `--parts` the placed parts on it |
 | `pcbkit import-easyeda SCH.json PCB.json boards/<b> --name <b> --lib lib --lib-name <project> [--pin REF:NAME=NUM] [--no-fetch]` | EasyEDA Std exports to a linked KiCad project: converted schematic (every sheet; net ports and labels as global labels), symbols and footprints merged into `lib/` (boards can share it), PCB nets renamed, importer fixes (paste margins, User.4 keep-outs, outline gaps, loose pads board-only, bodies drawn on fab from EasyEDA's component shapes, courtyards that miss pads or the body redrawn, on the board and in the library; `--keep-courtyards` only lists them), 3-D models fetched from EasyEDA as VRML into `lib/3dmodels/` and placed by EasyEDA's outline (`--no-fetch`: only those already there), ERC/DRC/parity run |
@@ -360,11 +379,11 @@ from pcbkit.spice import run                 # ngspice deck -> measurements, wrd
 ## Repository layout
 
 ```
-pcbkit/            the package (checks/, release/, config.py, production.py, tomlw.py, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
+pcbkit/            the package (checks/, release/, config.py, production.py, overview.py, tomlw.py, schematic.py, konnect.py, parts.py, silk.py, route.py, placement.py, netview.py, spice.py, import_easyeda.py, mech.py, new_project.py)
 pcbkit/reroute/    `pcbkit reroute`: the flow and the KiCad side of the negotiated router
 pcbkit_router/     the router itself, under its own Python (numba, numpy, scipy, pillow)
 bench/             corpus.json (the boards a router change is judged on, each at a pinned commit), baseline.json (their results)
-pcbkit/data/       jlc/corrections.csv (rotations, dated where JLC's preview showed them right), panel/ (KiKit presets, tabs plugin, post script), templates/blank.kicad_pcb
+pcbkit/data/       jlc/corrections.csv (rotations, dated where JLC's preview showed them right), panel/ (KiKit presets, tabs plugin, post script), overview/page.html (the overview page's styles and script), templates/blank.kicad_pcb
 skills/            SKILL.md folders, one per workflow (Claude Code plugin manifest in .claude-plugin/, pi manifest in package.json)
 templates/project  README/DESIGN/LAYOUT/PRODUCTION/CHANGELOG skeletons, pcbkit.toml and .gitignore for a new hardware repo
 library/           PARTS.md (parts that worked, with notes); shared symbols, footprints and blocks as they are harvested

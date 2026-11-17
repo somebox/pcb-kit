@@ -278,6 +278,27 @@ class Standing(Case):
         self.assertEqual([d["id"] for d in rnd["decision"]], ["antenna"])
         self.assertNotIn("mark", rnd["decision"][0])
 
+    def test_the_word_a_reopening_note_gave_goes_into_the_next_round(self):
+        one = self.rnd(dict(on="antenna", chose="b", text="Decided: u.FL."),
+                       dict(on="antenna", date=D(2026, 11, 20), mark="decision", state="asked again: case changed", text="It does not fit."))
+        self.put(1, one)
+        self.assertEqual(self.build(), 0, self.said)
+        path = overview.new_round(self.project, self.P, today=D(2026, 12, 1))
+        rnd = tomlw.load(path)
+        self.assertEqual((rnd["decision"][0].get("mark"), rnd["decision"][0].get("state")), (None, "asked again: case changed"))
+        rnd.update(label="Next", state="waiting", summary="One decision is yours again.")
+        write(path, overview.write_round(rnd))
+        self.assertEqual(self.check(), ([], []))                       # a state without a mark is a round the check takes
+        self.assertEqual(overview.effective(overview.load_rounds(self.P["dir"])[1], "antenna"), ("decision", "", "asked again: case changed"))
+        self.assertEqual(self.build(), 0, self.said)
+        page = self.page()
+        decision = page[page.index('id="r2-antenna"'):page.index("</article>", page.index('id="r2-antenna"'))]
+        self.assertIn('<span class="sr">Your decision: </span>asked again: case changed', decision)
+        long = dict(base(), decision=[dict(base()["decision"][0], state="a state that goes on and on for far too long")])
+        self.put(1, long)
+        os.remove(path)
+        self.assertIn("decision 'antenna': state", "\n".join(self.check()[1]))
+
     def test_a_decision_in_a_round_file_can_say_what_it_waits_for_but_not_that_it_is_done(self):
         r = base()
         r["decision"][0].update(mark="blocked", state="waits for the range test")

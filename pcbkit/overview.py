@@ -368,7 +368,7 @@ def check_rounds(rounds, P, project, index):
                 (f"topic {t.get('id')!r}", t.get("text"), LIMITS["topic"]) for t in rnd.get("topic", [])]:
             if len(squeeze(text)) > limit:
                 late(f"{k} is {len(squeeze(text))} characters; keep it under {limit} and link the rest")
-        for what, it in marked:
+        for what, it in marked + [(f"decision {d.get('id')!r}", d) for d in rnd.get("decision", []) if "mark" not in d]:
             if len(squeeze(it.get("state"))) > LIMITS["state"]:
                 late(f"{what}: state {squeeze(it.get('state'))!r} is long; a state is a few words beside its mark")
         if len(rnd.get("topic", [])) > LIMITS["topics"]:
@@ -633,7 +633,9 @@ def new_round(project, P, today=None, say=print):
             mark, _, state = effective(last, d["id"])
             d = {k: v for k, v in d.items() if k not in ("mark", "state")}
             if mark != "decision":
-                d.update(mark=mark, **({"state": state} if state else {}))
+                d["mark"] = mark
+            if state:                                     # what its last note said of it, whichever mark it has
+                d["state"] = state
             rnd["decision"].append(d)
         known = {b["id"]: b for b in rnd["board"]}
         for b in rec["board"]:

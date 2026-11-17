@@ -27,7 +27,7 @@ is lower-case letters, digits and hyphens.
 | --- | --- | --- |
 | `[[board]]` | `id`, `version`, `mark`, `state`, `text`, `source` | `id` is the board's file name without `.kicad_pcb`, as it is: `controller_v2`, `Main` |
 | `[[topic]]` | `id`, `title`, `mark`, `state`, `text`, `picture`, `source` | a block or a subject: power, the MCU, the case, firmware, bring-up. `picture` is a file of the project. A topic whose words changed since the round before is tagged "changed", a new id "new" |
-| `[[decision]]` | `id`, `ref`, `question`, `text`, `blocks`, `recommend`, `why`, `source` | `ref` is its number in the project (O9, Q3); `blocks` what waits on it; `recommend` the id of an option; `why` in a line |
+| `[[decision]]` | `id`, `ref`, `question`, `text`, `blocks`, `recommend`, `why`, `source`; `mark`, `state` | `ref` is its number in the project (O9, Q3); `blocks` what waits on it; `recommend` the id of an option; `why` in a line. `mark` and `state` only when it is not simply the user's to take: `blocked`, "waits for the range test" |
 | `[[decision.option]]` | `id`, `text`, `effect`, `cost` | two to four after each decision |
 | `[[decided]]` | `ref`, `text`, `source` | a decision taken in this round, by its number in DESIGN.md |
 | `[[fact]]` | `id`, `mark`, `state`, `value`, `text`, `date`, `source` | `id` is `cost`, `supply`, `fab` or `orders`; `value` the number or phrase; `date` when it was taken |

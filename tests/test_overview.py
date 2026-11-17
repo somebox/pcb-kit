@@ -214,6 +214,31 @@ class Standing(Case):
         self.assertEqual(overview.effective(self.rnd(dict(on="antenna", chose="b", text="Decided (D2).")), "antenna")[:2], ("done", "b"))
         self.assertEqual(overview.effective(self.rnd(dict(on="antenna", mark="done", text="Dropped.")), "antenna")[:2], ("done", ""))
 
+    def test_a_decision_that_waits_is_still_open(self):
+        waiting = dict(on="antenna", mark="blocked", state="waits for the range test", text="Measure first.")
+        r = self.rnd(waiting)
+        self.assertEqual(overview.effective(r, "antenna"), ("blocked", "", "waits for the range test"))
+        self.assertEqual([d["id"] for d in overview.open_decisions(r)], ["antenna"])
+        for mark in ("work", "attention", "todo"):
+            self.assertEqual(len(overview.open_decisions(self.rnd(dict(on="antenna", mark=mark, text="Later.")))), 1)
+        self.assertEqual(overview.open_decisions(self.rnd(waiting, dict(on="antenna", date=D(2026, 11, 20), chose="b", text="D2."))), [])
+        self.put(1, r)
+        self.assertEqual(self.build(), 0, self.said)
+        page = self.page()
+        self.assertIn("1 decision for you", page)
+        decision = page[page.index('id="r1-antenna"'):page.index("</article>", page.index('id="r1-antenna"'))]
+        self.assertIn('<article class="decision" id="r1-antenna">', page)
+        self.assertIn('<span class="sr">Blocked: </span>waits for the range test', decision)
+
+    def test_a_decision_in_a_round_file_can_say_what_it_waits_for_but_not_that_it_is_done(self):
+        r = base()
+        r["decision"][0].update(mark="blocked", state="waits for the range test")
+        self.put(1, r)
+        self.assertEqual(self.check(), ([], []))
+        self.assertEqual(overview.effective(r, "antenna"), ("blocked", "", "waits for the range test"))
+        self.assertIn("goes under [[decided]]", self.problems(lambda r: r["decision"][0].update(mark="done")))
+        self.assertIn("mark 'later'", self.problems(lambda r: r["decision"][0].update(mark="later")))
+
     def test_the_page_counts_what_is_still_open(self):
         self.put(1, self.rnd(dict(on="antenna", chose="b", text="Decided (D2).")))
         self.assertEqual(self.build(), 0)
@@ -772,9 +797,28 @@ class NewRound(Case):
         self.assertEqual([(t["id"], t["mark"], t["state"]) for t in rnd["topic"]],
                          [("power", "done", "measured"), ("mcu", "work", "waits for the bench")])
         self.assertEqual([d["id"] for d in rnd["decision"]], ["finish"])   # the decided one has gone
+        self.assertNotIn("mark", rnd["decision"][0])
         self.assertNotIn("note", rnd)
         self.assertNotIn("decided", rnd)
         self.assertEqual(rnd["view"], one["view"])
+
+    def test_the_next_round_keeps_a_decision_that_waits(self):
+        one = base()
+        one["decision"] += [dict(one["decision"][0], id="finish", question="Which finish?"),
+                            dict(one["decision"][0], id="case", question="Which case?")]
+        one["note"] = [dict(date=D(2026, 11, 17), on="antenna", mark="blocked", state="waits for the range test", text="Measure first."),
+                       dict(date=D(2026, 11, 17), on="finish", mark="attention", text="The quote is late."),
+                       dict(date=D(2026, 11, 18), on="case", mark="done", text="Dropped: no case.")]
+        self.put(1, one)
+        self.assertEqual(self.build(), 0, self.said)
+        path = overview.new_round(self.project, self.P, today=D(2026, 12, 1))
+        rnd = tomlw.load(path)
+        self.assertEqual([(d["id"], d.get("mark"), d.get("state")) for d in rnd["decision"]],
+                         [("antenna", "blocked", "waits for the range test"), ("finish", "attention", None)])
+        rnd.update(label="Next", state="waiting", summary="Two decisions wait.")
+        write(path, overview.write_round(rnd))
+        self.assertEqual(self.check()[0], [])
+        self.assertEqual([d["id"] for d in overview.open_decisions(overview.load_rounds(self.P["dir"])[1])], ["antenna", "finish"])
 
     def test_the_records_bring_a_released_board_up_to_date(self):
         os.makedirs(os.path.join(self.root, "releases", "demo"))
@@ -913,6 +957,21 @@ class Check(Case):
         self.assertEqual(self.build(check=True), 1)
         self.assertIn("docs/overview.html is not what the rounds say", "\n".join(self.said))
 
+    def test_a_check_tells_what_is_wrong_with_a_round_from_what_a_build_does(self):
+        # the skill's order: check the round, build, check again. Before the first build only the build is left
+        self.put(1, dict(base(), mark="ok"))
+        self.assertEqual(self.build(check=True), 1)
+        self.assertEqual([line.split(":")[0] for line in self.said], ["problem"])       # the round first: nothing about building yet
+        self.put(1, base())
+        self.assertEqual(self.build(check=True), 1)
+        self.assertEqual(self.said, ["to build: r1: its pictures are not made yet (pcbkit overview)"])
+        self.assertEqual(self.build(), 0, self.said)
+        self.assertEqual(self.build(check=True), 0)
+        self.assertEqual(self.said, [])                                # and after the build the check is silent
+        overview.add_note(self.P, "Paid.", today=D(2026, 11, 18))
+        self.assertEqual(self.build(check=True), 1)
+        self.assertEqual(self.said, ["to build: docs/overview.html is not what the rounds say (pcbkit overview)"])
+
     def test_check_writes_nothing(self):
         self.put(1, base())
         self.build(check=True)
@@ -942,6 +1001,8 @@ class Wiring(unittest.TestCase):
         for mark, _ in overview.MARKS:
             self.assertIn('id="g-%s"' % mark, page)
             self.assertIn(".mk-%s " % mark, page)
+        self.assertIn("ArrowUp: [0, 1]", page)                         # a zoomed view moves by the arrow keys too
+        self.assertIn("use the arrow keys to move", page)
 
 
 if __name__ == "__main__":

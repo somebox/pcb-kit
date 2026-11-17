@@ -4,7 +4,8 @@
     pcbkit overview new             start the next round: the last one carried forward, boards from the records
     pcbkit overview note "TEXT" [--on ID] [--mark MARK] [--state "WORDS"] [--chose OPTION] [--round N]
                                     add a dated note to a round (the newest), then build
-    pcbkit overview --check         problems (exit 1) and watch lines; writes nothing, so it goes with none of the others
+    pcbkit overview --check         what is wrong with the rounds, what a build has still to do, and watch lines;
+                                    writes nothing, so it goes with none of the others; exit 0 when nothing is left
     pcbkit overview --single [OUT]  also a copy with its pictures inside, to send or publish
 
 A round file is the briefing, not the record: the status, the boards, a few lines per topic, the decisions waiting for
@@ -70,7 +71,7 @@ MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp
 ORDER = {"": ("date", "title", "about", "label", "mark", "state", "summary", "changes", "next", "links"),
          "board": ("id", "version", "mark", "state", "text", "source"),
          "topic": ("id", "title", "mark", "state", "text", "picture", "source"),
-         "decision": ("id", "ref", "question", "text", "blocks", "recommend", "why", "source"),
+         "decision": ("id", "ref", "question", "mark", "state", "text", "blocks", "recommend", "why", "source"),
          "decision.option": ("id", "text", "effect", "cost"),
          "decided": ("ref", "text", "source"),
          "fact": ("id", "mark", "state", "value", "text", "date", "source"),
@@ -120,10 +121,11 @@ def notes_on(rnd, id_):
 def effective(rnd, id_):
     """An item as it stands: (mark, chosen option id or "", state). The mark is its own, then that of its latest
     note that has one; the state word likewise, and a note that changes the mark without giving a state leaves the
-    mark's own name, since the old word no longer describes it. A decision has no mark of its own: it is the user's
-    until a note chooses an option or marks it done."""
+    mark's own name, since the old word no longer describes it. A decision needs no mark of its own: it is the
+    user's (decision) unless it says what it waits for (blocked, in work), and it is open until a note chooses an
+    option or marks it done."""
     kind, it = items(rnd)[id_]
-    mark, chose, state = ("decision" if kind == "decision" else it.get("mark", "todo")), "", squeeze(it.get("state"))
+    mark, chose, state = it.get("mark", "decision" if kind == "decision" else "todo"), "", squeeze(it.get("state"))
     for n in notes_on(rnd, id_):
         was = mark
         if n.get("chose"):
@@ -135,6 +137,13 @@ def effective(rnd, id_):
         elif mark != was:
             state = ""
     return mark, chose, state
+
+
+def open_decisions(rnd):
+    """The decisions of a round that are not finished: neither chosen nor marked done. One that a note marked
+    blocked or in work (waiting for a measurement) is as open as before, and is carried into the next round."""
+    its = items(rnd)
+    return [d for d in rnd.get("decision", []) if d.get("id") in its and effective(rnd, d["id"])[0] != "done"]
 
 
 def squeeze(v):
@@ -224,6 +233,7 @@ def check_rounds(rounds, P, project, index):
                 bad(f"{k} is missing")
         marked = [("the round", rnd)] + [(f"{k} {it.get('id')!r}", it) for k in ("board", "topic", "fact")
                                            for it in rnd.get(k, [])]
+        marked += [(f"decision {d.get('id')!r}", d) for d in rnd.get("decision", []) if "mark" in d]
         for what, it in marked + [(f"a note on {n.get('on', 'status')!r}", n) for n in rnd.get("note", []) if "mark" in n]:
             if it.get("mark") not in MARK:
                 bad(f"{what}: mark {it.get('mark')!r} is not one of {', '.join(MARK)}")
@@ -256,6 +266,8 @@ def check_rounds(rounds, P, project, index):
                 bad(f"decision {d.get('id')!r} has no question")
             if len(opts) < 2 or len(set(opts)) != len(opts) or not all(isinstance(o, str) and o for o in opts):
                 bad(f"decision {d.get('id')!r} needs two or more options, each with its own id")
+            if d.get("mark") == "done":
+                bad(f"decision {d.get('id')!r} is marked done: one that was taken goes under [[decided]], by its number")
             if d.get("recommend") not in opts or not squeeze(d.get("why")):
                 bad(f"decision {d.get('id')!r} needs recommend (one of its options' ids) and why")
             if len(opts) > LIMITS["options"]:
@@ -322,7 +334,7 @@ def check_rounds(rounds, P, project, index):
         if len(rnd.get("note", [])) > LIMITS["notes"]:
             late(f"{len(rnd['note'])} notes; that much change is a new round (pcbkit overview new)")
         if newest:
-            open_ = [d["id"] for d in rnd.get("decision", []) if d.get("id") in its and effective(rnd, d["id"])[0] == "decision"]
+            open_ = [d["id"] for d in open_decisions(rnd)]
             if open_ and effective(rnd, "status")[0] == "done":
                 late(f"the round is marked done with {len(open_)} decision(s) open ({', '.join(open_)})")
             rec = {b["id"]: b for b in records(project)["board"]}
@@ -553,7 +565,13 @@ def new_round(project, P, today=None):
         for kind in ("board", "topic", "fact"):
             now = {it["id"]: effective(last, it["id"]) for it in last.get(kind, [])}
             rnd[kind] = [dict(it, mark=now[it["id"]][0], state=now[it["id"]][2]) for it in last.get(kind, [])]
-        rnd["decision"] = [d for d in last.get("decision", []) if effective(last, d["id"])[0] == "decision"]
+        rnd["decision"] = []
+        for d in open_decisions(last):                    # as it stands: still the user's, or waiting on something
+            mark, _, state = effective(last, d["id"])
+            d = {k: v for k, v in d.items() if k not in ("mark", "state")}
+            if mark != "decision":
+                d.update(mark=mark, **({"state": state} if state else {}))
+            rnd["decision"].append(d)
         known = {b["id"]: b for b in rnd["board"]}
         for b in rec["board"]:
             if b["id"] not in known:
@@ -999,7 +1017,7 @@ def round_html(pg, rnd, prev, rounds):
                    % (rnd["_n"], len(rounds), iso(rnd.get("date")), rounds[-1]["_key"]))
     # status
     mark, _, state = effective(rnd, "status")
-    open_ = [d for d in rnd.get("decision", []) if effective(rnd, d["id"])[0] == "decision"]
+    open_ = open_decisions(rnd)
     out.append('<div class="status" id="%s-status"><div class="st-head"><h2>%s</h2><p class="st-round">Round %d, %s: %s</p></div>'
                % (key, mark_html(mark, state, "big"), rnd["_n"], iso(rnd.get("date")), esc(squeeze(rnd.get("label")))))
     out.append('<div class="st-body"><div class="st-sum">%s' % pg.text(rnd.get("summary")))
@@ -1043,8 +1061,8 @@ def round_html(pg, rnd, prev, rounds):
     if rnd.get("decision"):
         out.append('<div class="block" id="%s-decisions"><h3>Decisions for you</h3>' % key)
         for d in rnd["decision"]:
-            m, chose, _ = effective(rnd, d["id"])
-            head = mark_html(m, "decided" if m == "done" else ("open" if m == "decision" else ""))
+            m, chose, state = effective(rnd, d["id"])
+            head = mark_html(m, "decided" if m == "done" else state or ("open" if m == "decision" else ""))
             ref = '<span class="ref">%s</span> ' % esc(d["ref"]) if d.get("ref") else ""
             out.append('<article class="decision%s" id="%s-%s"><header><h4>%s%s</h4>%s</header>' % (
                 " closed" if m == "done" else "", key, d["id"], ref, pg.inline(squeeze(d.get("question"))), head))
@@ -1135,8 +1153,9 @@ def size(n):
 
 def build(project=None, dir_=None, out=None, single=None, render=True, refresh=False, check=False, say=print,
           renderer=render_set):
-    """Build the page (or, with CHECK, say what is wrong with the rounds and whether the page is theirs).
-    Returns 1 when there are problems."""
+    """Build the page; or, with CHECK, say what is wrong with the rounds (problem), what only a build can settle
+    (to build: pictures not made yet, a page that is not the rounds') and what wants a look (watch), writing
+    nothing. Returns 1 when there are problems, or when a check found something left to build."""
     project = project if isinstance(project, Project) else Project(project)
     P = paths(project, dir_, out)
     rounds = load_rounds(P["dir"])
@@ -1144,18 +1163,18 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
         raise SystemExit(f"no rounds in {P['dir']}: pcbkit overview new")
     index = load_index(P)
     problems, watch = check_rounds(rounds, P, project, index)
-    base = project.cfg["overview"]["base"]
+    base, todo = project.cfg["overview"]["base"], []
     if check:
         for rnd in rounds:
             e = index["round"].get(rnd["_key"], {})
             if any(p not in e.get("pictures", {}) for p in pictures_of(rnd)) or any(
                     v.get("board") and v["board"] not in e.get("sets", {}) for v in rnd.get("view", [])):
-                problems.append(f"{rnd['_key']}: its pictures are not made yet: pcbkit overview")
+                todo.append(f"{rnd['_key']}: its pictures are not made yet")
         problems += missing(P, rounds, index)
-        if not problems:
+        if not problems and not todo:
             page, _ = page_html(rounds, P, index, base=base)
             if not os.path.exists(P["page"]) or open(P["page"], encoding="utf-8").read() != page:
-                problems.append(f"{shown(P['page'], P['root'])} is not what the rounds say: pcbkit overview")
+                todo.append(f"{shown(P['page'], P['root'])} is not what the rounds say")
     else:
         if not problems:
             stopped, seen = freeze(P, rounds, project, index, render, refresh, renderer, say)
@@ -1183,7 +1202,9 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
         say("watch: " + line)
     for line in problems:
         say("problem: " + line)
-    return 1 if problems else 0
+    for line in todo if not problems else []:           # once the rounds are sound, what is left is the build
+        say("to build: " + line + " (pcbkit overview)")
+    return 1 if problems or todo else 0
 
 
 def main(argv=None):

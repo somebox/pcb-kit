@@ -49,10 +49,12 @@ page then gets a note that cites it.
    | fab, orders | the order guide in PRODUCTION.md, `production/orders/*/order.toml`, the quotes | fab-order |
    | pictures of the product | `docs/previews/`: exploded views, sections, photos | visual-review |
 
-3. `pcbkit overview --check` until it names no problem. A problem stops the page: a mark that is not one of the
-   six, a decision without two options and a recommendation, a source that is not in the project or does not hold
-   the number named (`DESIGN.md D49`), an earlier round that changed. A watch line asks for a look: a text over its
-   limit, a board version that differs from the records.
+3. `pcbkit overview --check` until it prints no `problem:` line. A problem is something wrong with a round file,
+   and it stops the page: a mark that is not one of the six, a decision without two options and a recommendation,
+   a source that is not in the project or does not hold the number named (`DESIGN.md D49`), an earlier round that
+   changed. A `watch:` line asks for a look: a text over its limit, a board version that differs from the records.
+   A `to build:` line (the round's pictures are not made yet, the page is not what the rounds say) is what the
+   next step does: before the first build of a round the check ends with those, and exits 1.
 4. `pcbkit overview` builds the page. It renders each board's turntable and layers the first time a round shows
    them (`kicad-cli`, `rsvg-convert`; `cwebp` from `brew install webp` keeps a board near 1 to 2 MB, and without it
    the pictures are JPEG and PNG and several times larger). `--render` draws the newest round's pictures again,
@@ -63,7 +65,8 @@ page then gets a note that cites it.
    phone width and in the dark theme. What reads long is long.
 6. Show it. `pcbkit overview --single build/overview.html` writes one file with its pictures inside, to send with
    the harness's file tool or to publish; the page in `docs/` links its pictures and needs its folder.
-7. Commit `docs/overview.html` and `docs/overview/` together.
+7. `pcbkit overview --check` once more. Now it must print no `problem:` and no `to build:` line and exit 0: the
+   page is what the round files say. Then commit `docs/overview.html` and `docs/overview/` together.
 
 ## A new round, or a note
 
@@ -102,7 +105,9 @@ them once, under its title.
 
 - The mark is the kind of state, the word is the state. "In the cart, unpaid" is `decision`, because the next move
   is the user's; "ordered" is `work`.
-- An open decision needs no mark: it shows `decision` until a note closes it.
+- An open decision needs no mark: it shows `decision` until a note chooses an option (`--chose`) or marks it
+  `done`. One that has to wait can say so, in the round file or by a note (`--on antenna --mark blocked --state
+  "waits for the range test"`): it stays among the decisions, and the next round starts with it as it stands.
 - Do not invent a seventh mark or use a mark as decoration. If two marks fit, take the one that tells the user
   whether they have to act.
 
@@ -136,5 +141,5 @@ round keeps its own copy.
 - Nothing is on the page that is not in the project's documents first. If a fact has no source, write it where it
   belongs, then cite it.
 - Words the user will act on are exact: cart lines, prices with their date, part numbers, versions as released.
-- Run `--check` before every build you show, and build before every commit: `--check` also says when the page is
-  not what the round files say.
+- Check, build, check: `--check` before a build for what is wrong with the round, and after it, before the
+  commit, where it must be silent but for watch lines. A `to build:` line then means the page was not rebuilt.

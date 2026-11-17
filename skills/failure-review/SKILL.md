@@ -104,8 +104,8 @@ board or the design data the board is generated from. Changes follow the user's 
     Test points go into LAYOUT.md, the bench list into PRODUCTION.md's bring-up section. Carry each accepted
     change to the boards that share the circuit, or give the reason in the Decisions table: the sign's module kept
     the 33 Ω outputs that the controller had already changed to 100 Ω, until its own review found them. After a
-    major round, bring the project's overview page up to date (this kit's `docs/CONVENTIONS.md`, "The overview
-    page").
+    major round, bring the project's overview page up to date with the project-overview skill (this kit's
+    `docs/CONVENTIONS.md`, "The overview page").
 11. **Review the changes before the order.** In every project with a second round, a change accepted in the first
     caused a finding in the second. Review what changed (below) at the commit that will be ordered, as a new dated
     briefing that links this one: `<date>-<board>-round2.md` when the date is the same, so no briefing is

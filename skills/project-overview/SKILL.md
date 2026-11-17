@@ -1,0 +1,138 @@
+---
+name: project-overview
+description: "Make and update a hardware project's overview page, docs/overview.html: the whole project on one page for the user, with its status, a viewer of each board (turned by drag, or layer by layer), a few lines per block, the decisions waiting for the user with their options and a recommendation, cost, supply, fab and orders, and every design round kept. Use when a major design round is done (a review and its decisions, a re-layout, a release, an order), when the user asks where the project stands or asks for the overview, status or review page, and when a small change needs noting on that page. Not for PRODUCTION.md's generated overview (pcbkit production) or the one-sheet design picture (the visual-review skill)."
+---
+
+# The project's overview page
+
+`docs/overview.html` is the project as the user reads it between other things: what state it is in, what waits for
+them, what each board looks like, where the details are. `pcbkit overview` makes it from one small file per design
+round, `docs/overview/r1.toml`, `r2.toml`, and so on. You write the round file; the command draws the boards, lays
+out the page and keeps the earlier rounds as they were. This kit's `docs/CONVENTIONS.md`, "The overview page", says
+what the page is for.
+
+Worked example: the pages first built for Orbitchron (four rounds, three boards) and the message sign (two rounds,
+three boards), 2026-11-17. Orbitchron's page came to 69 kB of HTML and 4.5 MB of pictures: about 2 MB for each
+540-part board, since a board unchanged between rounds is drawn once. Rendering the three boards took 28 s. On the
+sign's page, the day after its round, three notes turned the order from "in the cart, unpaid" to "controller waits
+for RP2354As" (the part had sold out), with nothing in the round rewritten.
+
+## What is where
+
+```
+docs/overview.html         the page: generated, committed, never edited by hand
+docs/overview/r<N>.toml    one file per round, which you write (the fields: round-file.md, beside this file)
+docs/overview/img/         the rounds' pictures as they were when each round was first built, and index.toml
+```
+
+**A round file is the briefing, never the record.** It holds what the user needs on one page: a status line, the
+boards, a few lines per topic, the open decisions with their options, the numbers that matter. Every item names
+its `source` in the project, and the page links it. A decision the user takes goes into DESIGN.md as a numbered
+decision, a price into PRODUCTION.md or BOM.md, an order event into its order.toml, as the other skills say. The
+page then gets a note that cites it.
+
+## Making a round
+
+1. `pcbkit overview new` writes the next `r<N>.toml`. Round 1 is a skeleton with the project's boards. A later
+   round starts as the one before stands now: the marks and states its notes left, the decisions still open,
+   without the notes. A board released since then gets the version its `releases.toml` records.
+2. Read what the project recorded since the last round, then write the round. Where each part comes from:
+
+   | Part of the page | Read | Kept by |
+   | --- | --- | --- |
+   | status, what is next | the status line under each document's title (README, DESIGN, LAYOUT, PRODUCTION); HANDOVER.md where the project has one | the pcb-kit skill's rules |
+   | boards: version, state | `releases/<board>/releases.toml`, PRODUCTION.md's generated overview, or the CHANGELOG where there are no releases | `pcbkit release`, `pcbkit production` |
+   | what this round did, what was decided | DESIGN.md's decisions dated since the last round; the review's Decisions table; CHANGELOG.md | failure-review, pcb-kit |
+   | topics | DESIGN.md's block designs, LAYOUT.md, FIRMWARE.md, the reviews' verdicts and bench lists | failure-review, power-sim, enclosure-fit |
+   | decisions for the user | DESIGN.md's open questions, the newest review's "Questions for the user", HANDOVER.md | failure-review |
+   | cost, supply | BOM.md (cost drivers, stock risks), PRODUCTION.md's Costs | bom-cost |
+   | fab, orders | the order guide in PRODUCTION.md, `production/orders/*/order.toml`, the quotes | fab-order |
+   | pictures of the product | `docs/previews/`: exploded views, sections, photos | visual-review |
+
+3. `pcbkit overview --check` until it names no problem. A problem stops the page: a mark that is not one of the
+   six, a decision without two options and a recommendation, a source that is not in the project or does not hold
+   the number named (`DESIGN.md D49`), an earlier round that changed. A watch line asks for a look: a text over its
+   limit, a board version that differs from the records.
+4. `pcbkit overview` builds the page. It renders each board's turntable and layers the first time a round shows
+   them (`kicad-cli`, `rsvg-convert`; `cwebp` from `brew install webp` keeps a board near 1 to 2 MB, and without it
+   the pictures are JPEG and PNG and several times larger). `--render` makes the newest round's pictures again after
+   the board changed; `--no-render` uses the stills `pcbkit previews` left.
+5. Look at the page before the user does: open it, switch rounds, turn a board, switch its layers, read it at
+   phone width and in the dark theme. What reads long is long.
+6. Show it. `pcbkit overview --single build/overview.html` writes one file with its pictures inside, to send with
+   the harness's file tool or to publish; the page in `docs/` links its pictures and needs its folder.
+7. Commit `docs/overview.html` and `docs/overview/` together.
+
+## A new round, or a note
+
+| What happened | Do |
+| --- | --- |
+| a review and its decisions, a re-layout, a release, an order placed or received, a bring-up | a new round |
+| a price or a stock figure moved; a part was swapped in the cart; a decision was taken; a test came back | a note |
+| a typo or a wrong number in the newest round, before the user has seen it | edit that round's file |
+| anything in an earlier round | a note on it (`--round N`); `--check` refuses an earlier round that was edited |
+
+```bash
+pcbkit overview note "The RP2354A is gone: 0 at JLC and at LCSC." --on supply --mark blocked --state "RP2354A out of stock"
+pcbkit overview note "Decided: u.FL (D26)." --on antenna --chose b
+pcbkit overview note "Paid: JLC W20261118." --mark work --state "boards ordered"
+```
+
+A note is dated and stays under its item; the page lists the round's notes under its status as "Added since". The
+item shows the mark and state of its latest note, so a note that changes the mark says the new state too. `--on` is
+the id of a board, topic, decision or fact; without it the note is on the round's status. A note that takes a
+decision names the option with `--chose` and cites the decision's number in DESIGN.md, where it was written first.
+More than about eight notes on a round is a new round.
+
+## The six marks
+
+Every status on the page is one of six marks followed by the project's own word for the state. The page explains
+them once, under its title.
+
+| Mark | Means | The state beside it reads like |
+| --- | --- | --- |
+| `done` | finished and checked | released, reviewed, measured, received |
+| `work` | someone is on it, the fab included | routed, in review, ordered, in production, waits for the bench |
+| `todo` | not started | not started, waits for the boards |
+| `attention` | it works or may work, with a risk or a check open | a bench test settles it, thin stock, one accepted weakness |
+| `blocked` | it cannot go on until something else changes | out of stock, can't be paid yet, fails DRC |
+| `decision` | it waits for the user | in the cart, unpaid; cleared to pay |
+
+- The mark is the kind of state, the word is the state. "In the cart, unpaid" is `decision`, because the next move
+  is the user's; "ordered" is `work`.
+- An open decision needs no mark: it shows `decision` until a note closes it.
+- Do not invent a seventh mark or use a mark as decoration. If two marks fit, take the one that tells the user
+  whether they have to act.
+
+## Keeping it brief
+
+The page is read in a minute or it is not read. `--check` watches these, and the page shows why they are right:
+
+- The round's `state` is a few words (30 characters); the `summary` two or three sentences (320).
+- `changes`: the five to seven things this round did, a line each, citing the decisions (D41) and findings (F4).
+- At most ten topics, each two to four lines (420 characters): what it is, where it stands, what is left. The
+  reasoning stays in DESIGN.md and the review, behind the `source` link.
+- A decision is a question, what waits on it, two to four options with their effect and cost, and the one you
+  recommend with one line of why. A question without options is not ready for the page: work the options out
+  first, in the review or DESIGN.md's open questions.
+- A fact (cost, supply, fab, orders) is one number or phrase, a sentence, and the date it was taken.
+- A note is a line or two (240 characters).
+
+## The viewer
+
+A `[[view]]` with `board = "<name>"` gives that board a tab: **Turn**, the board turning on its own axis, front and
+back, by drag, arrow keys or the slider; and **Layers**, each copper, silkscreen and mask layer on its own, to
+switch on and off, from the front or mirrored from the back, with zoom. A view with a `name` and
+`[[view.picture]]` entries shows the project's own pictures: the product, an exploded stack, a section, a photo.
+Make those with the visual-review skill and keep each under about 300 kB (`cwebp`, or `sips -Z 1600`), since every
+round keeps its own copy.
+
+## Rules
+
+- Never edit `docs/overview.html` or `docs/overview/img/`: the round files are the page.
+- An earlier round changes only by notes. What the page said on a date stays what it said.
+- Nothing is on the page that is not in the project's documents first. If a fact has no source, write it where it
+  belongs, then cite it.
+- Words the user will act on are exact: cart lines, prices with their date, part numbers, versions as released.
+- Run `--check` before every build you show, and build before every commit: `--check` also says when the page is
+  not what the round files say.

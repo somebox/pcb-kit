@@ -43,7 +43,7 @@ kicad-cli takes it from `pcbkit.kicad.KICAD_CLI` too, not from `/Applications/Ki
 | Find a part quickly | `pcbkit jlc --desc "%...%" --package "0402%" --basic`; for a researched BOM use bomi |
 | Does a rail survive a load step, does reset trip? | `pcbkit spice deck.cir --gear-retry`; see the power-sim skill |
 | Is it ready to order? What could fail once it's built? Where do test points go? | the failure-review skill: references, failure modes, tests, a briefing in `docs/reviews/`; no edits until the user has read it. For a prototype, a risk the bench can hold (a named supply, limited handling, a marked polarity) is noted and left for a later revision |
-| A major design round is done (a review and its decisions, a re-layout, a release) | bring `docs/overview.html` up to date and show it to the user: the project on one page, with status, a viewer of the board, a section per block, open decisions with a recommendation, cost, supply and fab, and every round kept (docs/CONVENTIONS.md, "The overview page") |
+| A major design round is done (a review and its decisions, a re-layout, a release) | the project-overview skill (`pcbkit overview`): bring `docs/overview.html` up to date and show it to the user: the project on one page, with status, a viewer of the board, a section per block, open decisions with a recommendation, cost, supply and fab, and every round kept (docs/CONVENTIONS.md, "The overview page") |
 | Put an order into the carts | last and once, after the user has confirmed the versions and that no design change is open: the fab-order skill. A change to a released board is its next version (a patch at least) and the order's steps again |
 
 Related skills in this kit: **visual-review** (which picture answers which question), **power-sim** (ngspice),
@@ -51,7 +51,7 @@ Related skills in this kit: **visual-review** (which picture answers which quest
 (score placements by their ratsnest, route only the winner), **routing** (`pcbkit reroute`: a board's signals laid again),
 **failure-review** (what could fail after fab, how
 we'd find it, test points), **fab-order** (the JLC and LCSC carts in the browser: options, BOM page, placement
-viewer, quotes).
+viewer, quotes), **project-overview** (`pcbkit overview`: the project on one page for the user, a round at a time).
 
 ## KiCad documentation links
 

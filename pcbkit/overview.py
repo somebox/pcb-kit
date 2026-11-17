@@ -729,9 +729,9 @@ def stills_set(P, project, info, pcb):
 def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set, say=print):
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
     rendered under the board file's hash (or found there, when the board has not changed since another round).
-    REFRESH does the newest round's again, whatever is there: a set an earlier round uses stays as it is and the
-    new one gets a name of its own. Nothing is removed here (prune, once the build is written). Returns
-    (problems, watch)."""
+    REFRESH does the newest round's again, whatever is there, as a set with a name of its own beside the one it
+    had. Nothing in the store is replaced or removed here, so a build that fails leaves the page on disk with all
+    its pictures (prune, once the build is written, removes what no round uses). Returns (problems, watch)."""
     problems, watch, cfg = [], [], project.cfg["overview"]
     pcbs = {p["key"]: p for p in project.pcbs()}
     os.makedirs(P["img"], exist_ok=True)
@@ -750,7 +750,6 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
             if not os.path.exists(os.path.join(P["img"], name)):
                 shutil.copyfile(src, os.path.join(P["img"], name))
             e["pictures"][pic] = name
-        others = {n for k, x in index["round"].items() if k != rnd["_key"] for n in x.get("sets", {}).values()}
         for v in rnd.get("view", []):
             b = v.get("board")
             if not b or (b in e["sets"] and not again) or b not in pcbs:
@@ -770,9 +769,9 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
                     say(f"{rnd['_key']}: {b} was not rendered ({str(err)[:200]})")
                 if man.get("turn") or man.get("layers"):
                     name, n = base, 2
-                    while name in others and os.path.exists(os.path.join(P["img"], name)):
-                        name, n = "%s-%d" % (base, n), n + 1     # an earlier round keeps the set it was given
-                    publish(tmp, os.path.join(P["img"], name), man)
+                    while os.path.exists(os.path.join(P["img"], name)):
+                        name, n = "%s-%d" % (base, n), n + 1     # beside the set that is there: an earlier round, or
+                    publish(tmp, os.path.join(P["img"], name), man)  # the page on disk until this build is written, shows it
                 else:
                     shutil.rmtree(tmp, ignore_errors=True)
             if name is None and have:
@@ -797,6 +796,34 @@ def prune(P, index):
         ours = re.match(r"^([0-9a-f]{8}-.+|.+-[0-9a-f]{8}(-\d+)?(-stills)?(\.new-\d+)?)$", name)
         if ours and name not in used:
             shutil.rmtree(full) if os.path.isdir(full) else os.remove(full)
+
+
+def missing(P, rounds, index):
+    """Problems: pictures a round was built with that are no longer in the store. A page made without them would
+    lose a board from its viewer or show blanks, and say nothing."""
+    out, where = [], shown(P["img"], P["root"])
+    for rnd in rounds:
+        e = index["round"].get(rnd["_key"], {})
+        for pic in pictures_of(rnd):
+            name = e.get("pictures", {}).get(pic)
+            if name and not os.path.isfile(os.path.join(P["img"], name)):
+                out.append(f"{rnd['_key']}: {where}/{name}, its copy of {pic}, is missing")
+        for b in [v["board"] for v in rnd.get("view", []) if v.get("board")]:
+            name = e.get("sets", {}).get(b)
+            if not name:
+                continue
+            _, man = set_of(P, index, rnd, b)
+            files = [f for side in man.get("turn", {}).values() for f in side]
+            files += [x["file"] for x in man.get("layers", []) + man.get("stills", [])]
+            gone = [f for f in files if not os.path.isfile(os.path.join(P["img"], name, f))]
+            if not man or gone:
+                out.append(f"{rnd['_key']}: {where}/{name}, its pictures of {b}, " + (
+                    f"lacks {len(gone)} of its {len(files)} files ({', '.join(gone[:3])}{', ...' if len(gone) > 3 else ''})"
+                    if man else "is missing or has no set.json"))
+    if out:
+        out.append(f"restore {where} as it was committed; the newest round's pictures can be drawn again with "
+                   "pcbkit overview --render")
+    return out
 
 
 def set_of(P, index, rnd, board):
@@ -930,7 +957,7 @@ def viewer_html(pg, rnd, newest):
                     dict(id=x["id"], name=x.get("name") or what.get(x["id"], x["id"]),
                          colour=x.get("colour") or COLOURS.get(x["id"], "#9aa39e"), src=where(x["file"]))
                     for x in kept]))
-            if man.get("stills") and "stills" in show:
+            if man.get("stills") and ("stills" in show or not modes):     # also when nothing that was asked for is there
                 pics = man["stills"] if full else man["stills"][:1]
                 modes.append(dict(kind="pics", name="Pictures",
                                   pics=[dict(label=x["label"], src=where(x["file"])) for x in pics]))
@@ -1124,6 +1151,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
             if any(p not in e.get("pictures", {}) for p in pictures_of(rnd)) or any(
                     v.get("board") and v["board"] not in e.get("sets", {}) for v in rnd.get("view", [])):
                 problems.append(f"{rnd['_key']}: its pictures are not made yet: pcbkit overview")
+        problems += missing(P, rounds, index)
         if not problems:
             page, _ = page_html(rounds, P, index, base=base)
             if not os.path.exists(P["page"]) or open(P["page"], encoding="utf-8").read() != page:
@@ -1131,7 +1159,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
     else:
         if not problems:
             stopped, seen = freeze(P, rounds, project, index, render, refresh, renderer, say)
-            problems += stopped
+            problems += stopped or missing(P, rounds, index)
             watch += seen
         if not problems:
             for rnd in rounds[:-1]:

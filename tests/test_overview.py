@@ -11,6 +11,7 @@ import contextlib
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -588,8 +589,10 @@ class Pictures(Case):
         first = self.index()["r1"]["sets"]["demo"]
         self.assertEqual(self.build(refresh=True), 0, self.said)       # a 3-D model changed, say: the board file did not
         self.assertEqual(len(self.calls), 2)
-        self.assertEqual(self.index()["r1"]["sets"]["demo"], first)    # nobody else used it: drawn over
-        self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if n.startswith("demo-")), [first])
+        # drawn beside the set that was there, which goes once the page that shows the new one is written
+        self.assertEqual(self.index()["r1"]["sets"]["demo"], first + "-2")
+        self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if n.startswith("demo-")), [first + "-2"])
+        self.assertIn(first + "-2/turn-top-00.webp", self.page())
 
     def test_render_again_leaves_the_set_an_earlier_round_uses(self):
         self.put(1, base())
@@ -605,13 +608,13 @@ class Pictures(Case):
         self.assertEqual(sets["r2"]["sets"]["demo"], shared + "-2")
         with open(marker, "rb") as fh:
             self.assertEqual(fh.read(), PNG + b"as round 1 saw it")
-        self.assertEqual(self.build(refresh=True), 0, self.said)       # and again: round 2's own set is drawn over
-        self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-2")
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # and again: beside both, then round 2's old one goes
+        self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-3")
+        self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if n.startswith("demo-")), [shared, shared + "-3"])
         self.assertEqual(len(self.calls), 3)
 
     def test_a_build_that_fails_removes_nothing_the_page_on_disk_shows(self):
         other = os.path.join(self.root, "boards", "other", "other.kicad_pcb")
-        demo = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
         write(other, '(kicad_pcb (version 20260206) (footprint "R_0402"))\n')
         self.project = Project(self.root)
         rnd = base()
@@ -621,8 +624,9 @@ class Pictures(Case):
         with open(self.P["index"], encoding="utf-8") as fh:
             index = fh.read()
         page, was = self.page(), self.index()["r1"]["sets"]
-        for pcb in (demo, other):                                      # both boards change; only one can be drawn again
-            write(pcb, open(pcb).read().replace("R_0402", "R_0603"))
+        shown_now = os.path.join(self.P["img"], was["demo"], "turn-top-00.webp")
+        write(shown_now, PNG + b"what the page on disk shows", "wb")
+        write(other, open(other).read().replace("R_0402", "R_0603"))   # one board changes and can't be drawn again
         good = fake_renderer(self.calls)
         broken = lambda pcb, dest, cfg: {} if pcb == other else good(pcb, dest, cfg)     # noqa: E731
         self.said = []
@@ -633,11 +637,55 @@ class Pictures(Case):
         self.assertEqual(self.page(), page)
         for name in was.values():                                      # what the page on disk links is all still there
             self.assertTrue(os.path.exists(os.path.join(self.P["img"], name, "set.json")), name)
+        with open(shown_now, "rb") as fh:                              # and as it was: the unchanged board, drawn again,
+            self.assertEqual(fh.read(), PNG + b"what the page on disk shows")    # went beside its set, not over it
         self.assertEqual(self.build(refresh=True), 0, self.said)       # and once a build is written, the unused goes
         now = self.index()["r1"]["sets"]
         self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if os.path.isdir(os.path.join(self.P["img"], n))),
                          sorted(now.values()))
         self.assertFalse(set(was.values()) & set(now.values()))
+
+    def test_pictures_gone_from_the_store_stop_the_build_and_the_check(self):
+        self.put(1, base())
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        page, sets = self.page(), self.index()["r1"]
+        frame = os.path.join(self.P["img"], sets["sets"]["demo"], "turn-top-01.webp")
+        copy = os.path.join(self.P["img"], sets["pictures"]["docs/pic.png"])
+        os.remove(frame)
+        os.remove(copy)
+        for kw in (dict(), dict(check=True)):
+            with self.subTest(kw=kw):
+                self.assertEqual(self.build(**kw), 1)
+                said = "\n".join(self.said)
+                self.assertIn("its pictures of demo, lacks 1 of its 5 files (turn-top-01.webp)", said)
+                self.assertIn("its copy of docs/pic.png, is missing", said)
+                self.assertIn("restore docs/overview/img as it was committed", said)
+                self.assertEqual(self.page(), page)                    # no page was written without them
+        os.remove(os.path.join(self.P["img"], sets["sets"]["demo"], "set.json"))
+        self.assertEqual(self.build(), 1)
+        self.assertIn("is missing or has no set.json", "\n".join(self.said))
+
+    def test_the_newest_rounds_missing_pictures_can_be_drawn_again(self):
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        sets = self.index()["r1"]
+        shutil.rmtree(os.path.join(self.P["img"], sets["sets"]["demo"]))
+        os.remove(os.path.join(self.P["img"], sets["pictures"]["docs/pic.png"]))
+        self.assertEqual(self.build(), 1)
+        self.assertEqual(self.build(refresh=True), 0, self.said)
+        self.assertEqual(self.build(check=True), 0, self.said)
+
+    def test_stills_stand_in_for_a_view_that_asked_for_what_is_not_there(self):
+        write(os.path.join(self.root, "docs", "previews", "demo", "render-top.png"), PNG, "wb")
+        for show in (["turn"], ["layers"]):
+            with self.subTest(show=show):
+                rnd = base()
+                rnd["view"][0]["show"] = show
+                self.put(1, rnd)
+                self.assertEqual(self.build(render=False, refresh=True), 0, self.said)
+                self.assertIn('{"name":"demo","note":"Stills from pcbkit previews, not checked against the board file",'
+                              '"modes":[{"kind":"pics","name":"Pictures"', self.page())
 
     def test_without_a_renderer_the_previews_stills_stand_in(self):
         write(os.path.join(self.root, "docs", "previews", "demo", "render-top.png"), PNG, "wb")

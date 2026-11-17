@@ -7,6 +7,22 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Added
+- **`pcbkit overview` and the project-overview skill: the project on one page, a round at a time.** The overview
+  page of 0.5.0's conventions had no way to be made. A round is now a small file, `docs/overview/r<N>.toml`, that
+  an agent writes from the project's records: status, boards, topics, the decisions waiting for the user with
+  their options and the one recommended, cost, supply, fab and orders, each naming its source. `pcbkit overview`
+  makes `docs/overview.html` from the rounds: one drawing sheet with the rounds as its revision table, six status
+  marks (done, in work, not started, needs attention, blocked, your decision) with one legend, and a viewer that
+  turns each board by drag (frames from `kicad-cli pcb render`) and switches its layers (each on its own, stacked,
+  from the front or mirrored from the back), with the project's own pictures as further tabs. No network, light and
+  dark, phone width. `pcbkit overview new` starts the next round from the last, `note` adds a dated note that can
+  change an item's mark and state, `--check` names a bad mark, a decision without a recommendation, a source the
+  project doesn't have, an edited earlier round and a stale page, and `--single` writes a copy with its pictures
+  inside. Each round's pictures are kept as they were in `docs/overview/img/`, a board unchanged between rounds
+  once. `pcbkit previews`' pictures are unchanged; its SVG and render steps are now `layer_png` and `render_png`,
+  with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
+
 ### Changed
 - **Three corrections to the skills, from a review of all nine.** bom-cost: `bomi list --check` can report a cached
   stock figure (124 of a TPS259470A on 2026-11-16, when JLC and LCSC had none), so a part with thin stock is read
@@ -15,6 +31,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   instead (JLC's "Via Covering" page, 2026-11-16). pcb-kit: how to generate a schematic sheet was one table cell
   of 2,900 characters and is now `skills/pcb-kit/schematic-sheets.md`, in headed sections with every instruction
   and example kept; the table says what it covers and links to it.
+- **The README leads with pictures.** It opens with eleven boards from the projects, rendered alike, and its tour
+  of what the kit does is a few lines and a picture each. New pictures: a schematic sheet drawn in blocks
+  (siebenuhr's LED power), three overview and review pages built in the projects (Orbitchron, DodecaRGB, the
+  spotlight's housing), the same project as `pcbkit overview` draws it, and a ratsnest before and after its small
+  parts moved. The paragraphs it lost are in the skills, docs/ROUTER.md, docs/HARVEST.md and this file.
+- **The project-overview skill has "The pattern".** What the three pages built by hand share: where it stands
+  at the top, what changed since the user last looked, a viewer to work, one block at a time, decisions sorted by
+  whose move it is, a source on every card, one set of status chips, and the rounds kept.
 
 ## [0.5.0] - 2026-11-16
 

@@ -5,7 +5,7 @@ Release:   release, changelog, production, previews, print, fab, panel, setup-ki
 Look-ups:  jlc, parts, netview, info, link
 Analysis:  spice, place-score
 Routing:   reroute, setup-router
-Projects:  new, import-easyeda, outline
+Projects:  new, import-easyeda, outline, overview
 Commands that need pcbnew re-run themselves under KiCad's Python (see kicad.py).
 """
 import sys
@@ -37,6 +37,7 @@ COMMANDS = {
     "reroute": ("pcbkit.reroute.flow", "lay a board's signals again: placement, negotiated routing, polish, repairs, review"),
     "setup-router": ("pcbkit.reroute.flow", "install the router's own Python (numba, numpy, scipy) with uv"),
     "outline": ("pcbkit.mech", "board outline, mounting holes and keep-outs from an enclosure JSON (needs pcbnew)"),
+    "overview": ("pcbkit.overview", "the project on one page: docs/overview.html from a file per design round (new, note, --check)"),
     "new": ("pcbkit.new_project", "scaffold a hardware project: docs, boards/<b> KiCad project, lib/, scripts/, bomi, git"),
     "import-easyeda": ("pcbkit.import_easyeda", "EasyEDA Std schematic + PCB exports -> linked KiCad project and library"),
 }

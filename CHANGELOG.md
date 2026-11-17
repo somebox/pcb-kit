@@ -23,6 +23,16 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   once. `pcbkit previews`' pictures are unchanged; its SVG and render steps are now `layer_png` and `render_png`,
   with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
 
+### Changed
+- **The README leads with pictures.** It opens with eleven boards from the projects, rendered alike, and its tour
+  of what the kit does is a few lines and a picture each. New pictures: a schematic sheet drawn in blocks
+  (siebenuhr's LED power), three overview and review pages built in the projects (Orbitchron, DodecaRGB, the
+  spotlight's housing), the same project as `pcbkit overview` draws it, and a ratsnest before and after its small
+  parts moved. The paragraphs it lost are in the skills, docs/ROUTER.md, docs/HARVEST.md and this file.
+- **The project-overview skill has "The pattern".** What the three pages built by hand share: where it stands
+  at the top, what changed since the user last looked, a viewer to work, one block at a time, decisions sorted by
+  whose move it is, a source on every card, one set of status chips, and the rounds kept.
+
 ## [0.5.0] - 2026-11-16
 
 ### Added

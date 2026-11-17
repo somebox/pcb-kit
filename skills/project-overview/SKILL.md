@@ -17,6 +17,32 @@ three boards), 2026-11-17. Orbitchron's page came to 69 kB of HTML and 4.5 MB of
 sign's page, the day after its round, three notes turned the order from "in the cart, unpaid" to "controller waits
 for RP2354As" (the part had sold out), with nothing in the round rewritten.
 
+## The pattern
+
+Three pages built by hand in their projects on 2026-11-17 show what such a page is, whatever makes it:
+Orbitchron's `docs/overview.html` before its first order, DodecaRGB's control board v1.3 order review, and the RGB
+spotlight's lamp housing review at round 7. This kit's README shows all three. What they share:
+
+- **The top says where it stands, without scrolling.** A title that names the thing and the moment ("Control board
+  v1.3, before the JLC order"), two or three sentences, the state in a few chips, three or four numbers (size,
+  parts, cost per board, open findings) and a picture of the thing.
+- **What changed since the user last looked comes next.** The spotlight's first panel is "Since the failure
+  review": each number with its value at the review struck through beside it, then a table of part, then → now,
+  and why.
+- **A viewer the user can work.** Orbitchron's shows each board as a render, layer by layer or as an assembly map,
+  front and back. The spotlight's turns the housing in 3-D with a button per round, so two rounds compare in place.
+- **One block at a time.** DodecaRGB's has a tab per block: a map of where the block sits, close-ups of its copper,
+  and that block's findings and decisions as cards.
+- **Decisions sorted by whose move it is**: for the user, decided this round, still open, carried from an earlier
+  round. Each has its options and the one recommended.
+- **Every card cites its source**: the finding's or decision's number (F29, D30) as a link, and the file it is in.
+- **One set of status chips**, explained once and used on every card.
+- **Rounds stay.** Tabs along the top (Orbitchron) or a switch in the viewer (the spotlight); the page says which
+  round it shows and when it was last updated.
+
+`pcbkit overview` makes a page to this pattern from the round files. A page built by hand for one round's question
+(an order checked line by line, a housing in 3-D) follows the same pattern.
+
 ## What is where
 
 ```

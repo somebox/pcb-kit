@@ -324,6 +324,15 @@ class Orders(unittest.TestCase):
         o = dict(name="o", events=[a, b], board=[dict(pcb="x", status="draft", events=[a]), dict(pcb="y", status="draft", events=[b])])
         self.assertEqual(overview.order_summary(o)["value"], "o: draft, 202.02 USD")
 
+    def test_a_currency_corrected_without_a_price_applies_to_the_price(self):
+        quoted = dict(date=D(2026, 11, 16), status="draft", price=100.0, currency="USD")
+        corrected = dict(date=D(2026, 11, 18), status="draft", currency="EUR")
+        o = dict(name="o", events=[quoted, corrected],
+                 board=[dict(pcb="x", status="draft", currency="EUR", events=[quoted, corrected])])    # as load_orders resolves it
+        self.assertEqual(overview.order_summary(o)["value"], "o: draft, 100.00 EUR")
+        del o["board"][0]["currency"]                                  # and from the events alone
+        self.assertEqual(overview.order_summary(o)["value"], "o: draft, 100.00 EUR")
+
     def test_a_price_corrected_without_a_currency_keeps_the_one_it_had(self):
         quoted = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD")
         corrected = dict(date=D(2026, 11, 18), status="submitted", price=131.20)
@@ -356,6 +365,42 @@ class OrdersFromTheRecords(Case):
         self.assertEqual([(o["value"], o["mark"], o["date"]) for o in orders],
                          [("2026-11-16-first: demo received, other submitted", "work", D(2026, 11, 30))])
         self.assertEqual(orders[0]["source"], "production/orders/2026-11-16-first/order.toml")
+
+
+class RecordsThatDoNotRead(Case):
+    """Records that are there and can't be read say nothing about a board: that is said, not taken for 'released'."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.root, "releases", "demo"))
+        tomlw.dump(dict(key="demo", release=[dict(version="1.1.0", label="v1.1", date=D(2026, 11, 20), source="x", note="n")]),
+                   os.path.join(self.root, "releases", "demo", "releases.toml"))
+        write(os.path.join(self.root, "production", "boards.toml"), "[pcb.demo\nstate = released\n")     # not TOML
+
+    def test_the_board_has_its_last_version_and_no_state(self):
+        rec = overview.records(self.project)
+        self.assertEqual(rec["board"], [dict(id="demo", version="v1.1", source="releases/demo/releases.toml")])
+        self.assertEqual(len(rec["problems"]), 1)
+        self.assertIn("could not be read", rec["problems"][0])
+        self.assertIn("no board's state is known", rec["problems"][0])
+
+    def test_a_new_round_says_so_and_leaves_the_state_to_be_written(self):
+        said = []
+        rnd = tomlw.load(overview.new_round(self.project, self.P, today=D(2026, 12, 1), say=said.append))
+        self.assertEqual([(b["id"], b["version"], b["mark"], b["state"]) for b in rnd["board"]], [("demo", "v1.1", "todo", "")])
+        self.assertTrue(said and said[0].startswith("watch: the project's release and production records could not be read"), said)
+
+    def test_a_check_says_so(self):
+        self.put(1, base())
+        problems, watch = self.check()
+        self.assertEqual(problems, [])
+        self.assertIn("could not be read", "\n".join(watch))
+
+    def test_records_that_read_still_tell_a_changed_board_from_a_released_one(self):
+        os.remove(os.path.join(self.root, "production", "boards.toml"))
+        rec = overview.records(self.project)
+        self.assertEqual(rec["problems"], [])
+        self.assertEqual((rec["board"][0]["state"], rec["board"][0]["mark"]), ("changed since v1.1", "work"))
 
 
 class Tags(Case):
@@ -853,6 +898,45 @@ class Seal(Case):
         one["summary"] = "Rewritten later."
         self.put(1, one)
         self.assertIn("changed after the next round began", "\n".join(self.check()[0]))
+
+    def test_an_earlier_rounds_notes_are_added_to_and_not_changed(self):
+        chose_b = dict(date=D(2026, 11, 17), on="antenna", chose="b", text="Decided: u.FL (D2).")
+        paid = dict(date=D(2026, 11, 18), on="status", text="Paid.")
+        one = dict(base(), note=[chose_b, paid])
+        self.put(1, one)
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        changed = [("changed", [dict(chose_b, chose="a"), paid], "note 1 of the 2"),      # history rewritten: it chose b
+                   ("reworded", [chose_b, dict(paid, text="Paid, late.")], "note 2 of the 2"),
+                   ("removed", [paid], "note 1 of the 2"),
+                   ("all removed", [], "note 1 of the 2"),
+                   ("moved", [paid, chose_b], "note 1 of the 2")]
+        for what, notes, want in changed:
+            with self.subTest(what=what):
+                self.put(1, dict(base(), note=notes))
+                problems = "\n".join(self.check()[0])
+                self.assertIn(want, problems)
+                self.assertIn("added to, never edited", problems)
+        added = dict(date=D(2026, 11, 20), on="antenna", text="Correction: the cable is 150 mm, not 100.")
+        self.put(1, dict(base(), note=[chose_b, paid, added]))
+        self.assertEqual(self.check()[0], [])
+        self.assertEqual(self.build(), 0, self.said)                   # and the build seals the one that was added
+        self.put(1, dict(base(), note=[chose_b, paid, dict(added, text="Correction: 120 mm.")]))
+        self.assertIn("note 3 of the 3", "\n".join(self.check()[0]))
+
+    def test_a_round_sealed_before_notes_were_kept_is_sealed_with_them_at_the_next_build(self):
+        note = dict(date=D(2026, 11, 17), on="status", text="Paid.")
+        self.put(1, dict(base(), note=[note]))
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        index = tomlw.load(self.P["index"])
+        del index["round"]["r1"]["notes"]                              # as an index written before this was
+        overview.save_index(self.P, index)
+        self.put(1, dict(base(), note=[dict(note, text="Paid twice.")]))
+        self.assertEqual(self.check()[0], [])                          # nothing to compare with yet
+        self.assertEqual(self.build(), 0, self.said)
+        self.put(1, dict(base(), note=[note]))
+        self.assertIn("note 1 of the 1", "\n".join(self.check()[0]))
 
     def test_the_newest_round_is_still_open(self):
         self.put(1, base())

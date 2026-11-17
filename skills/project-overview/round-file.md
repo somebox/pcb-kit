@@ -154,8 +154,9 @@ label = "Case section"
 ## What the command keeps beside the rounds
 
 `docs/overview/img/index.toml` says which pictures each round uses and holds a seal on each earlier round: the
-hash of its file without the notes. Don't edit it. A board's pictures are in `img/<board>-<hash>/` under the hash
+hash of its file without the notes, and a hash of each note it had at the last build, so notes are added after
+those and none of them is changed. Don't edit it. A board's pictures are in `img/<board>-<hash>/` under the hash
 of its board file, so two rounds of an unchanged board share one set; a named picture is copied in as
 `img/<hash>-<name>`, as it was that day. A build and `--check` stop when a picture a round was built with is no
 longer there: restore `img/` as it was committed. If an earlier round has to be corrected after all, with the
-user's word, delete its `seal` line; the next build seals it again.
+user's word, delete its `seal` line (its `notes` line for a note); the next build seals it again.

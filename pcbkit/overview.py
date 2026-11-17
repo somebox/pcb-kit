@@ -183,6 +183,19 @@ def fingerprint(rnd):
     return hashlib.sha1(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def note_prints(rnd):
+    """A hash of each of a round's notes, in the file's order. The index keeps them for an earlier round, so its
+    notes can be added to and not changed, removed or put in another order: what a note said, it said."""
+    return [hashlib.sha1(json.dumps(n, sort_keys=True, default=str).encode()).hexdigest()[:16] for n in rnd.get("note", [])]
+
+
+def seal(index, rnd):
+    """Seal an earlier round as it stands: its file without the notes, once, and the notes it has now."""
+    e = entry(index, rnd["_key"])
+    e.setdefault("seal", fingerprint(rnd))
+    e["notes"] = note_prints(rnd)
+
+
 def source_parts(source):
     """"DESIGN.md#5a O9" -> ("DESIGN.md", "5a", "O9"): the file, a place in it, what to look for there."""
     first, _, label = str(source).strip().partition(" ")
@@ -313,10 +326,16 @@ def check_rounds(rounds, P, project, index):
                     bad(f"view: no board {v['board']!r} in the project ({', '.join(sorted(boards))})")
             elif not v.get("name") or not v.get("picture"):
                 bad("a view is a board (board = \"name\") or has a name and [[view.picture]] entries")
-        seal = index["round"].get(rnd["_key"], {}).get("seal")
-        if seal and seal != fingerprint(rnd):
+        sealed = index["round"].get(rnd["_key"], {})
+        if sealed.get("seal") and sealed["seal"] != fingerprint(rnd):
             bad("changed after the next round began; an earlier round only gains notes (pcbkit overview note --round "
                 f"{rnd['_n']}). If the change is meant, delete its seal line in {os.path.relpath(P['index'], P['root'])}")
+        kept, now = sealed.get("notes"), note_prints(rnd)
+        if sealed.get("seal") and kept is not None and now[:len(kept)] != kept:
+            first = next((i for i, k in enumerate(kept) if i >= len(now) or now[i] != k), 0) + 1
+            bad(f"note {first} of the {len(kept)} it had when it was last built was changed, removed or moved; an earlier "
+                "round's notes are added to, never edited: say the correction in a new note. If the change is meant, "
+                f"delete its notes line in {os.path.relpath(P['index'], P['root'])}")
         # brevity: the page is read in a minute or it is not read
         for k, text, limit in [("summary", rnd.get("summary"), LIMITS["summary"])] + [
                 (f"topic {t.get('id')!r}", t.get("text"), LIMITS["topic"]) for t in rnd.get("topic", [])]:
@@ -337,7 +356,9 @@ def check_rounds(rounds, P, project, index):
             open_ = [d["id"] for d in open_decisions(rnd)]
             if open_ and effective(rnd, "status")[0] == "done":
                 late(f"the round is marked done with {len(open_)} decision(s) open ({', '.join(open_)})")
-            rec = {b["id"]: b for b in records(project)["board"]}
+            known = records(project)
+            watch.extend(known["problems"])
+            rec = {b["id"]: b for b in known["board"]}
             for b in rnd.get("board", []):
                 r = rec.get(b.get("id"))
                 if r and r.get("version") and b.get("version") and r["version"] != b["version"]:
@@ -348,15 +369,18 @@ def check_rounds(rounds, P, project, index):
 # ---- what the project records ---------------------------------------------------------------------------------------
 def records(project):
     """Boards and orders as the project's own records have them, for a new round and for --check:
-    {"board": [{id, version, state, mark, source}], "orders": [{value, mark, date, source}]}.
-    A board with no release and no entry in boards.toml gets no state: the records don't know it, the writer does."""
+    {"board": [{id, version, state, mark, source}], "orders": [{value, mark, date, source}], "problems": [...]}.
+    A board with no release and no entry in boards.toml gets no state: the records don't know it, the writer does.
+    Records that are there and can't be read (a boards.toml or order.toml that doesn't parse) are a problem to
+    say: a board then has the version of its last release and no state, since whether it changed is not known."""
     from .release import versions as V
-    boards, orders, pcbs = [], [], {}
+    boards, orders, pcbs, problems = [], [], {}, []
     try:
         from . import production
         pcbs = production.survey(project, [], [])
-    except (Exception, SystemExit):      # noqa: BLE001 - records that don't load are records the project hasn't got
-        pcbs = {}
+    except (Exception, SystemExit) as err:      # noqa: BLE001 - whatever stops the survey, the states are unknown
+        problems.append(f"the project's release and production records could not be read ({squeeze(err)[:200]}): "
+                        "no board's state is known from them")
     for pcb in project.pcbs():
         if pcb["excluded"]:
             continue
@@ -364,10 +388,11 @@ def records(project):
         rel = p.get("last") or V.current(project.release_dir(pcb))
         b = dict(id=pcb["key"])
         if rel:
-            state = p.get("state", "released")
-            b.update(version=rel["label"], state=state if state != "changed" else f"changed since {rel['label']}",
-                     mark=BOARD_MARK.get(state, "work"),
-                     source=project.rel(os.path.join(project.release_dir(pcb), "releases.toml")))
+            b.update(version=rel["label"], source=project.rel(os.path.join(project.release_dir(pcb), "releases.toml")))
+            state = p.get("state")                     # released, or changed since: only the survey can tell
+            if state:
+                b.update(state=state if state != "changed" else f"changed since {rel['label']}",
+                         mark=BOARD_MARK.get(state, "work"))
         else:
             with open(os.path.join(project.root, pcb["path"]), encoding="utf-8", errors="replace") as fh:
                 rev = V.title_rev(fh.read())
@@ -380,9 +405,9 @@ def records(project):
     try:
         from . import production
         orders = [dict(order_summary(o), source=o["path"]) for o in production.load_orders(project, pcbs, [])]
-    except (Exception, SystemExit):      # noqa: BLE001
-        pass
-    return dict(board=boards, orders=orders)
+    except (Exception, SystemExit) as err:      # noqa: BLE001
+        problems.append(f"the project's orders could not be read ({squeeze(err)[:200]})")
+    return dict(board=boards, orders=orders, problems=problems)
 
 
 def order_summary(order):
@@ -401,15 +426,15 @@ def order_summary(order):
         mark = "done" if "received" in states else ORDER_MARK["cancelled"]
     else:
         mark = "work"
-    # each board's latest price, in the currency it inherits as load_orders has it (the latest event that names
-    # one, so a price corrected without a currency keeps it); an event about several boards counts once; amounts
-    # in different currencies are not added
+    # each board's latest price, in the board's currency as load_orders resolves it: the latest event that names
+    # one, whichever came later, so a price corrected without a currency keeps it and a currency corrected without
+    # a price applies; an event about several boards counts once; amounts in different currencies are not added
     priced, totals = {}, {}
     for b in boards:
         events = b.get("events", [])
         e = next((e for e in reversed(events) if isinstance(e.get("price"), (int, float))), None)
         if e is not None and id(e) not in priced:
-            cur = e.get("currency") or b.get("currency") or next((x["currency"] for x in reversed(events) if x.get("currency")), "")
+            cur = b.get("currency") or next((x["currency"] for x in reversed(events) if x.get("currency")), "")
             priced[id(e)] = (e["price"], cur)
     for amount, cur in priced.values():
         totals[cur] = totals.get(cur, 0) + amount
@@ -539,13 +564,15 @@ def project_title(root):
     return m.group(1).strip() if m else os.path.basename(root)
 
 
-def new_round(project, P, today=None):
+def new_round(project, P, today=None, say=print):
     """Write the next round's file and return its path. Round 1 is a skeleton with the boards the project has; a
     later one is the round before as it stands now (the marks and states its notes left, the decisions still open),
     without the notes and the decided list. A board the records have at another version gets theirs, and its state."""
     today = today or datetime.date.today()
     rounds = load_rounds(P["dir"])
     rec = records(project)
+    for line in rec["problems"]:
+        say("watch: " + line)
     n = len(rounds) + 1
     path = os.path.join(P["dir"], "r%d.toml" % n)
     if os.path.exists(path):
@@ -581,7 +608,7 @@ def new_round(project, P, today=None):
         rnd = {k: v for k, v in rnd.items() if v != []}
         text = write_round(rnd, head)
         index = load_index(P)
-        entry(index, last["_key"]).setdefault("seal", fingerprint(last))
+        seal(index, last)
         save_index(P, index)
     os.makedirs(P["dir"], exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -631,7 +658,8 @@ def add_note(P, text, on="status", mark=None, chose=None, round_n=None, today=No
 def save_index(P, index):
     os.makedirs(P["img"], exist_ok=True)
     tomlw.dump(index, P["index"], "Written by pcbkit overview: which pictures each round uses, as they were when the round\n"
-                                  "was first built, and a seal on each earlier round (its file without the notes).")
+                                  "was first built, and a seal on each earlier round (its file without the notes, and\n"
+                                  "the notes it had at the last build, which later ones are added to).")
 
 
 def sha(path, extra=""):
@@ -1182,7 +1210,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
             watch += seen
         if not problems:
             for rnd in rounds[:-1]:
-                entry(index, rnd["_key"]).setdefault("seal", fingerprint(rnd))
+                seal(index, rnd)
             save_index(P, index)
             page, used = page_html(rounds, P, index, base=base)
             os.makedirs(os.path.dirname(P["page"]), exist_ok=True)

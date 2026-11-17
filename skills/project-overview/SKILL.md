@@ -75,7 +75,7 @@ page then gets a note that cites it.
 | a review and its decisions, a re-layout, a release, an order placed or received, a bring-up | a new round |
 | a price or a stock figure moved; a part was swapped in the cart; a decision was taken; a test came back | a note |
 | a typo or a wrong number in the newest round, before the user has seen it | edit that round's file |
-| anything in an earlier round | a note on it (`--round N`); `--check` refuses an earlier round that was edited |
+| anything in an earlier round, a note of it included | a new note on it (`--round N`); `--check` refuses an earlier round that was edited, and one whose notes were changed, removed or reordered |
 
 ```bash
 pcbkit overview note "The RP2354A is gone: 0 at JLC and at LCSC." --on supply --mark blocked --state "RP2354A out of stock"

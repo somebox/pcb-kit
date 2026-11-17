@@ -15,7 +15,9 @@ note gave it.
 
 Pictures are kept as they were when their round was first built, in docs/overview/img/ (index.toml there says which
 round uses which): a board's turntable and layers under the hash of the board file, so a board that did not change
-costs nothing in the next round. `--render` makes the newest round's again. The page links them; `--single` puts
+costs nothing in the next round. `--render` draws the newest round's again, whatever is there, and leaves a set an
+earlier round uses as it is. Where nothing can be rendered (`--no-render`, no KiCad) the stills of `pcbkit previews`
+stand in, if they are of this board (their SOURCE.txt) or don't say. The page links the pictures; `--single` puts
 them inside the file (all of the newest round's, one a view for the earlier ones).
 
 The fields are listed in skills/project-overview/round-file.md; docs/CONVENTIONS.md, "The overview page", says what
@@ -31,6 +33,7 @@ import os
 import re
 import shutil
 import sys
+import urllib.parse
 
 from . import tomlw
 from .config import Project
@@ -53,6 +56,7 @@ STILLS = (("render-top.png", "Front"), ("render-bottom.png", "Back"))      # pcb
 LIMITS = dict(summary=320, topic=420, topics=10, note=240, state=30, next=5, options=4, notes=8, changes=7)
 RECIPE = 3                         # part of a picture set's name: raise it when the pictures are made differently
 ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+RESERVED = ("status", "viewer", "decisions", "topics", "decided", "facts")     # the page's own anchors in a round
 ROUND = re.compile(r"^r(\d+)\.toml$")
 RECORD_ID = re.compile(r"^[A-Z]{1,3}\d+$")
 INLINE = re.compile(r"`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)\s]+)\)")
@@ -132,6 +136,17 @@ def squeeze(v):
     return " ".join(str(v or "").split())
 
 
+def safe(name):
+    """A name as part of a file or folder name in the picture store."""
+    return re.sub(r"[^A-Za-z0-9._-]", "-", name)
+
+
+def anchor(id_):
+    """An item's id as the page links it (overview.html#r3-<anchor>). Topics, decisions and facts have ids that are
+    anchors already; a board's id is its PCB's file name as the project has it (controller_v2, Main, "my board")."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(id_)).strip("-")
+
+
 def tags(rnd, prev):
     """Against the round before: ({topic id: "new" | "changed"}, [titles of the topics it no longer lists])."""
     if prev is None or not prev.get("topic"):        # nothing to compare with: every topic would read "new"
@@ -207,14 +222,20 @@ def check_rounds(rounds, P, project, index):
         for what, it in marked + [(f"a note on {n.get('on', 'status')!r}", n) for n in rnd.get("note", []) if "mark" in n]:
             if it.get("mark") not in MARK:
                 bad(f"{what}: mark {it.get('mark')!r} is not one of {', '.join(MARK)}")
-        seen = {"status"}
+        seen, links = set(), set(RESERVED)
         for kind in ("board", "topic", "decision", "fact"):
             for it in rnd.get(kind, []):
                 i = it.get("id")
-                if not isinstance(i, str) or not ID.match(i):
+                if kind == "board" and (not isinstance(i, str) or i != i.strip() or not anchor(i)):
+                    bad(f"board id {i!r}: the PCB's file name without .kicad_pcb")
+                elif kind != "board" and (not isinstance(i, str) or not ID.match(i)):
                     bad(f"{kind} id {i!r}: lower-case letters, digits and hyphens")
                 elif i in seen:
                     bad(f"id {i!r} is used twice (a note names its item by id)")
+                elif anchor(i) in links:
+                    bad(f"id {i!r} is linked as #{rnd['_key']}-{anchor(i)}, which the page already uses: another id")
+                else:
+                    links.add(anchor(i))
                 seen.add(i)
         for s in rnd.get("fact", []):
             if s.get("id") not in dict(FACTS):
@@ -341,16 +362,38 @@ def records(project):
         boards.append(b)
     try:
         from . import production
-        for o in production.load_orders(project, pcbs, []):
-            ev = o["events"][-1] if o.get("events") else {}
-            status = ev.get("status", "draft")
-            total = sum(b["price"] for b in o.get("board", []) if isinstance(b.get("price"), (int, float)))
-            cur = next((b["currency"] for b in o.get("board", []) if b.get("currency")), "")
-            orders.append(dict(value=f"{o['name']}: {status}" + (f", {total:.2f} {cur}".rstrip() if total else ""),
-                               mark=ORDER_MARK.get(status, "work"), date=ev.get("date"), source=o["path"]))
+        orders = [dict(order_summary(o), source=o["path"]) for o in production.load_orders(project, pcbs, [])]
     except (Exception, SystemExit):      # noqa: BLE001
         pass
     return dict(board=boards, orders=orders)
+
+
+def order_summary(order):
+    """An order as production.load_orders read it, in a line: {value, mark, date}. Its boards each have their own
+    status (an event can be about one of them), so the order is done only when every board has arrived or was
+    cancelled, needs attention while any has a problem, and is in work otherwise; boards that differ are named."""
+    boards = order.get("board", [])
+    states = [b.get("status", "draft") for b in boards] or ["draft"]
+    if len(set(states)) == 1:
+        said = states[0]
+    else:
+        said = ", ".join(f"{b.get('pcb')} {b.get('status', 'draft')}" for b in boards)
+    if "problem" in states:
+        mark = "attention"
+    elif all(s in ("received", "cancelled") for s in states):
+        mark = "done" if "received" in states else ORDER_MARK["cancelled"]
+    else:
+        mark = "work"
+    priced = {}                                   # each board's latest price; an event about several counts once
+    for b in boards:
+        e = next((e for e in reversed(b.get("events", [])) if isinstance(e.get("price"), (int, float))), None)
+        if e is not None:
+            priced[id(e)] = e
+    total = sum(e["price"] for e in priced.values())
+    cur = next((e["currency"] for e in priced.values() if e.get("currency")), "")
+    dates = [e["date"] for e in order.get("events", []) if isinstance(e.get("date"), datetime.date)]
+    return dict(value=f"{order['name']}: {said}" + (f", {total:.2f} {cur}".rstrip() if total else ""), mark=mark,
+                date=max(dates) if dates else None)
 
 
 # ---- writing a round file -------------------------------------------------------------------------------------------
@@ -601,11 +644,61 @@ def render_set(pcb, dest, cfg):
     return man
 
 
+def publish(tmp, dest, man):
+    """A finished set: its set.json written, then moved into place in one step."""
+    with open(os.path.join(tmp, "set.json"), "w", encoding="utf-8") as fh:
+        json.dump(man, fh, indent=1, sort_keys=True)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.rename(tmp, dest)
+
+
+def stills_set(P, project, info, pcb):
+    """What `pcbkit previews` left of a board, as a set of stills, for when nothing can be rendered:
+    (set name, problem, watch). The set is named by what the stills hold, so other stills later are another set and
+    a round keeps the ones it was given. Previews that say which board they are of (SOURCE.txt, written by pcbkit
+    release) must be of this one; previews that don't say are used, and the page says they were not checked."""
+    from .release import versions as V
+    b, pdir = info["key"], project.previews_dir(info)
+    found = [(f, label) for f, label in STILLS if os.path.isfile(os.path.join(pdir, f))]
+    if not found:
+        return None, (f"no pictures of {b}: it was not rendered, and {project.rel(pdir)} has no render-top.png "
+                      "(pcbkit previews)"), None
+    checked, watch = False, None
+    if os.path.isfile(os.path.join(pdir, "SOURCE.txt")):
+        try:
+            with open(os.path.join(pdir, "SOURCE.txt"), encoding="utf-8") as fh:
+                checked = fh.read() == V.preview_source(pcb)
+        except (Exception, SystemExit):      # noqa: BLE001 - a board whose sheets can't be read can't be compared
+            checked = None
+        if checked is False:
+            return None, (f"no pictures of {b}: it was not rendered, and the previews in {project.rel(pdir)} are of "
+                          "another version of the board (their SOURCE.txt): pcbkit previews, or let pcbkit overview render"), None
+    if not checked:
+        watch = (f"the pictures of {b} are the stills in {project.rel(pdir)}, which don't say which version of the "
+                 "board they show (no SOURCE.txt): look that they are of this one")
+    h = hashlib.sha1(b"checked" if checked else b"")
+    for f, label in found:
+        with open(os.path.join(pdir, f), "rb") as fh:
+            h.update(label.encode() + fh.read())
+    name = "%s-%s-stills" % (safe(b), h.hexdigest()[:8])
+    dest = os.path.join(P["img"], name)
+    if not os.path.exists(os.path.join(dest, "set.json")):
+        tmp = dest + ".new-%d" % os.getpid()
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        for f, _ in found:
+            shutil.copyfile(os.path.join(pdir, f), os.path.join(tmp, f))
+        publish(tmp, dest, dict(made="pcbkit previews", checked=bool(checked),
+                                stills=[dict(label=label, file=f) for f, label in found]))
+    return name, None, watch
+
+
 def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set, say=print):
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
     rendered under the board file's hash (or found there, when the board has not changed since another round).
-    REFRESH does the newest round's again. Returns the problems."""
-    problems, cfg = [], project.cfg["overview"]
+    REFRESH does the newest round's again, whatever is there: a set an earlier round uses stays as it is and the
+    new one gets a name of its own. Returns (problems, watch)."""
+    problems, watch, cfg = [], [], project.cfg["overview"]
     pcbs = {p["key"]: p for p in project.pcbs()}
     os.makedirs(P["img"], exist_ok=True)
     for rnd in rounds:
@@ -619,55 +712,52 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
                 if pic not in e["pictures"]:
                     problems.append(f"{rnd['_key']}: picture {pic}: not in the project")
                 continue
-            name = "%s-%s" % (sha(src), re.sub(r"[^A-Za-z0-9._-]", "-", os.path.basename(pic)))
+            name = "%s-%s" % (sha(src), safe(os.path.basename(pic)))
             if not os.path.exists(os.path.join(P["img"], name)):
                 shutil.copyfile(src, os.path.join(P["img"], name))
             e["pictures"][pic] = name
+        others = {n for k, x in index["round"].items() if k != rnd["_key"] for n in x.get("sets", {}).values()}
         for v in rnd.get("view", []):
             b = v.get("board")
             if not b or (b in e["sets"] and not again) or b not in pcbs:
                 continue
             pcb = os.path.join(P["root"], pcbs[b]["path"])
-            name = "%s-%s" % (b, sha(pcb, "%s %s %s %s" % (RECIPE, cfg["frames"], cfg["size"], cfg["layer_width"])))
-            dest = os.path.join(P["img"], name)
-            if not os.path.exists(os.path.join(dest, "set.json")):
+            base = "%s-%s" % (safe(b), sha(pcb, "%s %s %s %s" % (RECIPE, cfg["frames"], cfg["size"], cfg["layer_width"])))
+            have = os.path.exists(os.path.join(P["img"], base, "set.json"))
+            name = None
+            if render and (again or not have):
+                tmp = os.path.join(P["img"], base + ".new-%d" % os.getpid())
+                shutil.rmtree(tmp, ignore_errors=True)
+                os.makedirs(tmp)
                 man = {}
-                if render:
-                    tmp = dest + ".new-%d" % os.getpid()
+                try:
+                    man = renderer(pcb, tmp, cfg) or {}
+                except (Exception, SystemExit) as err:      # noqa: BLE001 - no KiCad here: the stills will do
+                    say(f"{rnd['_key']}: {b} was not rendered ({str(err)[:200]})")
+                if man.get("turn") or man.get("layers"):
+                    name, n = base, 2
+                    while name in others and os.path.exists(os.path.join(P["img"], name)):
+                        name, n = "%s-%d" % (base, n), n + 1     # an earlier round keeps the set it was given
+                    publish(tmp, os.path.join(P["img"], name), man)
+                else:
                     shutil.rmtree(tmp, ignore_errors=True)
-                    os.makedirs(tmp)
-                    try:
-                        man = renderer(pcb, tmp, cfg)
-                    except (Exception, SystemExit) as err:      # noqa: BLE001 - no KiCad here: the stills will do
-                        say(f"{rnd['_key']}: {b} was not rendered ({str(err)[:200]})")
-                    if not man.get("turn") and not man.get("layers"):
-                        man = {}
-                        shutil.rmtree(tmp, ignore_errors=True)
-                if not man:                                         # what pcbkit previews left, as stills
-                    stills = [(f, label) for f, label in STILLS if os.path.isfile(os.path.join(project.previews_dir(pcbs[b]), f))]
-                    if not stills:
-                        problems.append(f"{rnd['_key']}: no pictures of {b}: it was not rendered, and "
-                                        f"{project.rel(project.previews_dir(pcbs[b]))} has no render-top.png (pcbkit previews)")
-                        continue
-                    name, dest = name + "-stills", dest + "-stills"
-                    tmp = dest + ".new-%d" % os.getpid()
-                    shutil.rmtree(tmp, ignore_errors=True)
-                    os.makedirs(tmp)
-                    for f, _ in stills:
-                        shutil.copyfile(os.path.join(project.previews_dir(pcbs[b]), f), os.path.join(tmp, f))
-                    man = dict(made="pcbkit previews", stills=[dict(label=label, file=f) for f, label in stills])
-                with open(os.path.join(tmp, "set.json"), "w", encoding="utf-8") as fh:
-                    json.dump(man, fh, indent=1, sort_keys=True)
-                shutil.rmtree(dest, ignore_errors=True)
-                os.rename(tmp, dest)
+            if name is None and have:
+                name = base                                      # drawn before, from this very board file
+            if name is None:
+                name, problem, note = stills_set(P, project, pcbs[b], pcb)
+                if problem:
+                    problems.append(f"{rnd['_key']}: {problem}")
+                    continue
+                if note:
+                    watch.append(f"{rnd['_key']}: {note}")
             e["sets"][b] = name
     used = {n for e in index["round"].values() for n in list(e.get("sets", {}).values()) + list(e.get("pictures", {}).values())}
     for name in os.listdir(P["img"]):                               # a set or picture no round uses any more
         full = os.path.join(P["img"], name)
-        ours = re.match(r"^([0-9a-f]{8}-.+|.+-[0-9a-f]{8}(-stills)?(\.new-\d+)?)$", name)
+        ours = re.match(r"^([0-9a-f]{8}-.+|.+-[0-9a-f]{8}(-\d+)?(-stills)?(\.new-\d+)?)$", name)
         if ours and name not in used:
             shutil.rmtree(full) if os.path.isdir(full) else os.remove(full)
-    return problems
+    return problems, watch
 
 
 def set_of(P, index, rnd, board):
@@ -700,7 +790,7 @@ class Page:
         elif self.single:
             return None
         else:
-            url = os.path.relpath(os.path.join(self.P["root"], path), self.dir).replace(os.sep, "/")
+            url = urllib.parse.quote(os.path.relpath(os.path.join(self.P["root"], path), self.dir).replace(os.sep, "/"))
         return url + ("#" + frag if frag else "")
 
     def src(self, stored, key):
@@ -712,7 +802,7 @@ class Page:
             return ""
         self.bytes[key] = self.bytes.get(key, 0) + size
         if not self.single:
-            return os.path.relpath(full, self.dir).replace(os.sep, "/")
+            return urllib.parse.quote(os.path.relpath(full, self.dir).replace(os.sep, "/"))
         with open(full, "rb") as fh:
             return "data:%s;base64,%s" % (MIME.get(os.path.splitext(full)[1].lower(), "application/octet-stream"),
                                           base64.b64encode(fh.read()).decode())
@@ -792,17 +882,23 @@ def viewer_html(pg, rnd, newest):
                     first = next(iter(turn.values()))
                     modes.append(dict(kind="pics", name="Picture",
                                       pics=[dict(label=v["board"], src=where(first[len(first) // 8]))]))
-            if man.get("layers") and "layers" in show and full:
+            if man.get("layers") and "layers" in show and (full or not modes):
+                # all of them, or for an earlier round of a single page that has no turntable, the front as it opens
+                front = [x for x in man["layers"] if x["id"] in ("F.Cu", "F.Silkscreen", "Edge.Cuts")]
+                kept = man["layers"] if full else front if len(front) > 1 else man["layers"][:2]
                 what = {lid: (name, colour) for lid, name, colour in LAYERS}
                 modes.append(dict(kind="layers", name="Layers", layers=[
                     dict(id=x["id"], name=what[x["id"]][0], colour=what[x["id"]][1], src=where(x["file"]))
-                    for x in man["layers"]]))
+                    for x in kept]))
             if man.get("stills") and "stills" in show:
                 pics = man["stills"] if full else man["stills"][:1]
                 modes.append(dict(kind="pics", name="Pictures",
                                   pics=[dict(label=x["label"], src=where(x["file"])) for x in pics]))
             mm = man.get("mm")
-            tab = dict(name=v.get("name") or v["board"], note="%g × %g mm" % tuple(mm) if mm else "", modes=modes)
+            note = "%g × %g mm" % tuple(mm) if mm else ""
+            if man.get("stills") and not man.get("checked"):
+                note = "Stills from pcbkit previews, not checked against the board file"
+            tab = dict(name=v.get("name") or v["board"], note=note, modes=modes)
         else:
             stored = pg.index["round"].get(key, {}).get("pictures", {})
             pics = [dict(label=p.get("label") or os.path.basename(p["file"]), src=pg.src(stored[p["file"]], key))
@@ -859,7 +955,7 @@ def round_html(pg, rnd, prev, rounds):
             what = "Status" if kind == "status" else squeeze(it.get("title") or it.get("ref") or dict(FACTS).get(on) or on)
             left = mark_html(n["mark"], n.get("state"), "small") + " " if n.get("mark") else ""
             rows.append('<li><time>%s</time> <a href="#%s-%s">%s</a> %s%s</li>' % (
-                iso(n.get("date")), key, on, esc(what), left, pg.inline(squeeze(n.get("text")))))
+                iso(n.get("date")), key, anchor(on), esc(what), left, pg.inline(squeeze(n.get("text")))))
         out.append('<div class="updates"><h3>Added since %s</h3><ul>%s</ul></div>' % (iso(rnd.get("date")), "".join(rows)))
     # viewer and boards
     viewer = viewer_html(pg, rnd, newest)
@@ -867,7 +963,7 @@ def round_html(pg, rnd, prev, rounds):
     for b in rnd.get("board", []):
         m, _, state = effective(rnd, b["id"])
         boards.append('<tr id="%s-%s"><th scope="row">%s</th><td class="ver">%s</td><td>%s%s%s%s</td></tr>' % (
-            key, b["id"], esc(b["id"]), esc(squeeze(b.get("version"))), mark_html(m, state),
+            key, anchor(b["id"]), esc(b["id"]), esc(squeeze(b.get("version"))), mark_html(m, state),
             pg.text(b.get("text"), "sub"), notes_html(pg, rnd, b["id"]), pg.source(b.get("source"))))
     if viewer or boards:
         out.append('<div class="look%s">%s' % ("" if viewer and boards else " one", viewer))
@@ -995,7 +1091,9 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
                 problems.append(f"{shown(P['page'], P['root'])} is not what the rounds say: pcbkit overview")
     else:
         if not problems:
-            problems += freeze(P, rounds, project, index, render, refresh, renderer, say)
+            stopped, seen = freeze(P, rounds, project, index, render, refresh, renderer, say)
+            problems += stopped
+            watch += seen
         if not problems:
             for rnd in rounds[:-1]:
                 entry(index, rnd["_key"]).setdefault("seal", fingerprint(rnd))
@@ -1009,6 +1107,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
             if single is not None:
                 one = os.path.abspath(single) if single else os.path.splitext(P["page"])[0] + "-single.html"
                 page, _ = page_html(rounds, dict(P, page=one), index, single=True, base=base)
+                os.makedirs(os.path.dirname(one), exist_ok=True)
                 with open(one, "w", encoding="utf-8") as fh:
                     fh.write(page)
                 say(f"{one}: {size(len(page.encode()))}, pictures inside")

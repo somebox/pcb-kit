@@ -19,6 +19,7 @@ sys.path.insert(0, ROOT)
 
 from pcbkit import cli, overview, production, tomlw  # noqa: E402
 from pcbkit.config import Project  # noqa: E402
+from pcbkit.release import versions  # noqa: E402
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
        b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfe\xa75\x81\x84\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -57,6 +58,13 @@ def fake_renderer(calls):
         return dict(made="test", mm=[10.0, 5.0], turn=dict(top=["turn-top-00.webp", "turn-top-01.webp"], bottom=["turn-bottom-00.webp"]),
                     layers=[dict(id="F.Cu", file="layer-F_Cu.webp"), dict(id="Edge.Cuts", file="layer-Edge_Cuts.webp")])
     return render
+
+
+def layers_only(pcb, dest, cfg):
+    for name in ("layer-F_Mask.webp", "layer-F_Cu.webp", "layer-B_Cu.webp", "layer-Edge_Cuts.webp"):
+        write(os.path.join(dest, name), PNG, "wb")
+    return dict(made="test", layers=[dict(id="F.Mask", file="layer-F_Mask.webp"), dict(id="F.Cu", file="layer-F_Cu.webp"),
+                                     dict(id="B.Cu", file="layer-B_Cu.webp"), dict(id="Edge.Cuts", file="layer-Edge_Cuts.webp")])
 
 
 class Case(unittest.TestCase):
@@ -210,6 +218,94 @@ class Standing(Case):
         self.assertIn('<span class="flag chosen">Chosen</span>A u.FL one', page)
 
 
+class BoardNames(Case):
+    """A board's id is its PCB's file name, whatever the project called it."""
+
+    def rnd(self, name):
+        pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        os.rename(pcb, os.path.join(self.root, "boards", "demo", name + ".kicad_pcb"))
+        r = base()
+        r["board"][0]["id"] = r["view"][0]["board"] = name
+        r["note"] = [dict(date=D(2026, 11, 17), on=name, mark="work", state="ordered", text="Paid.")]
+        return r
+
+    def named(self, name, link):
+        self.put(1, self.rnd(name))
+        self.assertEqual(self.check(), ([], []))
+        self.assertEqual(self.build(), 0, self.said)
+        page = self.page()
+        self.assertIn('<tr id="r1-%s"><th scope="row">%s</th>' % (link, name), page)
+        self.assertIn('<a href="#r1-%s">%s</a>' % (link, name), page)
+        stored = tomlw.load(self.P["index"])["round"]["r1"]["sets"][name]
+        self.assertRegex(stored, r"^%s-[0-9a-f]{8}$" % re.escape(link))
+        self.assertNotIn(" ", page[page.index('"frames":["'):page.index('"frames":["') + 60])
+
+    def test_an_underscore(self):
+        self.named("controller_v2", "controller_v2")
+
+    def test_a_capital(self):
+        self.named("Main", "Main")
+
+    def test_a_space(self):
+        self.named("LED board", "LED-board")
+
+    def test_a_round_started_for_such_a_project_can_be_finished(self):
+        os.rename(os.path.join(self.root, "boards", "demo", "demo.kicad_pcb"), os.path.join(self.root, "boards", "demo", "Main_v2.kicad_pcb"))
+        path = overview.new_round(self.project, self.P, today=D(2026, 11, 17))
+        rnd = tomlw.load(path)
+        self.assertEqual(rnd["board"][0]["id"], "Main_v2")
+        rnd.update(label="Start", state="started", summary="A start.")
+        write(path, overview.write_round(rnd))
+        self.assertEqual(self.check()[0], [])
+
+    def test_topics_and_decisions_keep_the_slug_rule_and_the_pages_own_anchors(self):
+        self.assertIn("lower-case", self.problems(lambda r: r["topic"][0].update(id="Power_in")))
+        self.assertIn("which the page already uses", self.problems(lambda r: r["topic"][0].update(id="topics")))
+        self.assertIn("the PCB's file name", self.problems(lambda r: r["board"][0].update(id=" demo")))
+
+
+class Orders(unittest.TestCase):
+    """An order in a line, from its boards' own states (production.load_orders)."""
+
+    def order(self, *states, events=()):
+        boards = [dict(pcb="b%d" % i, status=s, events=list(events)) for i, s in enumerate(states)]
+        return dict(name="2026-11-16-first", board=boards, events=list(events))
+
+    def test_one_board_arrived_and_one_is_still_being_made(self):
+        got = overview.order_summary(self.order("received", "in-production"))
+        self.assertEqual((got["value"], got["mark"]), ("2026-11-16-first: b0 received, b1 in-production", "work"))
+
+    def test_the_order_is_done_when_every_board_is(self):
+        self.assertEqual(overview.order_summary(self.order("received", "received"))["mark"], "done")
+        self.assertEqual(overview.order_summary(self.order("received", "cancelled"))["mark"], "done")
+        self.assertEqual(overview.order_summary(self.order("cancelled", "cancelled"))["mark"], "todo")
+        self.assertEqual(overview.order_summary(self.order("shipped", "shipped"))["value"], "2026-11-16-first: shipped")
+
+    def test_a_problem_on_one_board_is_the_orders(self):
+        self.assertEqual(overview.order_summary(self.order("received", "problem"))["mark"], "attention")
+
+    def test_a_price_for_the_whole_order_counts_once_and_the_date_is_the_latest(self):
+        whole = dict(date=D(2026, 11, 16), status="submitted", price=202.02, currency="USD")
+        later = dict(date=D(2026, 11, 20), status="shipped")
+        got = overview.order_summary(self.order("shipped", "shipped", events=[whole, later]))
+        self.assertEqual((got["value"], got["date"]), ("2026-11-16-first: shipped, 202.02 USD", D(2026, 11, 20)))
+        a, b = dict(date=D(2026, 11, 16), status="draft", price=125.55, currency="USD"), dict(date=D(2026, 11, 16), status="draft", price=76.47)
+        o = dict(name="o", events=[a, b], board=[dict(pcb="x", status="draft", events=[a]), dict(pcb="y", status="draft", events=[b])])
+        self.assertEqual(overview.order_summary(o)["value"], "o: draft, 202.02 USD")
+
+
+class OrdersFromTheRecords(Case):
+    def test_an_event_about_one_board_does_not_speak_for_the_order(self):
+        write(os.path.join(self.root, "boards", "other", "other.kicad_pcb"), '(kicad_pcb (version 20260206) (footprint "R_0402"))\n')
+        write(os.path.join(self.root, "production", "orders", "2026-11-16-first", "order.toml"),
+              'title = "First"\n\n[[board]]\npcb = "demo"\nversion = "1.0.0"\npcbs = 5\n\n[[board]]\npcb = "other"\nversion = "1.0.0"\npcbs = 5\n\n'
+              '[[event]]\ndate = 2026-11-16\nstatus = "submitted"\n\n[[event]]\ndate = 2026-11-30\nstatus = "received"\npcb = "demo"\n')
+        orders = overview.records(Project(self.root))["orders"]
+        self.assertEqual([(o["value"], o["mark"], o["date"]) for o in orders],
+                         [("2026-11-16-first: demo received, other submitted", "work", D(2026, 11, 30))])
+        self.assertEqual(orders[0]["source"], "production/orders/2026-11-16-first/order.toml")
+
+
 class Tags(Case):
     def test_against_the_round_before(self):
         one = base()
@@ -302,8 +398,7 @@ class ThePage(Case):
 
     def test_the_single_page_holds_its_pictures(self):
         self.two_rounds()
-        one = os.path.join(self.root, "build", "one.html")
-        os.makedirs(os.path.dirname(one))
+        one = os.path.join(self.root, "build", "send", "one.html")     # a folder that is not there yet
         self.assertEqual(self.build(single=one), 0, self.said)
         with open(one, encoding="utf-8") as fh:
             page = fh.read()
@@ -316,6 +411,21 @@ class ThePage(Case):
         self.assertIn('"kind":"turn"', newest)
         self.assertNotIn('"kind":"turn"', earlier)                     # one picture a view for an earlier round
         self.assertNotIn('"kind":"layers"', earlier)
+
+    def test_an_earlier_round_of_the_single_page_keeps_a_board_that_has_layers_only(self):
+        self.put(1, base())
+        self.put(2, base())
+        self.said = []
+        self.assertEqual(overview.build(self.project, say=self.said.append, renderer=layers_only,
+                                        single=os.path.join(self.root, "one.html")), 0, self.said)
+        with open(os.path.join(self.root, "one.html"), encoding="utf-8") as fh:
+            page = fh.read()
+        newest, earlier = page[page.index('id="r2"'):page.index('id="r1"')], page[page.index('id="r1"'):]
+        self.assertEqual(re.findall(r'"id":"([\w.]+)"', newest[:newest.index("</script>")]), ["F.Mask", "F.Cu", "B.Cu", "Edge.Cuts"])
+        data = earlier[earlier.index('<script type="application/json">'):earlier.index("</script>")]
+        self.assertIn('"name":"demo"', data)                           # the board is still a tab of the viewer
+        self.assertEqual(re.findall(r'"id":"([\w.]+)"', data), ["F.Cu", "Edge.Cuts"])   # the front as it opens
+        self.assertNotRegex(data, r'"src":"(?!data:)')
 
     def test_a_base_url_links_the_sources_there(self):
         write(os.path.join(self.root, "pcbkit.toml"), '[overview]\nbase = "https://example.org/repo/blob/main"\n')
@@ -374,12 +484,87 @@ class Pictures(Case):
         self.assertNotEqual(new, old)
         self.assertFalse(os.path.exists(os.path.join(self.P["img"], old)))
 
+    def test_render_again_draws_an_unchanged_board_again(self):
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        first = self.index()["r1"]["sets"]["demo"]
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # a 3-D model changed, say: the board file did not
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.index()["r1"]["sets"]["demo"], first)    # nobody else used it: drawn over
+        self.assertEqual(sorted(n for n in os.listdir(self.P["img"]) if n.startswith("demo-")), [first])
+
+    def test_render_again_leaves_the_set_an_earlier_round_uses(self):
+        self.put(1, base())
+        self.assertEqual(self.build(), 0, self.said)
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        shared = self.index()["r1"]["sets"]["demo"]
+        marker = os.path.join(self.P["img"], shared, "turn-top-00.webp")
+        write(marker, PNG + b"as round 1 saw it", "wb")
+        self.assertEqual(self.build(refresh=True), 0, self.said)
+        sets = self.index()
+        self.assertEqual(sets["r1"]["sets"]["demo"], shared)
+        self.assertEqual(sets["r2"]["sets"]["demo"], shared + "-2")
+        with open(marker, "rb") as fh:
+            self.assertEqual(fh.read(), PNG + b"as round 1 saw it")
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # and again: round 2's own set is drawn over
+        self.assertEqual(self.index()["r2"]["sets"]["demo"], shared + "-2")
+        self.assertEqual(len(self.calls), 3)
+
     def test_without_a_renderer_the_previews_stills_stand_in(self):
         write(os.path.join(self.root, "docs", "previews", "demo", "render-top.png"), PNG, "wb")
         self.put(1, base())
         self.assertEqual(self.build(render=False), 0, self.said)
         self.assertEqual(self.calls, [])
-        self.assertIn('"kind":"pics","name":"Pictures","pics":[{"label":"Front"', self.page())
+        page = self.page()
+        self.assertIn('"kind":"pics","name":"Pictures","pics":[{"label":"Front"', page)
+        # they don't say which board they are of: said once when they are taken, and on the page
+        self.assertIn("don't say which version of the board they show", "\n".join(self.said))
+        self.assertIn("Stills from pcbkit previews, not checked against the board file", page)
+
+    def stills(self, content, source=None):
+        d = os.path.join(self.root, "docs", "previews", "demo")
+        write(os.path.join(d, "render-top.png"), content, "wb")
+        if source is not None:
+            write(os.path.join(d, "SOURCE.txt"), source)
+
+    def test_stills_that_are_of_this_board_need_no_remark(self):
+        pcb = os.path.join(self.root, "boards", "demo", "demo.kicad_pcb")
+        self.stills(PNG, versions.preview_source(pcb))
+        self.put(1, base())
+        self.assertEqual(self.build(render=False), 0, self.said)
+        self.assertNotIn("watch:", "\n".join(self.said))
+        self.assertNotIn("not checked against the board file", self.page())
+
+    def test_stills_of_another_version_of_the_board_are_refused(self):
+        self.stills(PNG, "0000000000000000000000000000000000000000  demo.kicad_pcb\n")
+        self.put(1, base())
+        self.assertEqual(self.build(render=False), 1)
+        self.assertIn("are of another version of the board", "\n".join(self.said))
+        self.assertFalse(os.path.exists(self.P["page"]))
+
+    def test_other_stills_later_leave_an_earlier_rounds_stills_alone(self):
+        self.stills(PNG + b"first")
+        self.put(1, base())
+        self.assertEqual(self.build(render=False), 0, self.said)
+        one = self.index()["r1"]["sets"]["demo"]
+        self.stills(PNG + b"second")                                   # the previews were made again; the board file is the same
+        self.put(2, base())
+        self.assertEqual(self.build(render=False), 0, self.said)
+        sets = self.index()
+        self.assertEqual(sets["r1"]["sets"]["demo"], one)
+        self.assertNotEqual(sets["r2"]["sets"]["demo"], one)
+        for rnd, content in (("r1", b"first"), ("r2", b"second")):
+            with open(os.path.join(self.P["img"], sets[rnd]["sets"]["demo"], "render-top.png"), "rb") as fh:
+                self.assertEqual(fh.read(), PNG + content)
+
+    def test_the_same_stills_are_one_set(self):
+        self.stills(PNG)
+        self.put(1, base())
+        self.put(2, base())
+        self.assertEqual(self.build(render=False), 0, self.said)
+        sets = self.index()
+        self.assertEqual(sets["r1"]["sets"], sets["r2"]["sets"])
 
     def test_no_pictures_at_all_is_a_problem(self):
         self.put(1, base())

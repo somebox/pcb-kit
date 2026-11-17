@@ -55,8 +55,10 @@ page then gets a note that cites it.
    limit, a board version that differs from the records.
 4. `pcbkit overview` builds the page. It renders each board's turntable and layers the first time a round shows
    them (`kicad-cli`, `rsvg-convert`; `cwebp` from `brew install webp` keeps a board near 1 to 2 MB, and without it
-   the pictures are JPEG and PNG and several times larger). `--render` makes the newest round's pictures again after
-   the board changed; `--no-render` uses the stills `pcbkit previews` left.
+   the pictures are JPEG and PNG and several times larger). `--render` draws the newest round's pictures again,
+   after the board or one of its 3-D models changed; an earlier round keeps the ones it had. `--no-render` uses
+   the stills `pcbkit previews` left: it refuses stills whose `SOURCE.txt` is of another version of the board, and
+   says so on the page when they don't record which board they show.
 5. Look at the page before the user does: open it, switch rounds, turn a board, switch its layers, read it at
    phone width and in the dark theme. What reads long is long.
 6. Show it. `pcbkit overview --single build/overview.html` writes one file with its pictures inside, to send with

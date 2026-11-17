@@ -19,12 +19,13 @@ one; `pcbkit overview --check` says what is wrong with it. Texts take `` `code` 
 
 ## Its tables
 
-Each `[[...]]` may appear several times. `id` is lower-case letters, digits and hyphens, unique in the round: a
-note names its item by it, and the page's links (`overview.html#r3-power`) use it.
+Each `[[...]]` may appear several times. An `id` is unique in the round: a note names its item by it, and the
+page's links (`overview.html#r3-power`) use it. A board's is its PCB's file name as the project has it; every other
+is lower-case letters, digits and hyphens.
 
 | Table | Keys | Notes |
 | --- | --- | --- |
-| `[[board]]` | `id`, `version`, `mark`, `state`, `text`, `source` | `id` is the board's file name without `.kicad_pcb` |
+| `[[board]]` | `id`, `version`, `mark`, `state`, `text`, `source` | `id` is the board's file name without `.kicad_pcb`, as it is: `controller_v2`, `Main` |
 | `[[topic]]` | `id`, `title`, `mark`, `state`, `text`, `picture`, `source` | a block or a subject: power, the MCU, the case, firmware, bring-up. `picture` is a file of the project. A topic whose words changed since the round before is tagged "changed", a new id "new" |
 | `[[decision]]` | `id`, `ref`, `question`, `text`, `blocks`, `recommend`, `why`, `source` | `ref` is its number in the project (O9, Q3); `blocks` what waits on it; `recommend` the id of an option; `why` in a line |
 | `[[decision.option]]` | `id`, `text`, `effect`, `cost` | two to four after each decision |

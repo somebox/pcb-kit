@@ -23,6 +23,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   once. `pcbkit previews`' pictures are unchanged; its SVG and render steps are now `layer_png` and `render_png`,
   with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
 
+### Changed
+- **Three corrections to the skills, from a review of all nine.** bom-cost: `bomi list --check` can report a cached
+  stock figure (124 of a TPS259470A on 2026-11-16, when JLC and LCSC had none), so a part with thin stock is read
+  on JLC's own part page before an order is called ready. visual-review said JLC can't plug a via in or within
+  0.35 mm of a pad; that holds for solder-mask ink, and such a via can be filled with epoxy or copper and capped
+  instead (JLC's "Via Covering" page, 2026-11-16). pcb-kit: how to generate a schematic sheet was one table cell
+  of 2,900 characters and is now `skills/pcb-kit/schematic-sheets.md`, in headed sections with every instruction
+  and example kept; the table says what it covers and links to it.
+
 ## [0.5.0] - 2026-11-16
 
 ### Added

@@ -57,13 +57,17 @@ page then gets a note that cites it.
    next step does: before the first build of a round the check ends with those, and exits 1.
 4. `pcbkit overview` builds the page. It renders each board's turntable and layers the first time a round shows
    them (`kicad-cli`, `rsvg-convert`; `cwebp` from `brew install webp` keeps a board near 1 to 2 MB, and without it
-   the pictures are JPEG and PNG and several times larger). A new round draws a board again when its file or one
-   of the project's own 3-D models it uses (`${KIPRJMOD}/...`) changed, and reuses the earlier pictures when
-   neither did. `--render` draws the newest round's again whatever is there: for a change the board file doesn't
-   show (one of KiCad's own models, a KiCad upgrade, a render that came out wrong), or after the board changed
-   while the round was being written. An earlier round keeps the pictures it had. `--no-render` uses
-   the stills `pcbkit previews` left: it refuses stills whose `SOURCE.txt` is of another version of the board, and
-   says so on the page when they don't record which board they show.
+   the pictures are JPEG and PNG and several times larger).
+   - A new round draws a board again when its file or one of the project's own 3-D models it uses
+     (`${KIPRJMOD}/...`) changed, and reuses the earlier pictures when neither did.
+   - `--render` draws the newest round's again whatever is there: for a change the board file doesn't show (one
+     of KiCad's own models, a KiCad upgrade, a render that came out wrong), or after the board changed while the
+     round was being written. An earlier round keeps the pictures it had.
+   - A `watch:` line names a layer or a side of the turntable that could not be drawn, and why (`rsvg-convert`
+     missing, a render that failed). The viewer looks complete without it, so `--check` keeps saying it: put it
+     right, then `--render`.
+   - `--no-render` uses the stills `pcbkit previews` left. It refuses stills whose `SOURCE.txt` is of another
+     version of the board, and says so on the page when they don't record which board they show.
 5. Look at the page before the user does: open it, switch rounds, turn a board, switch its layers, read it at
    phone width and in the dark theme. What reads long is long.
 6. Show it. `pcbkit overview --single build/overview.html` writes one file with its pictures inside, to send with

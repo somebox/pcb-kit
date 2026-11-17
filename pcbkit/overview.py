@@ -366,6 +366,9 @@ def check_rounds(rounds, P, project, index):
             open_ = [d["id"] for d in open_decisions(rnd)]
             if open_ and effective(rnd, "status")[0] == "done":
                 late(f"the round is marked done with {len(open_)} decision(s) open ({', '.join(open_)})")
+            for b in [v["board"] for v in rnd.get("view", []) if v.get("board")]:
+                for line in set_of(P, index, rnd, b)[1].get("failed", []):
+                    late(f"the viewer of {b} is without {line}; once that is put right, pcbkit overview --render")
             known = records(project)
             watch.extend(known["problems"])
             rec = {b["id"]: b for b in known["board"]}
@@ -724,15 +727,19 @@ def plot_facts(svg):
 def render_set(pcb, dest, cfg):
     """A board's pictures into DEST: the turntable of both sides, and each layer on its own on a clear background,
     all in one frame so they stack; set.json says what is there. A layer is left out only when its plot draws
-    nothing."""
+    nothing. What could not be drawn (a side of the turntable, layers whose plot or picture failed) is listed under
+    "failed" with the reason, for the build and --check to say: the viewer is without it and looks complete."""
     from .release import previews as V
     w, h = (int(v) for v in str(cfg["size"]).lower().split("x"))
     with open(pcb, encoding="utf-8", errors="replace") as fh:
         text = fh.read()
-    man = dict(made="pcbkit overview (kicad-cli pcb render, kicad-cli pcb export svg)")
+    man, failed, why = dict(made="pcbkit overview (kicad-cli pcb render, kicad-cli pcb export svg)"), [], {}
     turn = V.turntable(pcb, dest, int(cfg["frames"]), (w, h)) if "(footprint " in text else {}
     if turn:
         man["turn"] = turn
+    if "(footprint " in text and len(turn) < 2:
+        which = "the turntable" if not turn else "the %s of the turntable" % ("back" if "top" in turn else "front")
+        failed.append(f"{which} (kicad-cli pcb render failed)")
     layers, tmp = [], tempfile.mkdtemp()
     try:
         for lid, what in board_layers(text):
@@ -742,7 +749,11 @@ def render_set(pcb, dest, cfg):
                 mm = V.layer_png(pcb, lid, png, int(cfg["layer_width"]), background=None, tmp=tmp)
                 with open(os.path.join(tmp, stem + ".svg"), encoding="utf-8", errors="replace") as fh:
                     drawn, colour = plot_facts(fh.read())
-            except (OSError, Exception):      # noqa: BLE001 - no rsvg-convert, or a layer kicad-cli won't plot
+            except Exception as err:      # noqa: BLE001 - no rsvg-convert, or a layer kicad-cli won't plot
+                tool = os.path.basename(str(getattr(err, "filename", None) or (getattr(err, "cmd", None) or [""])[0]))
+                reason = (f"{tool} is not installed" if isinstance(err, FileNotFoundError) and tool else
+                          f"{tool} failed" if tool else squeeze(err)[:120] or type(err).__name__)
+                why.setdefault(reason, []).append(lid)
                 continue
             man["mm"] = [round(v, 1) for v in mm] if mm else man.get("mm")
             if not drawn:
@@ -754,6 +765,9 @@ def render_set(pcb, dest, cfg):
         shutil.rmtree(tmp, ignore_errors=True)
     if layers:
         man["layers"] = layers
+    failed += ["layer%s %s (%s)" % ("s" if len(ids) > 1 else "", ", ".join(ids), reason) for reason, ids in why.items()]
+    if failed:
+        man["failed"] = failed
     return man
 
 
@@ -806,7 +820,7 @@ def stills_set(P, project, info, pcb):
     return name, None, watch
 
 
-def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set, say=print):
+def freeze(P, rounds, project, index, render=True, refresh=False, renderer=render_set):
     """Give every round its pictures, once: named ones are copied into the store under their hash, a board's set is
     rendered under the hash of the board file and of the project's own 3-D models it uses (or found there, when
     neither has changed since another round).
@@ -848,7 +862,8 @@ def freeze(P, rounds, project, index, render=True, refresh=False, renderer=rende
                 try:
                     man = renderer(pcb, tmp, cfg) or {}
                 except (Exception, SystemExit) as err:      # noqa: BLE001 - no KiCad here: the stills will do
-                    say(f"{rnd['_key']}: {b} was not rendered ({str(err)[:200]})")
+                    watch.append(f"{rnd['_key']}: {b} was not rendered ({squeeze(err)[:200]})")
+                watch += [f"{rnd['_key']}: the viewer of {b} is without {line}" for line in man.get("failed", [])]
                 if man.get("turn") or man.get("layers"):
                     name, n = base, 2
                     while os.path.exists(os.path.join(P["img"], name)):
@@ -1241,7 +1256,7 @@ def build(project=None, dir_=None, out=None, single=None, render=True, refresh=F
                 todo.append(f"{shown(P['page'], P['root'])} is not what the rounds say")
     else:
         if not problems:
-            stopped, seen = freeze(P, rounds, project, index, render, refresh, renderer, say)
+            stopped, seen = freeze(P, rounds, project, index, render, refresh, renderer)
             problems += stopped or missing(P, rounds, index)
             watch += seen
         if not problems:

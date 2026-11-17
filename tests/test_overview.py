@@ -637,6 +637,73 @@ class Layers(Case):
         man, _ = self.render(SIX, {"Edge.Cuts": PAD % ("#D0D2CD", "#D0D2CD")})
         self.assertEqual([x["id"] for x in man["layers"]], ["Edge.Cuts"])
 
+    def drawn(self, turn, layer_png):
+        """render_set on the fixture's board (it has a part, so a turntable is due), with what kicad-cli would do given."""
+        from pcbkit.release import previews
+        dest = os.path.join(self.root, "set")
+        os.makedirs(dest)
+        with mock.patch.object(previews, "layer_png", layer_png), mock.patch.object(previews, "turntable", lambda *a, **k: turn), \
+                mock.patch.object(previews, "webp", lambda png: None):
+            return overview.render_set(os.path.join(self.root, "boards", "demo", "demo.kicad_pcb"), dest, self.project.cfg["overview"])
+
+    def test_what_could_not_be_drawn_is_listed_with_the_reason(self):
+        def plot(pcb, layers, png, width=3600, mirror=False, tmp=None, background="white"):
+            if layers == "B.Cu":
+                raise subprocess.CalledProcessError(1, ["/Applications/KiCad/kicad-cli", "pcb", "export", "svg"])
+            if layers in ("F.Mask", "B.Mask"):
+                raise FileNotFoundError(2, "No such file or directory", "rsvg-convert")
+            write(png, PNG, "wb")
+            write(os.path.join(tmp, os.path.splitext(os.path.basename(png))[0] + ".svg"), PLOT % (PAD % ("#C83434", "#C83434")))
+            return (10.0, 5.0)
+
+        man = self.drawn(dict(top=["turn-top-00.webp"]), plot)
+        self.assertEqual(man["failed"], ["the back of the turntable (kicad-cli pcb render failed)",
+                                         "layers F.Mask, B.Mask (rsvg-convert is not installed)", "layer B.Cu (kicad-cli failed)"])
+        self.assertEqual([x["id"] for x in man["layers"]], ["F.Silkscreen", "F.Cu", "B.Silkscreen", "Edge.Cuts"])
+
+    def test_nothing_failed_is_not_listed(self):
+        def plot(pcb, layers, png, width=3600, mirror=False, tmp=None, background="white"):
+            write(png, PNG, "wb")
+            write(os.path.join(tmp, os.path.splitext(os.path.basename(png))[0] + ".svg"), PLOT % "")    # empty is not failed
+            return (10.0, 5.0)
+
+        man = self.drawn(dict(top=["a.webp"], bottom=["b.webp"]), plot)
+        self.assertNotIn("failed", man)
+        self.assertNotIn("layers", man)
+
+    def test_no_turntable_at_all_and_no_tool_for_the_layers(self):
+        def plot(pcb, layers, png, width=3600, mirror=False, tmp=None, background="white"):
+            raise FileNotFoundError(2, "No such file or directory", "rsvg-convert")
+
+        man = self.drawn({}, plot)
+        self.assertEqual(man["failed"][0], "the turntable (kicad-cli pcb render failed)")
+        self.assertEqual(man["failed"][1], "layers F.Silkscreen, F.Mask, F.Cu, B.Cu, B.Mask, B.Silkscreen, Edge.Cuts (rsvg-convert is not installed)")
+        self.assertNotIn("turn", man)
+
+    def test_the_build_and_the_check_say_what_a_viewer_is_without(self):
+        def partly(pcb, dest, cfg):
+            man = fake_renderer(self.calls)(pcb, dest, cfg)
+            del man["turn"]["bottom"]
+            return dict(man, failed=["the back of the turntable (kicad-cli pcb render failed)"])
+        self.put(1, base())
+        self.assertEqual(overview.build(self.project, say=self.said.append, renderer=partly), 0, self.said)
+        self.assertIn("watch: r1: the viewer of demo is without the back of the turntable (kicad-cli pcb render failed)", self.said)
+        self.assertEqual(self.build(check=True), 0)                    # a watch line, not a problem: the page is the rounds'
+        self.assertEqual(self.said, ["watch: r1.toml: the viewer of demo is without the back of the turntable (kicad-cli pcb render "
+                                     "failed); once that is put right, pcbkit overview --render"])
+        self.assertEqual(self.build(refresh=True), 0, self.said)       # drawn again in full: nothing left to say
+        self.assertEqual(self.build(check=True), 0)
+        self.assertEqual(self.said, [])
+
+    def test_a_renderer_that_stops_is_said_and_the_stills_stand_in(self):
+        def stops(pcb, dest, cfg):
+            raise SystemExit("kicad-cli: not found")
+        write(os.path.join(self.root, "docs", "previews", "demo", "render-top.png"), PNG, "wb")
+        self.put(1, base())
+        self.assertEqual(overview.build(self.project, say=self.said.append, renderer=stops), 0, self.said)
+        self.assertIn("watch: r1: demo was not rendered (kicad-cli: not found)", self.said)
+        self.assertIn('"kind":"pics","name":"Pictures"', self.page())
+
     def test_the_viewers_key_is_the_sets_own_and_an_older_set_still_reads(self):
         def six(pcb, dest, cfg):
             for name in ("layer-In4_Cu.webp", "layer-B_Mask.webp", "layer-F_Cu.webp"):

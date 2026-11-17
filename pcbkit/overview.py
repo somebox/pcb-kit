@@ -404,7 +404,13 @@ def records(project):
         boards.append(b)
     try:
         from . import production
-        orders = [dict(order_summary(o), source=o["path"]) for o in production.load_orders(project, pcbs, [])]
+        said = []
+        loaded = production.load_orders(project, pcbs, said)
+        orders = [dict(order_summary(o), source=o["path"]) for o in loaded]
+        # an order.toml that doesn't parse is skipped there with a line in its problems; what it says of the orders
+        # that did load is production's to report (pcbkit production --check), not a gap in this page
+        problems += [f"an order could not be read and is left out ({squeeze(line)[:240]})" for line in said
+                     if not any(line.startswith(o["path"]) for o in loaded)]
     except (Exception, SystemExit) as err:      # noqa: BLE001
         problems.append(f"the project's orders could not be read ({squeeze(err)[:200]})")
     return dict(board=boards, orders=orders, problems=problems)

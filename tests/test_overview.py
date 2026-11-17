@@ -396,6 +396,24 @@ class RecordsThatDoNotRead(Case):
         self.assertEqual(problems, [])
         self.assertIn("could not be read", "\n".join(watch))
 
+    def test_an_order_that_does_not_parse_is_said_and_the_others_are_kept(self):
+        os.remove(os.path.join(self.root, "production", "boards.toml"))
+        good = ('title = "First"\n\n[[board]]\npcb = "demo"\nversion = "1.1.0"\npcbs = 5\n\n'
+                '[[event]]\ndate = 2026-11-16\nstatus = "submitted"\n')
+        write(os.path.join(self.root, "production", "orders", "2026-11-16-first", "order.toml"), good)
+        write(os.path.join(self.root, "production", "orders", "2026-11-20-second", "order.toml"), good.replace('"submitted"', "submitted"))
+        rec = overview.records(self.project)
+        self.assertEqual([o["value"] for o in rec["orders"]], ["2026-11-16-first: submitted"])
+        self.assertEqual(len(rec["problems"]), 1, rec["problems"])        # the first order's own remarks are production's
+        self.assertIn("an order could not be read and is left out (production/orders/2026-11-20-second/order.toml:", rec["problems"][0])
+        self.put(1, base())
+        self.assertIn("2026-11-20-second/order.toml", "\n".join(self.check()[1]))
+        os.remove(os.path.join(self.P["dir"], "r1.toml"))
+        said = []
+        rnd = tomlw.load(overview.new_round(self.project, self.P, today=D(2026, 12, 1), say=said.append))
+        self.assertEqual([f["value"] for f in rnd["fact"]], ["2026-11-16-first: submitted"])
+        self.assertIn("2026-11-20-second/order.toml", "\n".join(said))
+
     def test_records_that_read_still_tell_a_changed_board_from_a_released_one(self):
         os.remove(os.path.join(self.root, "production", "boards.toml"))
         rec = overview.records(self.project)

@@ -18,9 +18,11 @@ Writes into OUT_DIR (NAME defaults to the board's file name; pcbkit release pass
 Each BOM and CPL pair is written even when its side has no parts to place; the summary then says 0 placements.
 
 A part goes into the BOM and CPL if it has an LCSC number and is neither DNP nor excluded from BOM / position files.
-That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for every
-BOM line. A hand-soldered part with an LCSC number, marked "Exclude from position files" on the board, stays in KiCad's
-BOM but leaves both files; the summary counts it as left out for hand assembly.
+That leaves out KiKit's fiducials and tooling holes. Both files list the same parts, so JLC finds a placement for
+every BOM line. A part that would be placed but has no LCSC number is in neither file: the summary names each one
+(`pcbkit standard` makes it an error before a release), a board-only footprint too when the placement rule takes it,
+as one with a number is exported. A hand-soldered part with an LCSC number, marked "Exclude from position files" on
+the board, stays in KiCad's BOM but leaves both files; the summary counts it as left out for hand assembly.
 - With --placed field:NAME=VALUE, the assembled parts are those whose field NAME is VALUE (and have an LCSC number),
   whatever their exclusion flags: for a project that marks hand-soldered parts with a field.
 - BOM rows: one per LCSC number (its values joined with " / " when they differ: JLC showed a part split over two rows
@@ -62,7 +64,7 @@ import subprocess
 import tempfile
 import zipfile
 
-from ..kicad import KICAD_CLI, data_path, ensure_pcbnew
+from ..kicad import data_path, ensure_pcbnew, kicad_cli
 
 DESIGNATOR_MAX = 2000                  # JLC's BOM limit is 2048 characters per Designator cell
 
@@ -101,7 +103,7 @@ def gerbers(src, out, name, n_cu, extra_layers=(), keep_silk_in_mask=False):
     subtract = [] if keep_silk_in_mask else ["--subtract-soldermask"]
     tmp = tempfile.mkdtemp()
     try:
-        run = lambda *a: subprocess.run([KICAD_CLI, "pcb", "export", *a], check=True, capture_output=True)
+        run = lambda *a: subprocess.run([kicad_cli(), "pcb", "export", *a], check=True, capture_output=True)
         run("gerbers", "--layers", ",".join(layers), *subtract, "--no-protel-ext", "--use-drill-file-origin",
             "--check-zones", "-o", tmp + "/", src)
         run("drill", "--format", "excellon", "--excellon-units", "mm", "--excellon-separate-th", "--drill-origin", "plot",
@@ -127,6 +129,26 @@ def selector(placed):
     return lambda fp: field(fp, m.group(1)) == m.group(2)
 
 
+def unnumbered(board, is_placed):
+    """The footprints the assembler would place (is_placed, from selector()) that have no LCSC number, so that no
+    BOM or placement file lists them: not DNP; in reference order. The rule is fab()'s own, a number aside: a
+    board-only footprint that the selector takes is exported when it has a number, so it is named here when it has
+    none. The selector is what leaves a logo or a hole out."""
+    return [fp for fp in sorted(board.GetFootprints(), key=lambda f: [int(x) if x.isdigit() else x
+                                                                     for x in re.split(r"(\d+)", f.GetReference())])
+            if not field(fp, "LCSC") and not fp.IsDNP() and is_placed(fp)]
+
+
+def by_hand(placed):
+    """What to do with a part that is soldered by hand so that the placement rule (--placed, [release] placed) leaves
+    it out, in words: with the default rule its exclusion flag; with a field rule the field, since that rule reads no
+    flag."""
+    m = re.match(r"^field:([^=]+)=(.*)$", placed or "")
+    if m:
+        return f"give its {m.group(1)} field another value than {m.group(2)!r} if it is soldered by hand"
+    return "mark it 'Exclude from position files' if it is soldered by hand"
+
+
 def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, extra_layers=(), keep_silk_in_mask=False):
     if assembly and "pcbway" in houses:
         from .pcbway import require_cache
@@ -142,7 +164,7 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
         print(f"{gz}: {n_files} files (Gerbers only)")
         return
     corrections = load_corrections()
-    is_placed = selector(placed)
+    is_placed, placed_rule = selector(placed), placed
 
     def placement(fp):
         pads = list(fp.Pads())
@@ -213,6 +235,10 @@ def fab(src, out, name=None, houses=("jlcpcb",), placed=None, assembly=True, ext
     if "pcbway" in houses:
         from .pcbway import write
         write(b, [fp for fp in parts if is_placed(fp)], out, name, field)
+    bare = [fp.GetReference() for fp in unnumbered(b, is_placed)]
+    if bare:
+        print(f"left out: {len(bare)} part{'s' * (len(bare) > 1)} without an LCSC number, in no BOM or placement file: "
+              f"{', '.join(bare)} (give each a number, or {by_hand(placed_rule)})")
     print(f"{gz}: {n_files} files")
 
 

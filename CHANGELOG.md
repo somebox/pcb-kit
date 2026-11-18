@@ -23,7 +23,39 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   once. `pcbkit previews`' pictures are unchanged; its SVG and render steps are now `layer_png` and `render_png`,
   with `turntable` beside them. pcbkit.toml takes `[overview]` (dir, page, frames, size, layer_width, base).
 
+- **`pcbkit standard`: "What a released board carries", checked, and a gate on `pcbkit release`.** The standard in
+  docs/CONVENTIONS.md was checked by nothing but the eye. `pcbkit standard [PCB ..] [--json]` prints it line by line
+  as ok, error, note, waived, or a line to look at. Errors: no silkscreen text that prints `${REVISION}`
+  (`version`), a schematic sheet without a title block or title (`title-block`), a part the assembler places without
+  an LCSC number (`lcsc`). Notes: no `${ISSUE_DATE}`, or a date typed where release never updates it (`date`); a
+  connector, jumper, switch, battery holder or LED with no silkscreen text within 2 mm that names it (`labels`); a
+  rail without a test pad, the rails being the nets the schematic's power symbols name or `[standard.rails]`
+  (`test-pads`); a test pad with no text, shown value or legend (`test-pad-labels`); a mounting hole with neither a
+  courtyard nor a rule area over it (`mounting`); fewer than three fiducials on a side the assembler places parts
+  on, one under 4.35 mm from the edge, or three on one line (`fiducials`); a soldered part whose reference is not on
+  the silkscreen, as one finding when most of a board leaves them off (`references`); a placed Extended part that
+  BOM.md does not name (`extended`). The board's name and its author are lines to look at. A prototype leaves a
+  finding for a later revision with a `[[standard.waive]]` entry in pcbkit.toml (board, check, items, and a note,
+  which is required and shown in every report); a waiver that matches nothing any more is named. Exit 1 while an
+  error is left. pcbkit.toml takes `[standard]` (label_distance, bom, rails, waive). Tried on scratch copies of five
+  boards: sub-sheets lack a title block on four of them, placed parts lack an LCSC number on two, and none has a
+  fiducial.
+
 ### Changed
+- **`pcbkit release` refuses a changed board with an error of the standard left.** "standard" joins the default
+  profile's checks; a profile that lists its own `checks` adds it to get the gate. The board is `not released: ...`
+  before anything is stamped, until the error is fixed or waived with a note; a board unchanged since its release
+  is only warned, as one with `v${REVISION}` is. The release line counts the notes and waivers.
+- **`pcbkit outline` removes only what it made.** A rerun deleted every drawing, text and dimension on Edge.Cuts,
+  Dwgs.User, Cmts.User and User.1, every `keepout:*` zone and every `MountingHole_*` footprint without a library,
+  whoever drew them. What a run adds now goes into one KiCad group, `pcbkit:outline`, and a rerun replaces that
+  group only. A board with an outline, keep-outs or holes but no such group (drawn by hand, or outlined by pcbkit
+  0.5 or earlier) stops the run, with nothing written and a list of what is in the way, the holes by reference;
+  `--take-over` does the earlier removal once. An enclosure description that does not fit is refused before
+  anything is removed.
+- **`pcbkit fab` names the placed parts it leaves out for want of an LCSC number.** It was silent.
+- **`pcbkit changelog --all` heads a release as CHANGELOG.md does**, `## <board> v1.1 (released 2026-11-20)`,
+  with what it was compared with on the line below; it was `## <board> v1.1 - 2026-11-20 (since v1.0)`.
 - **Three corrections to the skills, from a review of all nine.** bom-cost: `bomi list --check` can report a cached
   stock figure (124 of a TPS259470A on 2026-11-16, when JLC and LCSC had none), so a part with thin stock is read
   on JLC's own part page before an order is called ready. visual-review said JLC can't plug a via in or within
@@ -67,8 +99,7 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   - Orders: every placed part's stock is read live on JLC before the user signs off, with each questionable figure
     looked into, and again when they are about to pay on a later day. A cart changes only on the user's sign-off,
     put to them as a diff, as a PR is.
-  - Corrected: `pcbkit <cmd> --help` runs `info`, `link`, `setup-kikit` and `setup-router` instead of printing;
-    a rerun of `pcbkit outline` deletes more than it made; the bomi commands as they must be typed; the release
+  - Corrected: the bomi commands as they must be typed; the release
     folder and the placement checklist are named by `<label>`, not `v<version>`; a four-layer route takes 40
     minutes to 3 hours; JLC's placement viewer has one name.
   - The project template: DESIGN.md has numbered open questions (O1, ...) beside its decisions, and LAYOUT.md's
@@ -82,6 +113,20 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
     pcb-kit's `kicad-links.md` and `route-script.md`, fab-order's `old-release.md`, project-overview's
     `pattern.md` and visual-review's `compare-example.md`. The pcb-kit skill's table names the command and points
     to the conventions or `--help` for what they already say.
+
+### Fixed
+- **`--help` and `-h` print help for every command.** `pcbkit info`, `link`, `setup-kikit` and `setup-router` ran
+  instead: two reinstalled a tool from the network and one rewrote the `pcbkit.pth` files. Each now reads its
+  arguments first, and an argument it does not take is an error (`pcbkit setup-kikit --target x`). Loading a
+  command's module prepares nothing either: `pcbkit.kicad` made kicad-cli's background copy as it loaded, so on a
+  machine without one every `--help` made it. kicad-cli is now found when first used (`pcbkit.kicad.kicad_cli()`;
+  `KICAD_CLI` still reads it). `tests/test_cli.py` asks every command for help where starting a process or writing a
+  file fails the test, once more in a new process with an empty tools folder.
+- **Help and output that disagreed with the tool.** `pcbkit drc --help` showed `[--parity]` for `--no-parity`;
+  `pcbkit --help` said `setup-kikit` installs "into KiCad's Python (--target)", where it installs under
+  `~/.local/share/pcbkit/kikit` and takes no flag; `pcbkit overview --check` exits 1 on a `to build:` line as well
+  as on a problem, and now says so; `pcbkit overview new` called a round file "the briefing" in its header, which
+  is the failure review's document.
 
 ## [0.5.0] - 2026-11-16
 

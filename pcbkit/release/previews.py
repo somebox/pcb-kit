@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import tempfile
 
-from ..kicad import KICAD_CLI, KICAD_PYTHON, quiet
+from ..kicad import KICAD_PYTHON, kicad_cli, quiet
 
 
 def layer_png(pcb, layers, png, width=3600, mirror=False, tmp=None, background="white"):
@@ -33,7 +33,7 @@ def layer_png(pcb, layers, png, width=3600, mirror=False, tmp=None, background="
     own = None if tmp else tempfile.mkdtemp()
     try:
         s = os.path.join(tmp or own, os.path.splitext(os.path.basename(png))[0] + ".svg")
-        subprocess.run([KICAD_CLI, "pcb", "export", "svg", "--layers", layers, "--mode-single", "--fit-page-to-board",
+        subprocess.run([kicad_cli(), "pcb", "export", "svg", "--layers", layers, "--mode-single", "--fit-page-to-board",
                         "--exclude-drawing-sheet", *(["--mirror"] if mirror else []), "-o", s, pcb], check=True, capture_output=True)
         subprocess.run(["rsvg-convert", "-w", str(width), *(["-b", background] if background else []), s, "-o", png],
                        check=True, stderr=subprocess.DEVNULL if not background else None)
@@ -48,7 +48,7 @@ def layer_png(pcb, layers, png, width=3600, mirror=False, tmp=None, background="
 def render_png(pcb, out, side="top", size=(1600, 1600), zoom=1.0, rotate=None, perspective=False, background=None):
     """A 3-D render of one side (kicad-cli pcb render), PNG or JPEG by OUT's name. ROTATE is (x, y, z) in degrees:
     z turns the board on its own axis, x tilts it (-50: seen from above at an angle). True when it was written."""
-    cmd = [KICAD_CLI, "pcb", "render", "--side", side, "--width", str(size[0]), "--height", str(size[1]), "--zoom", str(zoom)]
+    cmd = [kicad_cli(), "pcb", "render", "--side", side, "--width", str(size[0]), "--height", str(size[1]), "--zoom", str(zoom)]
     if rotate:
         cmd += ["--rotate", ",".join("%g" % v for v in rotate)]
     if perspective:
@@ -99,7 +99,7 @@ def previews(pcb, out, zoom=1.0, render_size=(1600, 1600), render=True, hide_ref
     os.makedirs(out, exist_ok=True)
     made = []
     if os.path.exists(sch):
-        subprocess.run([KICAD_CLI, "sch", "export", "pdf", "-o", os.path.join(out, "schematic.pdf"), sch], check=True, capture_output=True)
+        subprocess.run([kicad_cli(), "sch", "export", "pdf", "-o", os.path.join(out, "schematic.pdf"), sch], check=True, capture_output=True)
         made.append("schematic.pdf")
     with open(pcb) as fh:
         text = fh.read()

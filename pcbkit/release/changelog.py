@@ -11,8 +11,9 @@ the outline, silkscreen texts):
 - else since its last release, as the release's kicad/ copy has it (or the board at the release's base commit);
 - else, for a board never released, since the commit where its title block first read the version it reads now: for
   an imported or as-built board, the board that was built.
-With --all, each release against the one before it as well, newest first, under "## <board> <label> - <date>" with
-its note from releases.toml.
+With --all, each release against the one before it as well, newest first, under the heading a project's
+CHANGELOG.md gives a version, "## <board> <label> (released <date>)", with what it was compared with and its note
+from releases.toml.
 
 The output is Markdown to edit into the project's CHANGELOG.md (docs/CONVENTIONS.md in pcb-kit): one line per change,
 to which the why is added, citing the decision (D12) or review finding (F27) it comes from. It reads files only:
@@ -143,7 +144,7 @@ def history(project, pcb):
     out = []
     for i in range(len(rs) - 1, -1, -1):
         r = rs[i]
-        title = f"## {pcb['key']} {r['label']} - {r['date']}"
+        title = f"## {pcb['key']} {r['label']} (released {r['date']})"
         note = f"releases.toml: {r['note']}" if r.get("note") else ""
         if i == 0:
             out += [title, ""] + ([note, ""] if note else []) + ["- first release", ""]
@@ -153,7 +154,8 @@ def history(project, pcb):
             why = was if old is None else now
             out += [title, ""] + ([note, ""] if note else []) + [f"- nothing to compare with: {why}", ""]
             continue
-        out += section(title + f"{now} (since {rs[i - 1]['label']}{was})", *changes(old, new), note=note)
+        since = f"Since {rs[i - 1]['label']}{was}" + (f"; {r['label']}{now}" if now else "") + "."
+        out += section(title, *changes(old, new), note="\n\n".join(x for x in (since, note) if x))
     return out
 
 

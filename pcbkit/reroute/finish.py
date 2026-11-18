@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..kicad import KICAD_CLI, save_board
+from ..kicad import kicad_cli, save_board
 
 COSMETIC = ("silk_", "lib_", "text_")
 SELF = "pcbkit.reroute.finish"
@@ -28,7 +28,7 @@ def drc(pcb, save=False):
     rpt = Path(pcb).with_suffix(".rpt")
     if rpt.exists():
         rpt.unlink()
-    cmd = [KICAD_CLI, "pcb", "drc", "--refill-zones", *(["--save-board"] if save else []), "-o", str(rpt), str(pcb)]
+    cmd = [kicad_cli(), "pcb", "drc", "--refill-zones", *(["--save-board"] if save else []), "-o", str(rpt), str(pcb)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if not rpt.exists():
         sys.exit(f"kicad-cli wrote no report for {pcb}:\n{r.stdout[-1000:]}{r.stderr[-1000:]}")

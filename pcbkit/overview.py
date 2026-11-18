@@ -5,10 +5,11 @@
     pcbkit overview note "TEXT" [--on ID] [--mark MARK] [--state "WORDS"] [--chose OPTION] [--round N]
                                     add a dated note to a round (the newest), then build
     pcbkit overview --check         what is wrong with the rounds, what a build has still to do, and watch lines;
-                                    writes nothing, so it goes with none of the others; exit 0 when nothing is left
+                                    writes nothing, so it goes with none of the others; exit 1 on a problem or a
+                                    "to build:" line, 0 when neither is left
     pcbkit overview --single [OUT]  also a copy with its pictures inside, to send or publish
 
-A round file is the briefing, not the record: the status, the boards, a few lines per topic, the decisions waiting for
+A round file is a summary, not the record: the status, the boards, a few lines per topic, the decisions waiting for
 the user with their options and the one recommended, cost, supply, fab and orders in a line each, and which pictures
 the viewer shows. Every fact names its source in the project. A new round is a new file. An earlier round only gains
 [[note]] entries: a small change is a dated note under its item, and the item shows the mark and state its latest
@@ -539,7 +540,7 @@ def write_round(rnd, header=""):
 
 
 HEADER = """{rel}: round {n} of the project's overview page (pcbkit overview; the project-overview skill).
-The briefing for the user, made from what the project records; every fact names its source there.
+A summary for the user, made from what the project records; every fact names its source there.
 Marks: {marks}.
 Once the user has seen this round it changes only by notes: pcbkit overview note "..." --on <id>."""
 SKELETON = """
@@ -1325,7 +1326,8 @@ def main(argv=None):
     ap.add_argument("--state", help="note: the item's state word from now on, beside its mark")
     ap.add_argument("--chose", help="note: the option of the decision that was chosen")
     ap.add_argument("--round", type=int, help="note: the round it belongs to (default: the newest)")
-    ap.add_argument("--check", action="store_true", help="problems and watch lines only; exit 1 on a problem")
+    ap.add_argument("--check", action="store_true", help="problems, what is left to build and watch lines only, "
+                    "nothing written; exit 1 on a problem or when something is left to build (a 'to build:' line)")
     ap.add_argument("--single", nargs="?", const="", metavar="OUT", help="also a copy with the pictures inside (default: "
                     "beside the page, -single.html)")
     ap.add_argument("--render", action="store_true", help="make the newest round's pictures again")

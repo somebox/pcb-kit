@@ -2,7 +2,7 @@
 
   pcbkit panel BOARD.kicad_pcb OUT_DIR [--style vcut|mousebite|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]
                [--preset X.json ...]
-  pcbkit setup-kikit                  # once: installs the pinned KiKit into ~/.local/share/pcbkit
+  pcbkit setup-kikit                  # once: installs the pinned KiKit under ~/.local/share/pcbkit/kikit
 
 Styles (presets in data/panel/):
   vcut       V-cut between modules. JLC Standard assembly only. Clean edges.
@@ -23,7 +23,7 @@ import subprocess
 import sys
 import tempfile
 
-from ..kicad import KICAD_CLI, KICAD_PYTHON, data_path, quiet, tools_dir
+from ..kicad import KICAD_PYTHON, data_path, kicad_cli, quiet, tools_dir
 
 # KiKit master at ff94e84 (2026-09-25). Release v1.8.1 predates the KiCad 10.0.6 SWIG iterator fix (KiKit #938);
 # move the pin to the next release once it ships.
@@ -41,6 +41,17 @@ def setup_kikit():
     subprocess.run([KICAD_PYTHON, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--target", d,
                     f"git+https://github.com/yaqwsx/KiKit@{KIKIT_COMMIT}"], check=True)
     print(f"KiKit {KIKIT_COMMIT[:7]} installed in {d}")
+
+
+def setup_main(argv=None):
+    """pcbkit setup-kikit: nothing is removed or installed until the arguments are read."""
+    ap = argparse.ArgumentParser(
+        prog="pcbkit setup-kikit",
+        description=f"Install KiKit at the pinned commit {KIKIT_COMMIT[:7]}, for pcbkit panel: removes {kikit_dir()} "
+                    "(PCBKIT_TOOLS moves it) and installs KiKit there again from GitHub, with KiCad's Python "
+                    "(pip --target). Nothing goes into KiCad's own site-packages. Takes no options.")
+    ap.parse_args(argv)
+    setup_kikit()
 
 
 def kpy(*args):
@@ -96,14 +107,14 @@ def panel(board, out, styles=("vcut", "mousebite"), rows=3, previews=None, extra
         if rc or not (os.path.exists(fab) and os.path.exists(check)):
             sys.exit(f"KiKit failed for {name} ({st})")
         rpt = os.path.join(out, f"drc-{st}.rpt")
-        subprocess.run([KICAD_CLI, "pcb", "drc", "--severity-error", "--severity-warning", "-o", rpt, check], capture_output=True)
+        subprocess.run([kicad_cli(), "pcb", "drc", "--severity-error", "--severity-warning", "-o", rpt, check], capture_output=True)
         viol, unc = drc_counts(rpt)
         _, size = kpy("-c", f"import pcbnew; b=pcbnew.LoadBoard({check!r}); r=b.GetBoardEdgesBoundingBox(); "
                             f"print(f'{{pcbnew.ToMM(r.GetWidth()):.2f}} x {{pcbnew.ToMM(r.GetHeight()):.2f}} mm')")
         if previews:
             os.makedirs(previews, exist_ok=True)
             for side in ("top", "bottom"):
-                r = subprocess.run([KICAD_CLI, "pcb", "render", "--side", side, "--width", "2400", "--height", "1800", "--zoom", "1.05",
+                r = subprocess.run([kicad_cli(), "pcb", "render", "--side", side, "--width", "2400", "--height", "1800", "--zoom", "1.05",
                                     "-o", os.path.join(previews, f"panel-{st}-{side}.png"), check], capture_output=True)
                 if r.returncode:
                     print(f"render {side} failed")

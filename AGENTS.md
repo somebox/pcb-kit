@@ -16,7 +16,8 @@ sees inside a project.
 - Test a change on more than one project's boards before committing: the sign, siebenuhr, spotlight and dodeca repos
   are the corpus. A change to the router is judged with `pcbkit reroute corpus`, against `bench/baseline.json` (see
   docs/ROUTER.md). `tests/` holds the tests, each run as `python3 tests/test_*.py`; those with fixture boards drawn
-  in pcbnew (route_check, courtyards, import_easyeda, netview, release) run their own under KiCad's Python.
+  in pcbnew (route_check, courtyards, import_easyeda, netview, release, outline, standard) run their own under
+  KiCad's Python. A new command is in `tests/test_cli.py` by being in `COMMANDS`: its `--help` must only print.
 - Commit messages: imperative, prefixed with the area (`checks:`, `release:`, `schematic:`, `skills:`, `docs:`).
 
 ## Releases

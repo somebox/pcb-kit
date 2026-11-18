@@ -6,8 +6,8 @@ description: Shared KiCad workflow commands for the somebox hardware projects. U
 # pcb-kit
 
 `pcbkit` is installed as a CLI (`uv tool install -e ~/src/pcb-kit`). `pcbkit --help` lists the commands, `pcbkit
-<cmd> --help` the flags (not for `info`, `link`, `setup-kikit` or `setup-router`: those four act at once, `--help`
-or not). Commands that need pcbnew re-run themselves under KiCad's Python; you never choose the interpreter. pcbkit
+<cmd> --help` the flags, for every command. Commands that need pcbnew re-run themselves under KiCad's Python; you
+never choose the interpreter. pcbkit
 runs kicad-cli from a background copy, so it shows no dock icon; a project script that runs kicad-cli takes it from
 `pcbkit.kicad.KICAD_CLI` too, and a shell command from the path `pcbkit info` prints, not from
 `/Applications/KiCad/...` or PATH.
@@ -19,7 +19,10 @@ runs kicad-cli from a background copy, so it shows no dock icon; a project scrip
 - **Locked copper is deliberate. Leave it.**
 - After any copper edit: `pcbkit cleanup`, `pcbkit drc --save`, `pcbkit check`, in that order.
 - Before an order, follow "Checks before an order" in [docs/CONVENTIONS.md](../../docs/CONVENTIONS.md) and the
-  project's PRODUCTION.md. A board is released against "What a released board carries", in the same file.
+  project's PRODUCTION.md. A board is released against "What a released board carries", in the same file:
+  `pcbkit standard` checks it, and `pcbkit release` refuses a board with one of its errors left. **Never waive a
+  finding on your own.** A `[[standard.waive]]` entry is the user's decision; put the finding and a proposed note to
+  them.
 - Depth and scope: the same file, "Depth and scope". A row of the table below is the smallest pass for its
   question. Say a job's scope and depth before starting, and name each step left out when reporting.
 - Project-specific data (placement tables, net lists, power-stage geometry) belongs in the project, not in the kit.
@@ -36,6 +39,7 @@ runs kicad-cli from a background copy, so it shows no dock icon; a project scrip
 | Generate a sheet that reads | `pcbkit.schematic`, from a project script: [schematic-sheets.md](schematic-sheets.md) |
 | Is the schematic what we meant? | run the project's netlist assertions (built on `pcbkit.checks.netlist.Netlist`); `pcbkit nets SCH NET...` to look |
 | Is the board clean? | `pcbkit drc BOARD --save` (refills zones and writes the board back; 0 errors, 0 unconnected, 0 parity) |
+| Does the board carry what a released board must? | `pcbkit standard [PCB]`: errors for no `${REVISION}` on the silkscreen, a sheet without a title block, a placed part without an LCSC number; notes for a connector, jumper, switch or LED without a label, a rail without a test pad, a test pad without a name, a mounting hole without a courtyard or keep-out, fewer than three fiducials on an assembled side, a part whose reference is not on the silkscreen, an Extended part BOM.md does not name; then what only a person can check. Fix each, or ask the user whether to waive it with a note in pcbkit.toml (docs/CONVENTIONS.md, "What a released board carries") |
 | Anything DRC can't see? | `pcbkit check BOARD` (floating copper, stubs, loops, thin power feeds, courtyards), `pcbkit cleanup BOARD --dry-run` (after a scripted route: `--dangling` too) |
 | Can the courtyards be trusted for placement? (an imported board, a vendor's or a project library's footprints) | `pcbkit courtyards BOARD` (or `LIB.pretty`) before placing parts. `--fix` redraws them; on a board imported from EasyEDA add `--easyeda PCB.json` (`--help` says why) |
 | A `courtyards_overlap` that DRC still reports | measure the gap between the two parts' pads and bodies. Under the assembler's minimum (JLC's "Minimum spacing for SMD components", 2026-09: 0.15-0.35 mm chip to chip, 0.2 chip to SOT, 0.4 chip to SOIC and SOT to SOT, 1.0 to a QFN) move one; over it, a `.kicad_dru` rule for the two parts, as for any accepted DRC error (below) |

@@ -1162,9 +1162,10 @@ class Release(unittest.TestCase):
         release(root)
         out = changelog(root, "--all")
         self.assertIn("### demo, since v1.1 (%s)\n\n- no change to the netlist, BOM or layout\n" % V.today(), out)
-        self.assertIn("## demo v1.1 - %s (since v1.0)\n\nreleases.toml: minor after 1.0.0: R1 value 10k -> 4.7k\n\n"
-                      "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n" % V.today(), out)
-        self.assertIn("## demo v1.0 - 2026-11-01\n\n", out)
+        # the heading a project's CHANGELOG.md gives a version (docs/CONVENTIONS.md)
+        self.assertIn("## demo v1.1 (released %s)\n\nSince v1.0.\n\nreleases.toml: minor after 1.0.0: R1 value 10k -> "
+                      "4.7k\n\nCircuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n" % V.today(), out)
+        self.assertIn("## demo v1.0 (released 2026-11-01)\n\n", out)
         # against a board named: an as-built copy kept in the project
         built = os.path.join(root, "archive", "demo-as-built.kicad_pcb")
         os.makedirs(os.path.dirname(built))
@@ -1191,6 +1192,93 @@ class Release(unittest.TestCase):
         tomlw.dump({"key": "demo", "release": rs}, os.path.join(root, "releases", "demo", "releases.toml"))
         self.assertIn("current v1.0 (1.0.0): warning: F.SilkS text 'v${REVISION}' would print vv",
                       release(root, "--dry-run"))
+
+    # ---- the standard as a gate (pcbkit standard; "standard" in the profile's checks) ----
+    def with_standard(self, name, more=""):
+        """A copy of the released project whose profile checks the standard. The fixture board prints no version, and
+        its power sheet has no title block: two errors of the standard."""
+        root = self.project(name)
+        toml = os.path.join(root, "pcbkit.toml")
+        write(toml, read(toml).replace("checks = []", 'checks = ["standard"]') + more)
+        return root
+
+    WAIVED = ('\n[[standard.waive]]\nboard = "demo"\ncheck = "version"\nnote = "a 30 x 20 mm fixture: no room; v2"\n'
+              '\n[[standard.waive]]\ncheck = "title-block"\nitems = ["sheets/power.kicad_sch"]\n'
+              'note = "a generated sheet; its title comes with the generator\'s next run"\n')
+
+    def test_a_changed_board_with_an_error_of_the_standard_is_not_released(self):
+        root = self.with_standard("standard-refused")
+        edit(root, value("R1", "4.7k"))
+        out = release(root)
+        self.assertIn("not released: no silkscreen text prints the version: add one with ${REVISION} (and "
+                      "${ISSUE_DATE}), which release fills from the title block; no title block: "
+                      "sheets/power.kicad_sch (pcbkit standard says more: fix, or waive with a note in pcbkit.toml)", out)
+        self.assertEqual([e["label"] for e in entries(root)], ["v1.0"])
+        self.assertFalse(os.path.exists(os.path.join(root, "releases", "demo", "v1.1")))
+        self.assertEqual(V.title_rev(read(root, "boards", "demo", "demo.kicad_pcb")), "v1.0")     # nothing stamped
+
+    def test_a_waiver_with_a_note_lets_the_board_out_and_is_counted(self):
+        root = self.with_standard("standard-waived", self.WAIVED)
+        edit(root, value("R1", "4.7k"))
+        out = release(root)
+        self.assertRegex(out, r"released v1\.1 \(1\.1\.0\): minor after 1\.0\.0: R1 value 10k -> 4\.7k; "
+                              r"standard: \d+ notes, 2 waived")
+        self.assertEqual([e["label"] for e in entries(root)], ["v1.0", "v1.1"])
+        # a waiver without its note waives nothing, and is an error itself
+        root = self.with_standard("standard-no-note", self.WAIVED.replace('note = "a 30 x 20 mm fixture: no room; v2"\n', ""))
+        edit(root, value("R1", "4.7k"))
+        out = release(root)
+        self.assertIn("not released: no silkscreen text prints the version", out)
+        self.assertIn("a waiver without a note: say what is left out and why: version", out)
+
+    def test_a_waiver_written_wrongly_stops_the_release_with_its_reason(self):
+        """It is one of the standard's errors, in the line that says the board is not released: a waiver the tool
+        can't read must not end the run without a word, nor let the board out."""
+        root = self.with_standard("standard-bad-waiver", self.WAIVED + '\n[[standard.waive]]\ncheck = "mounting"\n'
+                                  'items = 5\nnote = "held by its connector"\n')
+        edit(root, value("R1", "4.7k"))
+        out = release(root)
+        self.assertIn("not released: a waiver's items are a list of references, nets or sheets: mounting (5)", out)
+        self.assertEqual([e["label"] for e in entries(root)], ["v1.0"])
+
+    def test_a_board_that_meets_the_standard_is_released(self):
+        root = self.with_standard("standard-met")
+        edit(root, silk_text("demo ${REVISION} ${ISSUE_DATE}"))
+        sheet = os.path.join(root, "boards", "demo", "sheets", "power.kicad_sch")
+        write(sheet, read(sheet).replace('\t(lib_symbols)', '\t(title_block (title "demo"))\n\t(lib_symbols)'))
+        out = release(root)
+        self.assertRegex(out, r"released v1\.0\.1 \(1\.0\.1\): patch after 1\.0\.0: same netlist and BOM, new fab output; "
+                              r"standard: \d+ notes;")
+        self.assertEqual(V.title_rev(read(sheet)), "v1.0.1")           # and its title block is stamped with the others
+
+    def test_a_board_unchanged_since_its_release_is_warned(self):
+        root = self.with_standard("standard-current")
+        out = release(root, "--dry-run")
+        self.assertIn("current v1.0 (1.0.0): warning: no silkscreen text prints the version", out)
+        self.assertRegex(out, r"sheets/power\.kicad_sch \(pcbkit standard says more: fix, or waive with a note in "
+                              r"pcbkit\.toml\); standard: \d+ notes")
+
+    def test_with_releases_off_the_standard_is_still_checked(self):
+        root = self.with_standard("standard-checks-only")
+        toml = os.path.join(root, "pcbkit.toml")
+        write(toml, read(toml).replace("[release]\n", "[release]\nenabled = false\n"))
+        out = release(root)
+        self.assertIn("checked: no silkscreen text prints the version", out)
+        self.assertIn("no title block: sheets/power.kicad_sch", out)
+        # nothing after the checks runs, release's own refusal of v${REVISION} neither: it is said here, once
+        edit(root, silk_text("v${REVISION} ${CURRENT_DATE}"))
+        out = release(root)
+        self.assertIn("checked: F.SilkS text 'v${REVISION} ${CURRENT_DATE}' would print vv", out)
+        self.assertEqual(out.count("would print vv"), 1)
+        self.assertEqual(out.count("prints the day the Gerbers are made"), 1)
+        self.assertIn("no title block: sheets/power.kicad_sch", out)
+        self.assertEqual(entries(root)[-1]["label"], "v1.0")           # and nothing is released
+
+    def test_the_default_profile_checks_the_standard(self):
+        from pcbkit.config import DEFAULT_PROFILE
+        self.assertEqual(DEFAULT_PROFILE["checks"], ["erc", "drc", "parity", "standard"])
+        from pcbkit.release import release as R
+        self.assertEqual(R.standard("no.kicad_pcb", dict(checks=["erc", "drc"])), dict(errors=[], prints=[], said=""))
 
     def test_the_fab_fingerprint_is_of_the_board_as_stamped(self):
         """A board without a title takes the schematic's when stamped; ${TITLE} then prints it, so the fab

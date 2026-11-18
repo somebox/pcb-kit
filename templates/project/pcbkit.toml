@@ -1,7 +1,8 @@
 # pcb-kit's settings for this project: which boards it has, how they are released (pcbkit release) and where the
-# production record lives (pcbkit production). Every key is optional; the commented values are the defaults
-# (docs/CONVENTIONS.md in pcb-kit). Paths may use {key} (the PCB's file stem), {folder} (its board folder) and
-# {sub} ("" for a folder's only PCB, "/<stem>" for any other).
+# production record lives (pcbkit production). Every key is optional; the commented values are the defaults, and
+# under [[release.profile]] and [[production.part]] an example (docs/CONVENTIONS.md in pcb-kit). Paths may use
+# {key} (the PCB's file stem), {folder} (its board folder) and {sub} ("" for a folder's only PCB, "/<stem>" for
+# any other).
 
 [boards]
 folders = ["boards/*"]                 # globs of board folders, relative to this file
@@ -15,7 +16,7 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # the title block names a version (boards of it may have been built); a draft's (0.1-draft) is taken as it is.
 # The silkscreen says ${REVISION} and ${ISSUE_DATE}, which KiCad fills from the title block release stamps.
 # enabled = true                       # false: no versions or stamping; pcbkit release only checks
-# dir = "releases/{key}"               # <dir>/v<label>/ per version: fab files, PDFs and the KiCad project (kicad/),
+# dir = "releases/{key}"               # <dir>/<label>/ per version: fab files, PDFs and the KiCad project (kicad/),
 #                                      # releases.toml beside them (committed)
 # label = "short"                      # v1.0, then v1.0.1 after a fix; "full": always v1.0.0
 # date_format = "%Y-%m-%d"             # the title block's date, so ${ISSUE_DATE}'s; e.g. "%m.%Y" for 11.2026

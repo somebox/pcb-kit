@@ -19,12 +19,12 @@ in its second section.
 
 ```bash
 pcbkit jlc --desc "%buck%" --package "SOT-23%" --basic     # first look, local cache
-bomi init                                                   # once, in the board folder
-bomi import kicad boards/<b>/<b>.kicad_sch --replace        # sync LCSC numbers from the schematic
+bomi init --name <b>                                        # once, in the board folder
+bomi import kicad <b>.kicad_sch --replace                   # in the board folder: sync LCSC numbers from the schematic
 bomi list --check                                           # refresh stock and price, flag problems
 bomi info U201                                              # one part, by designator or LCSC code
 bomi compare C2913202 C2913201                              # candidates side by side
-bomi datasheet C9864 --summary                              # PDF plus a markdown summary for docs/datasheets/
+bomi datasheet C9864 --summary -o ../../docs/datasheets     # in the board folder: PDF plus a markdown summary
 ```
 
 ## BOM.md
@@ -33,12 +33,11 @@ Write it from bomi's output, dated, in the board's project. The sections that ha
 
 - **Source and scope:** the sync command, the date the prices were taken, what is excluded (kit parts, PCB; the assembly fees have their own section).
 - **Cost drivers:** the ten most expensive lines, with LCSC code, part, refs, quantity, cost per board at 1 and 100.
-- **Extended parts:** count them. Under Economic PCBA each unique Extended part costs a loading fee per order (about
-  $3) and Basic parts load free, so list the cheap swaps there: a Basic value that shifts a threshold by a
-  negligible amount, one LED colour instead of four. Under Standard every unique part pays the same fee, Basic or
-  Extended (below), so a swap saves only the difference in part price.
-- **Stock risks:** any line under a few thousand in stock, with the nearest substitute and what changes in the
-  circuit if it is used.
+- **Extended parts:** count them, and list the cheap swaps: a Basic value that shifts a threshold by a negligible
+  amount, one LED colour instead of four. Under Economic a swap saves the part's loading fee per order; under
+  Standard, where Basic and Extended pay the same, only the difference in part price (fee table below).
+- **Stock risks:** any line under 5,000 in stock (the default of `pcbkit parts --low`), with the nearest substitute
+  and what changes in the circuit if it is used.
 - **Assembly estimate:** the per-order fees for the PCBA type and sides the order will use (below). For a handful of
   boards they outweigh the parts, so the cost per set isn't the parts alone.
 
@@ -53,17 +52,22 @@ before relying on them.
 | Stencil | $8.27 per side | $1.55 |
 | Parts loading | $1.55 per unique part, Basic or Extended alike | $3.09 per unique Extended part; Basic free |
 | X-ray | $8.25 on the driver, which has a module and a WSON | - |
-| Limits | adds 5 mm edge rails | one side; green mask only; no Standard-only parts (ESP32-S3-MINI-1); drills two 1.152 mm tooling holes into a board without them |
+| Limits | the fab-order skill, "What JLC assembles" | |
 
 At 5 boards, Orbitchron's double-sided driver came to $182.25 of assembly. $122.79 of that was fees, and $53.32 parts.
 
 ## Rules
 
 - Stock and price numbers carry a date. Re-run `bomi list --check` before an order and update BOM.md. Its stock
-  figure may be a cached one: on 2026-11-16 it showed 124 of a TPS259470A while JLC and LCSC both had none. For a
-  part with thin stock, read the count on JLC's own part page (`jlcpcb.com/partdetail/<LCSC code>`) before the order
-  is called ready.
+  figure may be a cached one: on 2026-11-16 it showed 124 of a TPS259470A while JLC and LCSC both had none.
+- **Before the user signs off on an order, read every placed part's stock on JLC itself, that day**
+  (`jlcpcb.com/partdetail/<LCSC code>`: In Stock and Available Order Qty, which can differ), and again when the user
+  says they are about to pay on a later day. Look into each questionable figure before going on: one under the
+  order's need with a margin, stock shown with nothing orderable, two sources that disagree, a sharp move since the
+  last reading. Report each with the time it was read and the way out (JLC's BOM page, a substitute, a pre-order).
 - A substitute that needs a circuit change (a divider, inverted logic) goes into DESIGN.md as a decision, not just BOM.md.
-- Basic parts first for passives (`pcbkit.parts` has the stock R/C table); Extended only where the function needs it.
-- Hand-soldering pays only when it takes a whole side off the assembly order: setup, stencil and that side's loading.
-  Parts left off a side JLC still assembles save only their loading fee (fab-order skill, What JLC assembles).
+- Basic parts first for passives (`pcbkit.parts` has the stock R/C table); Extended only where the function needs
+  it, with the reason in BOM.md.
+- Hand-soldering pays only when it takes a whole side off the assembly order (fab-order skill, What JLC assembles).
+- A look is `pcbkit jlc` or `bomi info` for the parts asked about, each figure with its date and where it was read
+  (the cache, bomi, JLC's page). BOM.md is not rewritten for it.

@@ -1,6 +1,6 @@
 ---
 name: placement-study
-description: "Compare and search component placements by their ratsnest before routing: score crossings, length, via-field zones and free pin or gate choices in milliseconds per candidate, draw the ratsnest for review, and route only the winner. Use when a full route is slow (minutes to an hour), when deciding where a block of parts should sit, which side or angle a connector takes, or which register output or GPIO drives which net, and when reviewing a placement before routing."
+description: "Compare and search component placements by their ratsnest score before routing (`pcbkit place-score`), and route only the winner. Use when a full route is slow (minutes to an hour), when deciding where a block of parts should sit, which side or angle a connector takes, or which register output or GPIO drives which net, and when reviewing a placement before routing."
 ---
 
 # Placement study
@@ -24,6 +24,9 @@ route from 7 to 3 (2026-10-14).
 6. `--write design/placement.json`; the project's generator reads it, so the schematic (for pin and gate choices)
    and the board follow. Regenerate both from the project's scripts; the kit never writes the board.
 7. Route the winner. Record the score, the route result (unconnected items, DRC) and the date in LAYOUT.md.
+
+A look is steps 1 and 2: the placement as it stands, drawn and scored. Step 7 may be left out when the question
+is only where a part goes; LAYOUT.md then says the winner is unrouted.
 
 ## The study file
 

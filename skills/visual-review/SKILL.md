@@ -1,12 +1,12 @@
 ---
 name: visual-review
-description: "Make and read pictures of a KiCad board or design question: net-coloured region views, layout options side by side, 3-D renders, placement mock-ups, ratsnest pictures, one-page design overviews, 1:1 prints, copper checks and simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, when choosing between layout options (where vias go under a part), or when the user would understand a finding faster from an image than from a table."
+description: "Make and read pictures of a KiCad board or design question: region views coloured by net, layout options side by side, 3-D renders, ratsnest pictures, one-sheet overviews, 1:1 prints, simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, when choosing between layout options, or when a picture would show the user a finding faster than a table."
 ---
 
 # Visual review
 
-A picture is usually the quickest way to agree on what a board looks like and what is wrong with it. Make the
-picture, look at it yourself (read the PNG), say what you see, then send it to the user if it helps them decide.
+Make the picture, look at it yourself (read the PNG), say what you see, then send it to the user if it helps them
+decide.
 
 ## Which picture for which question
 
@@ -18,7 +18,7 @@ picture, look at it yourself (read the PNG), say what you see, then send it to t
 | Which placement tangles less? Where do nets cross? | the ratsnest, crossings circled | `pcbkit place-score BOARD [--study S.py] --svg out.svg --png out.png`; see the placement-study skill |
 | Does it fit the box? | 1:1 print with the outline, holes, dimension lines and a 50 mm scale bar | `pcbkit outline BOARD enclosure.json --fit-check fit.pdf [--parts]`; the user prints, measures the scale bar, cuts and screws it into the box; a photo with a ruler and calipers in it records the result |
 | How does the whole design fit together, for someone new to it? | one sheet: renders of the front and back beside a block diagram, each block in the same colour in all three, plus legends and notes | `kicad-cli pcb render` for the views (`--rotate` for a three-quarter view), composed as an SVG and rasterised with `rsvg-convert`; see synth-blocks' `eurorack/voice/scripts/overview.py` |
-| Where does the whole project stand after a design round? | one HTML page the user can use: status, a viewer of the board, a section per block, open decisions, cost and supply, every round kept | the project-overview skill: `pcbkit overview` makes `docs/overview.html` from a file per round; this kit's `docs/CONVENTIONS.md`, "The overview page", says what it holds |
+| Where does the whole project stand after a design round? | `docs/overview.html`: the project on one page, a round at a time | the project-overview skill (`pcbkit overview`) |
 | What does this DRC or check item actually refer to? | the copper around it, rasterised, with the flagged items marked | a netview of the area, or a small script that plots the layer and the item; crop tight |
 | Does the rail hold up when the load steps? | voltage and inductor current against time, one panel per case | ngspice deck through `pcbkit spice`, `wrdata` to text, matplotlib (`uv run --with numpy --with matplotlib`) |
 | What will the assembler see? | the hand-assembly map and the copper PNGs | `pcbkit previews BOARD docs/previews/<board>` |
@@ -29,14 +29,15 @@ picture, look at it yourself (read the PNG), say what you see, then send it to t
 - Crop before concluding. `pdftoppm -r 250 -x .. -y .. -W .. -H ..` on a PDF, or a tighter netview window, beats
   squinting at a full board.
 - Say what the picture shows in sentences: which part sits where, which gap is tight, which net crosses which.
-  Numbers (gaps, edge use, coverage) come from the board file, not from pixels.
+  **Numbers (gaps, edge use, coverage) come from the board file, not from pixels.**
 - Keep generated pictures in the project under `docs/previews/<board>/` with the command that made them, so they
   can be regenerated; send the ones the user needs to see with the file-sending tool of the harness.
+- The smallest pass is one picture of one region. **Always** say the board's commit, the picture's window and layer,
+  and what it does not draw.
 
 ## Comparing layout options
 
-When there are a few ways to lay something out, build each one and show them side by side: the user chooses faster
-from one sheet than from a table, and the sheet shows what a table hides.
+When there are a few ways to lay something out, build each one and show them side by side on one sheet.
 
 - Each option is a real copy of the board with the change made, saved inside the project folder (a copy elsewhere
   can't resolve `${KIPRJMOD}` in fp-lib-table, and DRC adds library warnings), and run through `pcbkit drc`. Its
@@ -52,28 +53,9 @@ from one sheet than from a table, and the sheet shows what a table hides.
 - Look at every panel before sending the sheet. A stub, a via off its pad or a number the picture contradicts is a
   finding about that option.
 
-Worked example ([via-options-tps55288.webp](../../docs/images/via-options-tps55288.webp)), siebenuhr controller v3,
-2026-11-09. U5 is a TPS55288 buck-boost in TI's HotRod package, with three long strip pads under it. Five of the
-board's eight vias there were open holes inside the strips, under paste: a 0.2 mm hole through the 1.6 mm board
-holds 0.050 mm³, almost twice one strip's whole paste deposit (0.027 mm³). JLC can't plug a via with solder-mask
-ink when it is in a pad or within 0.35 mm of one. It can fill such a via with epoxy or copper and cap it, which its
-page lists as the complex, costly process, with epoxy filling free on boards of six layers or more
-([Via Covering](https://jlcpcb.com/help/article/pcb-via-covering), read 2026-11-16). TI's
-figure and EVM put the vias beside the strips. A search of the board for free spots (the via's copper 0.16 mm from
-other nets on every layer and 0.02 mm from every mask opening, holes 0.25 mm apart, on its own net's copper on both
-layers it joins) found three of U5's corners and, with 0.007 mm to spare, TI's side spots. Option 2 uses both: no
-hole under paste, 95 % of the VOUT via copper kept, PGND's doubled. The sheet also shows what the study's first
-picture left out, since it drew no tracks: Option 1's copy kept the tracks that led to two of the vias it removed.
-
-```bash
-pcbkit netview before/controller.kicad_pcb u5-options.svg 147.55 126.7 152.05 131.2 --layer F.Cu --detail \
-  --colour LED_VOUT=#e8892b --colour GND=#6b8fb8 --colour CONV_SW2=#c94a4a \
-  --ref "ti-fig10-1.png=TI datasheet Fig. 10-1, turned to match" --ref-rotate 90 \
-  --title "Before (e0afc51): 8 vias, 5 in the pads" \
-  --compare "v1/controller.kicad_pcb=Option 1, corners: 5 vias, none in pads" \
-  --compare "v2/controller.kicad_pcb=Option 2, corners + TI's side vias: 9 vias" \
-  --metrics LED_VOUT,GND --note "Both options: DRC 0 errors, 0 unconnected." --png u5-options.png
-```
+Worked example, with its command: [compare-example.md](compare-example.md), the vias under a buck-boost's strip pads
+on siebenuhr controller v3. It also has what JLC can do with a via in a pad or within 0.35 mm of one, with its
+source.
 
 ## Gotchas
 

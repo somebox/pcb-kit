@@ -279,10 +279,10 @@ In `pcbkit check`, or a new `pcbkit lint`, reading the board, the schematic and 
 
 | Check | From | Needs |
 | --- | --- | --- |
-| A test pad on every power rail (a TP footprint or a pad marked as a test point) | pcb-checklist; failure-review's "Measure" | pcbnew |
+| A test pad on every power rail (a TP footprint or a pad marked as a test point) | pcb-checklist; failure-review's test-points.md, "Measure" | pcbnew |
 | Exposed and thermal pads on a net | pcb-checklist | pcbnew |
 | ESD part on every signal net that reaches a connector | kicad-happy `audit_esd_protection`; siebenuhr's unprotected CC, VBUS and LED data | netlist |
-| Pull-ups on open-drain buses; strap and enable pins at a defined level | kicad-happy `validate_pullups`; failure-review's "Pins with a role" | netlist |
+| Pull-ups on open-drain buses; strap and enable pins at a defined level | kicad-happy `validate_pullups`; failure-review's test-points.md, "Pins with a role" | netlist |
 | Decoupling distance per IC supply pin, other side counted | pcb-inspector `HEUR-DEC-001` | pcbnew |
 | Ground reference under signal tracks on the adjacent layer | pcb-inspector `HEUR-GND-001` | pcbnew |
 | Board design rules at or above the fab's capability (track, gap, drill, annular ring, hole spacing, silk) | pcb-checklist "within manufacturer's capability" | `.kicad_pro`, a fab profile in `pcbkit/data/` |

@@ -1,8 +1,7 @@
 # Generating a schematic sheet that reads
 
 For "Generate a sheet that reads" in [SKILL.md](SKILL.md). A sheet script places and wires its parts with
-`pcbkit.schematic` (`sch` below). The steps, in order: place the parts by pin or as blocks, put every part in a
-block, give the sheet its title block, set the page out and build twice, lint, then render the sheet and look.
+`pcbkit.schematic` (`sch` below), in the order of the sections here.
 
 ## Place parts by pin
 
@@ -62,8 +61,9 @@ sch.frames(sheet, B)
   cross another net's pin or a part.
 - `fields` sets reference and value level beside each part.
 - `frames` draws the frames `arrange` lined up and names any part left in no block.
-- Call `build(..., wire=25.4)`, as above: small local nets (2 to 6 pins) are drawn as wires where a straight, L or
-  Z run is clear, named once on the wire. The rest keep a label per pin, and the netlist is the same either way.
+- Call `build(..., wire=25.4)`, as above: a local net of 2 to 6 pins is drawn as a wire where two of its pins are
+  within 25.4 mm and a straight, L or Z run is clear, named once on the wire. The rest keep a label per pin, and the
+  netlist is the same either way.
 
 ## Lint, render and look
 

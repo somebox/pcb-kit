@@ -16,4 +16,10 @@ Status (<date>): <where the design stands>.
 | --- | --- | --- | --- |
 | D1 | | | |
 
-## 6. Block designs
+## 6. Open questions
+
+| # | Date | Question | What waits on it | Closed by |
+| --- | --- | --- | --- | --- |
+| O1 | | | | |
+
+## 7. Block designs

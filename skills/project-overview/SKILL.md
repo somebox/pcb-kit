@@ -1,6 +1,6 @@
 ---
 name: project-overview
-description: "Make and update a hardware project's overview page, docs/overview.html: the whole project on one page for the user, with its status, a viewer of each board (turned by drag, or layer by layer), a few lines per block, the decisions waiting for the user with their options and a recommendation, cost, supply, fab and orders, and every design round kept. Use when a major design round is done (a review and its decisions, a re-layout, a release, an order), when the user asks where the project stands or asks for the overview, status or review page, and when a small change needs noting on that page. Not for PRODUCTION.md's generated overview (pcbkit production) or the one-sheet design picture (the visual-review skill)."
+description: "Make and update a hardware project's overview page, docs/overview.html: the project on one page for the user. Use when a major design round is done (a review and its decisions, a re-layout, a release, an order), when the user asks where the project stands or for the overview, status or review page, or to note a small change on it. Not for PRODUCTION.md's generated overview or the one-sheet design picture (visual-review)."
 ---
 
 # The project's overview page
@@ -15,33 +15,11 @@ Worked example: the pages first built for Orbitchron (four rounds, three boards)
 three boards), 2026-11-17. Orbitchron's page came to 69 kB of HTML and 4.5 MB of pictures: about 2 MB for each
 540-part board, since a board unchanged between rounds is drawn once. Rendering the three boards took 28 s. On the
 sign's page, the day after its round, three notes turned the order from "in the cart, unpaid" to "controller waits
-for RP2354As" (the part had sold out), with nothing in the round rewritten.
+for RP2354As" (the part had sold out), with nothing in the round rewritten. Neither project holds those round files;
+real ones to read are in `~/Documents/Projects/esp32-s3-audio-node/docs/overview/`.
 
-## The pattern
-
-Three pages built by hand in their projects on 2026-11-17 show what such a page is, whatever makes it:
-Orbitchron's `docs/overview.html` before its first order, DodecaRGB's control board v1.3 order review, and the RGB
-spotlight's lamp housing review at round 7. This kit's README shows all three. What they share:
-
-- **The top says where it stands, without scrolling.** A title that names the thing and the moment ("Control board
-  v1.3, before the JLC order"), two or three sentences, the state in a few chips, three or four numbers (size,
-  parts, cost per board, open findings) and a picture of the thing.
-- **What changed since the user last looked comes next.** The spotlight's first panel is "Since the failure
-  review": each number with its value at the review struck through beside it, then a table of part, then → now,
-  and why.
-- **A viewer the user can work.** Orbitchron's shows each board as a render, layer by layer or as an assembly map,
-  front and back. The spotlight's turns the housing in 3-D with a button per round, so two rounds compare in place.
-- **One block at a time.** DodecaRGB's has a tab per block: a map of where the block sits, close-ups of its copper,
-  and that block's findings and decisions as cards.
-- **Decisions sorted by whose move it is**: for the user, decided this round, still open, carried from an earlier
-  round. Each has its options and the one recommended.
-- **Every card cites its source**: the finding's or decision's number (F29, D30) as a link, and the file it is in.
-- **One set of status chips**, explained once and used on every card.
-- **Rounds stay.** Tabs along the top (Orbitchron) or a switch in the viewer (the spotlight); the page says which
-  round it shows and when it was last updated.
-
-`pcbkit overview` makes a page to this pattern from the round files. A page built by hand for one round's question
-(an order checked line by line, a housing in 3-D) follows the same pattern.
+A page built by hand for one round's question (an order checked line by line, a housing in 3-D) follows the pattern
+of the page `pcbkit overview` makes. Before building one, read [pattern.md](pattern.md).
 
 ## What is where
 
@@ -51,8 +29,7 @@ docs/overview/r<N>.toml    one file per round, which you write (the fields: roun
 docs/overview/img/         the rounds' pictures as they were when each round was first built, and index.toml
 ```
 
-**A round file is the briefing, never the record.** It holds what the user needs on one page: a status line, the
-boards, a few lines per topic, the open decisions with their options, the numbers that matter. Every item names
+**A round file is a summary, never the record.** Every item names
 its `source` in the project, and the page links it. A decision the user takes goes into DESIGN.md as a numbered
 decision, a price into PRODUCTION.md or BOM.md, an order event into its order.toml, as the other skills say. The
 page then gets a note that cites it.
@@ -70,9 +47,9 @@ page then gets a note that cites it.
    | boards: version, state | `releases/<board>/releases.toml`, PRODUCTION.md's generated overview, or the CHANGELOG where there are no releases | `pcbkit release`, `pcbkit production` |
    | what this round did, what was decided | DESIGN.md's decisions dated since the last round; the review's Decisions table; CHANGELOG.md | failure-review, pcb-kit |
    | topics | DESIGN.md's block designs, LAYOUT.md, FIRMWARE.md, the reviews' verdicts and bench lists | failure-review, power-sim, enclosure-fit |
-   | decisions for the user | DESIGN.md's open questions, the newest review's "Questions for the user", HANDOVER.md | failure-review |
+   | decisions for the user | DESIGN.md's open questions, the newest review's findings with no row in its Decisions table yet, its "Questions for the user", HANDOVER.md | failure-review |
    | cost, supply | BOM.md (cost drivers, stock risks), PRODUCTION.md's Costs | bom-cost |
-   | fab, orders | the order guide in PRODUCTION.md, `production/orders/*/order.toml`, the quotes | fab-order |
+   | fab, orders | the order checklist in PRODUCTION.md; `production/orders/*/order.toml` with its quotes, or PRODUCTION.md's Orders table | fab-order |
    | pictures of the product | `docs/previews/`: exploded views, sections, photos | visual-review |
 
 3. `pcbkit overview --check` until it prints no `problem:` line. A problem is something wrong with a round file,
@@ -105,10 +82,11 @@ page then gets a note that cites it.
 
 | What happened | Do |
 | --- | --- |
-| a review and its decisions, a re-layout, a release, an order placed or received, a bring-up | a new round |
+| a review and its decisions, a re-layout, a release, an order put in the cart, boards received, a bring-up | a new round |
 | a price or a stock figure moved; a part was swapped in the cart; a decision was taken; a test came back | a note |
 | a typo or a wrong number in the newest round, before the user has seen it | edit that round's file |
 | anything in an earlier round, a note of it included | a new note on it (`--round N`); `--check` refuses an earlier round that was edited, and one whose notes were changed, removed or reordered |
+| the user asks where the project stands, and nothing above has happened since the newest round | answer from the page and the status lines: no round, no note |
 
 ```bash
 pcbkit overview note "The RP2354A is gone: 0 at JLC and at LCSC." --on supply --mark blocked --state "RP2354A out of stock"
@@ -121,6 +99,8 @@ item shows the mark and state of its latest note, so a note that changes the mar
 the id of a board, topic, decision or fact; without it the note is on the round's status. A note that takes a
 decision names the option with `--chose` and cites the decision's number in DESIGN.md, where it was written first.
 More than about eight notes on a round is a new round.
+A note is this skill's look (this kit's `docs/CONVENTIONS.md`, "Depth and scope"): the command, a build (step 4),
+a look at the item it changed, and step 7 with the commit. Steps 2, 5 and 6 are a round's.
 
 ## The six marks
 
@@ -158,7 +138,8 @@ The page is read in a minute or it is not read. `--check` watches these, and the
 - A decision is a question, what waits on it, two to four options with their effect and cost, and the one you
   recommend with one line of why. A question without options is not ready for the page: work the options out
   first, in the review or DESIGN.md's open questions.
-- A fact (cost, supply, fab, orders) is one number or phrase, a sentence, and the date it was taken.
+- A fact (cost, supply, fab, orders) is one number or phrase, a sentence, and the date it was taken. A figure
+  carried over from the round before keeps its date.
 - A note is a line or two (240 characters).
 
 ## The viewer
@@ -177,5 +158,3 @@ round keeps its own copy.
 - Nothing is on the page that is not in the project's documents first. If a fact has no source, write it where it
   belongs, then cite it.
 - Words the user will act on are exact: cart lines, prices with their date, part numbers, versions as released.
-- Check, build, check: `--check` before a build for what is wrong with the round, and after it, before the
-  commit, where it must be silent but for watch lines. A `to build:` line then means the page was not rebuilt.

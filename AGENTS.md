@@ -1,7 +1,7 @@
 # Working in pcb-kit
 
 This repo is the shared engine for several KiCad hardware projects. Read `README.md` for the commands and
-`docs/CONVENTIONS.md` for how the projects are laid out. The skill in `skills/pcb-kit/SKILL.md` is what an agent
+`docs/CONVENTIONS.md` for how the projects are laid out. The skills in `skills/` are what an agent
 sees inside a project.
 
 - Everything under `pcbkit/` must import cleanly under Python 3.9 (KiCad's bundled interpreter) with no third-party
@@ -13,10 +13,10 @@ sees inside a project.
 - A part goes into `library/PARTS.md` once a built board has proven it; cite the project and keep the notes to what
   the project's documents or the datasheet say. Parts only in a design go in its "not built yet" section.
 - When a script is harvested from a project, record it in `docs/HARVEST.md` with its source and what changed.
-- Test a change on more than one project's boards before committing: the sign, siebenuhr, spotlight and dodeca
-  repos are the corpus. A change to the router is judged with `pcbkit reroute corpus`, against `bench/baseline.json`
-  (see docs/ROUTER.md). `tests/` holds fixture boards drawn in pcbnew; each `python3 tests/test_*.py` (route_check,
-  courtyards, import_easyeda, release) runs its own under KiCad's Python.
+- Test a change on more than one project's boards before committing: the sign, siebenuhr, spotlight and dodeca repos
+  are the corpus. A change to the router is judged with `pcbkit reroute corpus`, against `bench/baseline.json` (see
+  docs/ROUTER.md). `tests/` holds the tests, each run as `python3 tests/test_*.py`; those with fixture boards drawn
+  in pcbnew (route_check, courtyards, import_easyeda, netview, release) run their own under KiCad's Python.
 - Commit messages: imperative, prefixed with the area (`checks:`, `release:`, `schematic:`, `skills:`, `docs:`).
 
 ## Releases
@@ -27,6 +27,7 @@ To cut a release:
 
 ```bash
 python3 scripts/release.py bump 0.4.0   # on a branch: the four version strings, and [Unreleased] -> [0.4.0] - today
+                                        # by hand: the `#vX.Y.Z` in README.md, "Using it from an agent"
                                         # commit as "release: 0.4.0", open a PR, merge it
 git switch main && git pull
 python3 scripts/release.py tag          # checks main is clean and pushed, then makes the annotated tag v0.4.0

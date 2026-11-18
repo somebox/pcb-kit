@@ -36,9 +36,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   (siebenuhr's LED power), three overview and review pages built in the projects (Orbitchron, DodecaRGB, the
   spotlight's housing), the same project as `pcbkit overview` draws it, and a ratsnest before and after its small
   parts moved. The paragraphs it lost are in the skills, docs/ROUTER.md, docs/HARVEST.md and this file.
-- **The project-overview skill has "The pattern".** What the three pages built by hand share: where it stands
-  at the top, what changed since the user last looked, a viewer to work, one block at a time, decisions sorted by
-  whose move it is, a source on every card, one set of status chips, and the rounds kept.
+- **The project-overview skill has `pattern.md`, the pattern of a page built by hand.** What the three such pages
+  share: where it stands at the top, what changed since the user last looked, a viewer to work, one block at a time,
+  decisions sorted by whose move it is, a source on every card, one set of status chips, and the rounds kept.
 - **JLC rotations for KiCad's Vishay PowerPAK 1212-8 footprints (2026-11-18).** Neither had a rule, so their CPL
   angle was KiCad's own. KiCad lays both out with pads 1-4 down the left; LCSC's footprints for seven single-FET
   parts (the WSD20L75DN33, C148391, and six Vishay parts) have them along the bottom, a quarter turn, so
@@ -54,6 +54,34 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   TQFN row also covers that footprint's `_ThermalVias` twin, which has the same pads, and not the other TQFN-16
   sizes. SOT-23, SOT-23-5, SOT-23-6, TSSOP and the HRO USB-C were right again and are dated 2026-11-18. A board
   with either footprint gets a new CPL, and so its next version from `pcbkit release`.
+
+- **The skills and conventions gone through for consistency, size and scope.** What an agent will notice:
+  - `docs/CONVENTIONS.md` has "What a released board carries", the standard a board meets before its release: its
+    name, version, date and author on the silkscreen; the power input, jumpers, connectors, pins, buttons and LEDs
+    labelled; every soldered part's reference; named test pads; mounting holes with keep-outs; fiducials; a
+    schematic that `sch-lint` passes; Basic parts first, each Extended one with its reason. It says what a prototype
+    may leave out, with a note.
+  - "Depth and scope" in the same file: every job says its scope and its depth (a look, as written, deeper) and
+    names each step it left out. The failure review gains a look, and schematic-only and one-block kinds; a quote
+    is the short form of an order, and an order has none.
+  - Orders: every placed part's stock is read live on JLC before the user signs off, with each questionable figure
+    looked into, and again when they are about to pay on a later day. A cart changes only on the user's sign-off,
+    put to them as a diff, as a PR is.
+  - Corrected: `pcbkit <cmd> --help` runs `info`, `link`, `setup-kikit` and `setup-router` instead of printing;
+    a rerun of `pcbkit outline` deletes more than it made; the bomi commands as they must be typed; the release
+    folder and the placement checklist are named by `<label>`, not `v<version>`; a four-layer route takes 40
+    minutes to 3 hours; JLC's placement viewer has one name.
+  - The project template: DESIGN.md has numbered open questions (O1, ...) beside its decisions, and LAYOUT.md's
+    silkscreen line names the board with its version and author. The skills call PRODUCTION.md's section the order
+    checklist, as the template does, and a quote of released boards is a `draft` event in the order's order.toml, no
+    longer also a row in a hand-kept table; a quote from an unreleased commit goes under PRODUCTION.md's Costs.
+  - Shorter: the skills' descriptions (764 to 591 words), lessons that were told twice now stand once beside their
+    check, and the rules that must not be missed are in bold at the top of the pcb-kit and failure-review skills.
+  - What loads when a skill triggers went from 15,618 words to 13,178. Seven passages that are read in one situation
+    moved, word for word, into files beside their skills: the failure review's `briefing.md` and `test-points.md`,
+    pcb-kit's `kicad-links.md` and `route-script.md`, fab-order's `old-release.md`, project-overview's
+    `pattern.md` and visual-review's `compare-example.md`. The pcb-kit skill's table names the command and points
+    to the conventions or `--help` for what they already say.
 
 ## [0.5.0] - 2026-11-16
 

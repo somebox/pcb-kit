@@ -1,14 +1,14 @@
 ---
 name: routing
-description: "Re-route a KiCad board's signals with the negotiated router, `pcbkit reroute`: small parts moved where that helps, every signal net routed together, test pads placed after the routing, repairs, and the old routing and the new one compared. Use when a board with its power copper and ground drawn needs its signals routed or routed again, when an autorouted or hand-routed board has detours, tangles or too many vias, or when comparing two routings of a board. Not for laying power copper, and not for routing a net at a time from a script (pcbkit.route)."
+description: "Re-route a KiCad board's signals with the negotiated router, `pcbkit reroute`. Use when a board with its power copper and ground drawn needs its signals routed or routed again, when an autorouted or hand-routed board has detours, tangles or too many vias, or when comparing two routings of a board. Not for laying power copper, and not for routing a net at a time from a script (pcbkit.route)."
 ---
 
 # Routing a board
 
-`pcbkit reroute` takes a placed board and lays its signals again, whoever routed it first, and leaves the result beside the
-project's board for you to compare: it never writes the board. It is experimental: six boards routed and judged by DRC and
-by eye, none built yet, so say so when you present a result. [docs/ROUTER.md](../../docs/ROUTER.md) has the method, every
-setting and the limits.
+`pcbkit reroute` takes a placed board and lays its signals again, whoever routed it first, and leaves the result
+beside the project's board for you to compare: it never writes the board. **It is experimental**: six boards routed
+and judged by DRC and by eye, none built yet, so say so when you present a result.
+[docs/ROUTER.md](../../docs/ROUTER.md) has the method, every setting and the limits.
 
 ## Steps
 
@@ -21,19 +21,25 @@ setting and the limits.
    ```json
    {"board": "../boards/driver/driver.kicad_pcb", "keep": ["GND", "USB_DP", "USB_DN"]}
    ```
-4. **Stop after the job first:** `pcbkit reroute scripts/reroute-driver.json --until=job`. Read what it prints: what was
-   kept, how many nets it will route, and any `!! pour` warning. A pour that floods the signals' room goes in `lift`, with
-   its net in `keep`. Then run it without `--until`: a two-layer board takes minutes, a four-layer one about an hour.
+4. **Stop after the job first:** `pcbkit reroute scripts/reroute-driver.json --until=job`. Read what it prints: what
+   was kept, how many nets it will route, and any `!! pour` warning. A pour that floods the signals' room goes in
+   `lift`, with its net in `keep`. Then run it without `--until`: a two-layer board takes about ten minutes, a
+   four-layer one 40 minutes to 3 hours.
 5. **Read the result:** `build/reroute/boards/<name>/summary.json` has failed connections, DRC of both routings, and the
    measures of each under `lint`. Compare `lint.old` with `lint.new`, not the new numbers alone.
-6. **Look at it.** Numbers don't show a bad route: `pcbkit netview` on the regions round the main IC, or `pcbkit reroute page`
-   for old and new side by side. Ask whether you would redo it.
-7. **Add placement when the routing is close:** `"place": {"movable": ["R*", "C*"], "fixed": [...], "limits": {...}}`, with
-   every decoupling capacitor in `fixed` or `limits` (the search knows nets, not loop areas), and test pads that may move in
-   `free`.
-8. **Adopting a result is the user's call**, on a branch, with KiCad closed: `final.kicad_pcb` replaces the board, then
-   `pcbkit drc --refill --save`, `pcbkit check`, and a note in LAYOUT.md with the date, the settings and the numbers. The
-   settings file stays in the project, so the routing can be run again.
+6. **Look at it.** Numbers don't show a bad route: `pcbkit netview` on the regions round the main IC, or `pcbkit
+   reroute page CONFIG.json` (its keys: the docstring of `pcbkit_router/page.py`) for old and new side by side. Ask
+   whether you would redo it.
+7. **Add placement in a later run,** once `keep` and `lift` are settled and what is left (failed connections,
+   detours, crossings) is what a moved part would clear: `"place": {"movable": ["R*", "C*"], "fixed": [...],
+   "limits": {...}}`, with every decoupling capacitor in `fixed` or `limits` (the search knows nets, not loop
+   areas). Test pads that may move go in `"free"`, a key of its own beside `"place"`.
+8. **Adopting a result is the user's call**, on a branch, with KiCad closed: `final.kicad_pcb` replaces the board,
+   then `pcbkit drc --refill --save`, `pcbkit check`, and a note in LAYOUT.md with the date, the settings and the
+   numbers. The settings file stays in the project, so the routing can be run again.
+
+A look is `--until=job`, or steps 5 and 6 on a run already made. **Always, before a result is adopted:** steps 6
+and 8.
 
 ## Reading the output
 
@@ -54,4 +60,3 @@ setting and the limits.
 - A kept pour above 20 % of the board walls the signals in: the flow warns, and `lift` and `keep` are the fix.
 - A two-layer board with a solid ground pour on the back gets more back-layer track than a person would lay: watch `back_mm`,
   and look at what happened to the pour.
-- A change to the router itself is judged on the corpus, not on one board: see "Changing the router" in docs/ROUTER.md.

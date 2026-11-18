@@ -2,25 +2,8 @@
 
 For step 3 of the failure review. Each line is a question to answer from the netlist, the datasheet or a
 calculation; the answer goes into the briefing as a finding, a firmware duty or a line under "verified OK".
-Examples name the board where it mattered.
-
-- [Every IC](#every-ic)
-- [Small parts: ratings and stress](#small-parts-ratings-and-stress)
-- [Power input and protection](#power-input-and-protection)
-- [Regulators and converters](#regulators-and-converters)
-- [Batteries and chargers](#batteries-and-chargers)
-- [Muxes, load switches, eFuses](#muxes-load-switches-efuses)
-- [Microcontroller or module](#microcontroller-or-module)
-- [Clocks and crystals](#clocks-and-crystals)
-- [Analog signal chain](#analog-signal-chain)
-- [Connectors and anything that leaves the board](#connectors-and-anything-that-leaves-the-board)
-- [Logic levels and level shifting](#logic-levels-and-level-shifting)
-- [Buses](#buses)
-- [Current paths and heat](#current-paths-and-heat)
-- [Layout: returns, coupling and RF](#layout-returns-coupling-and-rf)
-- [Fab and assembly](#fab-and-assembly)
-- [Mechanics and set-up](#mechanics-and-set-up)
-- [Firmware duties](#firmware-duties)
+Examples name the board where it mattered. Only the sections for the blocks in scope
+apply. A question that applies and was not answered is an open check.
 
 ## Every IC
 
@@ -66,7 +49,8 @@ Examples name the board where it mattered.
 - Reverse polarity: what conducts, and for how long the board survives it.
 - Fuse and current limits in the right order: the upstream one must not open before the downstream limit acts.
 - Inrush at attach against what the source tolerates. USB: no more than 10 µF on VBUS at attach (Type-C
-  specification R2.0, Table 4-3) and 100 µF once a PD contract stands (cSnkBulkPd); more needs an inrush limiter.
+  specification R2.0, Table 4-3) and 100 µF once a PD contract stands (cSnkBulkPd); more needs an inrush limiter
+  (siebenuhr had about 264 µF).
 - A protection part's own input at hot-plug: the capacitance ahead of it, its over-voltage threshold and
   hysteresis against the ring and against the source's idle voltage (the sign controller's eFuse).
 - Two sources: what each sees when the other is present, absent, or higher. Back-feed into a PC, a charger or a
@@ -88,11 +72,14 @@ Examples name the board where it mattered.
 ## Batteries and chargers
 
 - The power path in every mode (charging, supplementing, boost or OTG, ship mode, HIZ) and what each output sees in
-  each (dodeca v1.2: VBUS straight to PMID while charging).
-- TS or NTC network at the corners, from the reference that actually feeds it, in every mode (v1.2: REGN moved).
+  each, not only on the datasheet's front page (dodeca v1.2: the BQ25895 passed VBUS straight to PMID while
+  charging, and more than 5.5 V on VIN reached the LEDs).
+- TS or NTC network at the corners, from the reference that actually feeds it, in every mode (v1.2: REGN moved
+  with the charger's mode, false NTC faults stopped charging, and it was bodged to a fixed resistor).
 - Protection IC recovery: what it takes to come back from over-discharge (the XB7608AJ needs a charger).
 - Register defaults, and what a watchdog reset clears (the BQ25890's clears EN_HIZ).
-- Inrush when a FET connects the cells into the system capacitance.
+- Inrush when a FET connects the cells into the system capacitance (dodeca v1.3: the BQ25890's BATFET into about
+  83 µF of SYS, against a 9 A trip; on its bench list, with C402 as the fix).
 
 ## Muxes, load switches, eFuses
 
@@ -134,7 +121,8 @@ Examples name the board where it mattered.
 
 ## Connectors and anything that leaves the board
 
-- ESD protection and a series resistor on every line that runs to a cable or a user.
+- ESD protection and a series resistor on every line that runs to a cable or a user (earlier boards had neither on
+  CC, VBUS, LED data and Qwiic, and get hot-plugged on long cables).
 - Shorts to the neighbouring pin (USB-C CC sits next to VBUS), mis-mating, a reversed cable.
 - The board unpowered while the far end is powered, and the other way round.
 - Contact current rating against the real current.
@@ -192,7 +180,7 @@ Examples name the board where it mattered.
 
 ## Fab and assembly
 
-- Polarity of diodes, LEDs and polarised capacitors on silk and in the CPL preview; rotations (PRODUCTION.md's
+- Polarity of diodes, LEDs and polarised capacitors on silk and in JLC's placement viewer; rotations (PRODUCTION.md's
   checklist).
 - Rotation rules never yet checked in JLC's viewer for a package on this board: the lines marked **never** in the
   `PLACEMENT-<board>.md` that `pcbkit fab` writes (rgb-spotlight: `^SOT-89` and `^SOT-353`; a PT4115 turned 180°
@@ -200,11 +188,16 @@ Examples name the board where it mattered.
 - The placement count: the CPL's rows against the parts the schematic places. A part with no LCSC field is left
   out without a word (Orbitchron's LED board came out with no LEDs: the field had not reached the 528 of them).
 - BOM matched by LCSC code, not by value; parts JLC can't place, and hand-soldered parts listed for the builder.
-- Stock of every part, and the substitute for the low ones with the circuit change it needs (bom-cost skill). For
-  a scarce part, read the stock on JLC's page: bomi's figure can be a cached one.
+- Stock of every part, and the substitute for the low ones with the circuit change it needs (bom-cost skill). bomi's
+  figure can be a cached one, so read a scarce part on JLC's page. Every placed part is read on the day of the
+  sign-off (this kit's `docs/CONVENTIONS.md`, "Checks before an order", step 7).
 
 ## Mechanics and set-up
 
+- The board against this kit's `docs/CONVENTIONS.md`, "What a released board carries": its name, version, date and
+  author; the power input, jumpers, connectors, pins, buttons and LEDs labelled; every soldered part's reference;
+  test pads named; mounting holes with their keep-outs; fiducials. What is left out is noted in LAYOUT.md, with the
+  reason.
 - Mated boards: the stack height, what sits under and over each connector, the parts that face each other.
 - Screw heads, stand-offs and the enclosure's ribs over copper and parts (the enclosure-fit skill has the paper
   check).

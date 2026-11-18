@@ -47,6 +47,13 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   SI7904BDN (C143037) lies as KiCad's, so a part rule gives it 0. All three rows are read from the footprints and
   not yet seen in JLC's viewer, so their Checked dates are empty. A board with a part on one of these footprints
   gets a new CPL, and so its next version from `pcbkit release`.
+- **JLC rotations for the SJ-3524 audio jack and the 3x3 mm TQFN-16, from the preview (2026-11-18).** JLC's
+  placement viewer showed both a quarter turn out on the ESP32-S3 Audio Node v0.1, and neither footprint had a
+  rule: KiCad's `Jack_3.5mm_CUI_SJ-3524-SMT_Horizontal` (SJ-3524-SMT-TR, C20182907) and
+  `TQFN-16-1EP_3x3mm_P0.5mm_EP1.23x1.23mm` (MAX98357AETE+T, C910544). Both get -90, the viewer's "Rotate Right". The
+  TQFN row also covers that footprint's `_ThermalVias` twin, which has the same pads, and not the other TQFN-16
+  sizes. SOT-23, SOT-23-5, SOT-23-6, TSSOP and the HRO USB-C were right again and are dated 2026-11-18. A board
+  with either footprint gets a new CPL, and so its next version from `pcbkit release`.
 
 ## [0.5.0] - 2026-11-16
 

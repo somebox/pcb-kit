@@ -135,6 +135,12 @@ SOT-23-6, whose JLC footprint lies a quarter turn from the part that rule was ch
 is right for its package only as JLC draws that part: check every part under it, not one per rule. The new rows are dated
 2026-11-15.
 
+On 2026-11-18 (ESP32-S3 Audio Node): two footprints with no rule a quarter turn out, both fixed with "Rotate Right"
+(-90): the SJ-3524 audio jack and the MAX98357A's 3x3 mm TQFN-16 (the QFN rule doesn't match a TQFN name). Under their
+rules, the SOT-23, SOT-23-5, SOT-23-6, TSSOP and HRO USB-C parts were right, and those rows are dated 2026-11-18. The
+0603 and 0805 LEDs, the JST SH connector and the TS-1187A switch were right with no rule; the table records only rules,
+so their check is in this note.
+
 ## Parts for hand assembly (LCSC)
 
 - Use the cart the user named. Put the designators in each line's "Customer #".

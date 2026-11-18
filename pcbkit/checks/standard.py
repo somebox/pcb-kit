@@ -31,15 +31,16 @@ it.
                             number drawn as a polygon beside the pad is not a text: a board with such badges waives
                             the check and says so
   mounting          note    a mounting hole (every pad unplated, or a MountingHole* footprint) with neither a
-                            courtyard nor a rule area over it; a board with no hole at all
+                            closed courtyard nor a rule area over it that keeps something out, the board's or
+                            the footprint's own; a board with no hole at all
   fiducials         note    fewer than three fiducials (a Fiducial* footprint, a reference FID*, or a pad marked as a
                             global fiducial, each pad counted where it is) on a side the assembler places a part with
                             an LCSC number on; one whose centre is under 4.35 mm from the board's edge or a cut-out;
                             three or more on one line
   references        note    a soldered part (it has pads and is in the BOM; not DNP, a test pad, a fiducial, a hole
                             or a net tie) whose reference is not shown on the silkscreen: as its field, as a text
-                            of the footprint that says ${REFERENCE}, or in a board text that names it; one finding
-                            for the board when more than half of them are left off
+                            of the footprint that says ${REFERENCE}, or in a board text beside it that names it;
+                            one finding for the board when more than half of them are left off
   lcsc              error   a part the assembler places ([release] placed), not DNP, with no LCSC number: `pcbkit fab`
                             leaves it out of the BOM and the placement file. A board-only footprint counts when the
                             placement rule takes it, as fab exports one that has a number
@@ -94,6 +95,7 @@ CHECKS = collections.OrderedDict([
     ("settings", ("pcbkit.toml", False)),
 ])
 LEVELS = ("error", "note", "waived", "ok", "look")
+WAIVER_KEYS = ("board", "check", "items", "note")
 DEFAULTS = {"label_distance": 2.0, "bom": "", "rails": {}, "waive": []}
 LABELLED = (("JP", "jumper"), ("J", "connector"), ("SW", "switch"), ("BT", "battery holder"), ("LED", "LED"))
 TYPED_DATE = re.compile(r"(?<![\w.-])(?:(?:19|20)\d{2}-\d{2}(?:-\d{2})?|\d{1,2}[./]\d{1,2}[./](?:19|20)\d{2}"
@@ -320,13 +322,13 @@ def extended_findings(parts, cache, bom_path, root=""):
 def waivers_for(waive, pcb):
     """The [[standard.waive]] entries that are about this PCB (its key, or a glob on its path or folder; all of them
     without a board). waive is what pcbkit.toml holds, whatever that is: one table counts as a list of one, and an
-    entry that is no table, or whose board is no text, is kept for every board, so that apply_waivers says what is
-    wrong with it."""
+    entry that is no table, or whose board is no name (not text, or blank), is kept for every board, so that
+    apply_waivers says what is wrong with it."""
     def about(w):
         b = w.get("board") if isinstance(w, dict) else None
-        if not isinstance(w, dict) or (b is not None and not isinstance(b, str)):
-            return True
-        return not b or b == pcb["key"] or fnmatch.fnmatch(pcb["path"], b) or fnmatch.fnmatch(pcb.get("folder", ""), b)
+        if not isinstance(b, str) or not b.strip():
+            return True                # no board, or one that is no name: every board's, or an error to say
+        return b == pcb["key"] or fnmatch.fnmatch(pcb["path"], b) or fnmatch.fnmatch(pcb.get("folder", ""), b)
     return [w for w in (waive if isinstance(waive, list) else [waive]) if about(w)]
 
 
@@ -346,6 +348,10 @@ def waiver_problem(w):
     None. Nothing in pcbkit.toml may stop the report: a waiver that can't be read is an error in it."""
     if not isinstance(w, dict):
         return "a [[standard.waive]] entry that is not a table of board, check, items and note", True
+    other = sorted(str(k) for k in w if k not in WAIVER_KEYS)
+    if other:                          # "item" for "items" would waive the whole check, "boards" every board's
+        return ("a waiver has a key that is none of " + ", ".join(WAIVER_KEYS) + f" ({', '.join(other)}): as "
+                "written it would cover more than it says"), True
     check, items, board, note = w.get("check", ""), w.get("items"), w.get("board"), w.get("note", "")
     if not isinstance(check, str) or check not in CHECKS:
         return (f"a waiver names the check {check!r}, which is none of: "
@@ -358,6 +364,10 @@ def waiver_problem(w):
         return "a waiver without a note: say what is left out and why", True
     if items is not None and (not isinstance(items, list) or not all(isinstance(i, str) for i in items)):
         return "a waiver's items are a list of references, nets or sheets", True
+    if items == []:
+        return "a waiver's items list is empty: name what it covers, or leave items out to waive the whole check", True
+    if board is not None and not board.strip():
+        return "a waiver's board is empty: name the PCB, or leave board out for every board", True
     return None
 
 
@@ -399,7 +409,10 @@ def settings(cfg):
         out.append(finding("settings", "error", "[standard] is a table: label_distance, bom, [standard.rails], "
                            "[[standard.waive]]", repr(cfg)[:40]))
         cfg = {}
-    clean = dict(DEFAULTS, **cfg)
+    for key in sorted(str(k) for k in cfg if k not in DEFAULTS):
+        out.append(finding("settings", "error", "[standard] has a key that is none of " + ", ".join(DEFAULTS)
+                           + ": it is read by nothing", key))
+    clean = dict(DEFAULTS, **{k: v for k, v in cfg.items() if k in DEFAULTS})
     d = clean["label_distance"]
     if isinstance(d, bool) or not isinstance(d, (int, float)) or d < 0:
         out.append(finding("settings", "error", "[standard] label_distance is a distance in mm, a number; "
@@ -445,12 +458,13 @@ def _text_box(pcbnew, t):
         return _box(pcbnew, t.GetBoundingBox())
 
 
-def silk_texts(pcbnew, board):
+def silk_texts(pcbnew, board, distance=DEFAULTS["label_distance"]):
     """Every text the silkscreen prints: dicts with box (mm), text, side ("F" or "B"), kind (board, reference, value,
     field, or text for one drawn in a footprint) and owner (the footprint's reference, None for a board text). A
     footprint's own text that says ${REFERENCE} prints its reference, with the field itself hidden or not, and is a
-    reference. So is a board text that says exactly a footprint's reference ("J1", drawn beside it by hand or by an
-    importer): it is that part's reference, and the name of nothing."""
+    reference. So is a board text that says exactly a footprint's reference and is within distance of that
+    footprint ("J1", drawn beside it by hand or by an importer): it is that part's reference, and the name of
+    nothing. The same word elsewhere is a text like any other (a pin named D1 is not the diode's reference)."""
     side = {pcbnew.F_SilkS: "F", pcbnew.B_SilkS: "B"}
     out = []
 
@@ -467,10 +481,14 @@ def silk_texts(pcbnew, board):
         for g in fp.GraphicalItems():
             if g.GetClass() in ("PCB_TEXT", "PCB_TEXTBOX"):
                 add(g, "reference" if "${REFERENCE}" in g.GetText() else "text", ref)
-    refs = {fp.GetReference() for fp in board.GetFootprints()} - {""}
+    by_ref = collections.defaultdict(list)
+    for fp in board.GetFootprints():
+        if fp.GetReference():
+            by_ref[fp.GetReference()].append(fp)
     for t in out:
-        if t["kind"] == "board" and t["text"].strip() in refs:
-            t.update(kind="reference", owner=t["text"].strip())
+        said = t["text"].strip()
+        if t["kind"] == "board" and any(_gap(part_box(pcbnew, fp), t["box"]) <= distance for fp in by_ref.get(said, ())):
+            t.update(kind="reference", owner=said)
     return out
 
 
@@ -558,18 +576,26 @@ def _names_it(pcbnew, texts, fp, distance):
     return False
 
 
-LIST = re.compile(r"([A-Za-z]+)(\d+(?:\s*[,/]\s*\d+)+)")
+WORD = re.compile(r"(?<![\w.+-])[A-Za-z]+\d+(?![\w.])")
+LIST = re.compile(r"(?<![\w.+-])([A-Za-z]+)(\d+(?:\s*[,/]\s*\d+)+)(?![\w.])")
+
+
+def names_in(text):
+    """The references a text names: each word of letters then digits by itself ("TP1" in "TP1 RUN", not the V3 of
+    "3V3", the BUS1 of "+5V_BUS1" or the R1 of "R1A"), and "TP8,12,13" as TP8, TP12 and TP13."""
+    out = set(WORD.findall(text))
+    for m in LIST.finditer(text):
+        out |= {m.group(1) + n for n in re.findall(r"\d+", m.group(2))}
+    return out
 
 
 def legend_names(texts, sides=("F", "B")):
-    """The references the board texts on the given sides of the silkscreen name, as a legend does: every word, and
-    "TP8,12,13" as TP8, TP12 and TP13."""
+    """The references the board texts on the given sides of the silkscreen name, as a legend does, wherever on that
+    side the legend is."""
     out = set()
     for t in texts:
         if t["kind"] == "board" and t["side"] in sides:
-            out |= set(re.findall(r"[A-Za-z]+\d+", t["text"]))
-            for m in LIST.finditer(t["text"]):
-                out |= {m.group(1) + n for n in re.findall(r"\d+", m.group(2))}
+            out |= names_in(t["text"])
     return out
 
 
@@ -634,11 +660,16 @@ def mounting_findings(pcbnew, board):
     if not holes:
         return [finding("mounting", "note", "no mounting hole (a footprint whose pads are all unplated, or a "
                         "MountingHole): LAYOUT.md says how the board is held")]
-    areas = [z for z in board.Zones() if z.GetIsRuleArea()]
+    # what DRC enforces: a courtyard that is a closed outline (a line left open is none), or a rule area, the
+    # board's or a footprint's own, that keeps something out
+    forbids = ("GetDoNotAllowTracks", "GetDoNotAllowVias", "GetDoNotAllowPads", "GetDoNotAllowFootprints",
+               "GetDoNotAllowZoneFills", "GetDoNotAllowCopperPour")
+    zones = list(board.Zones()) + [z for f in board.GetFootprints() for z in f.Zones()]
+    areas = [z for z in zones if z.GetIsRuleArea() and any(getattr(z, n)() for n in forbids if hasattr(z, n))]
     out = []
     for fp in holes:
-        yard = any(g.GetClass() == "PCB_SHAPE" and g.GetLayer() in (pcbnew.F_CrtYd, pcbnew.B_CrtYd)
-                   for g in fp.GraphicalItems())
+        fp.BuildCourtyardCaches()
+        yard = any(fp.GetCourtyard(layer).OutlineCount() for layer in (pcbnew.F_CrtYd, pcbnew.B_CrtYd))
         at = fp.GetPosition()
         if not yard and not any(z.Outline().Contains(at) for z in areas):
             drill = max((pcbnew.ToMM(p.GetDrillSize().x) for p in fp.Pads()), default=0)
@@ -748,11 +779,23 @@ def fiducial_findings(pcbnew, board, placed, assembly=True):
     return out
 
 
-def reference_findings(pcbnew, board, texts):
+def reference_findings(pcbnew, board, texts, distance=DEFAULTS["label_distance"]):
     """Every soldered part's reference on the silkscreen: a part with pads that is in the BOM and fitted, in the
-    schematic or on the board only, and is not a test pad, a fiducial, a mounting hole or a net tie. The reference is printed by its field, by a text of the
-    footprint that says ${REFERENCE}, or by a board text that names it ("J1", "JP1 USB->BUS")."""
-    shown = {t["owner"] for t in texts if t["kind"] == "reference"} | legend_names(texts)
+    schematic or on the board only, and is not a test pad, a fiducial, a mounting hole or a net tie. The reference is
+    printed by its field, by a text of the footprint that says ${REFERENCE}, or by a board text within distance of
+    the part that names it, alone ("J1") or among other words ("JP1 USB->BUS"). A text elsewhere that happens to say
+    the same is not the part's reference."""
+    shown = {t["owner"] for t in texts if t["kind"] == "reference"}
+    beside = [(t, names_in(t["text"])) for t in texts if t["kind"] == "board"]
+
+    def named_beside(fp):
+        ref, box = fp.GetReference(), None
+        for t, names in beside:
+            if ref in names:
+                box = box or part_box(pcbnew, fp)
+                if _gap(box, t["box"]) <= distance:
+                    return True
+        return False
     # board-only or not: a part drawn on the board alone is soldered like any other, and pcbkit fab places it. What
     # is no part is out of the BOM (a logo, a solder jumper), or has no pads
     parts = [fp for fp in board.GetFootprints()
@@ -760,7 +803,7 @@ def reference_findings(pcbnew, board, texts):
              and not fp.IsNetTie() and not is_test_pad(pcbnew, fp) and not is_fiducial(pcbnew, fp)
              and not is_hole(pcbnew, fp)]
     bare = [fp.GetReference() for fp in sorted(parts, key=lambda f: _natural(f.GetReference()))
-            if fp.GetReference() not in shown]
+            if fp.GetReference() not in shown and not named_beside(fp)]
     if len(bare) * 2 > len(parts):     # left off the board as a whole: one finding, for one line in LAYOUT.md
         return [finding("references", "note", f"{len(bare)} of {len(parts)} soldered parts have no reference on the "
                         "silkscreen: where there is no room they are left off, and LAYOUT.md says so")]
@@ -799,13 +842,13 @@ def lcsc_findings(pcbnew, board, placed, assembly=True):
 def board_findings(pcbnew, board, cfg, placed="not-excluded", assembly=True, rails=None, rails_from=""):
     """The checks that need the board in pcbnew: labels, test pads, mounting holes, fiducials, references and LCSC
     numbers; and the placed parts by LCSC number, for the Extended parts."""
-    texts = silk_texts(pcbnew, board)
     distance = float(cfg.get("label_distance", DEFAULTS["label_distance"]))
+    texts = silk_texts(pcbnew, board, distance)
     lcsc, parts = lcsc_findings(pcbnew, board, placed, assembly)
     return (label_findings(pcbnew, board, texts, distance)
             + test_pad_findings(pcbnew, board, texts, distance, rails or [], rails_from)
             + mounting_findings(pcbnew, board) + fiducial_findings(pcbnew, board, placed, assembly)
-            + reference_findings(pcbnew, board, texts) + lcsc), parts
+            + reference_findings(pcbnew, board, texts, distance) + lcsc), parts
 
 
 # ---- the report -----------------------------------------------------------------------------------------------------
@@ -832,7 +875,7 @@ def check(project, pcb, cache=None):
             from ..production import Cache
             cache = Cache()
         out += extended_findings(parts, cache, find_bom(project.root, path, cfg.get("bom", "")), project.root)
-    out = apply_waivers(out, waivers_for(cfg.get("waive") or [], pcb)) + wrong
+    out = apply_waivers(out, waivers_for(cfg["waive"], pcb)) + wrong       # as written: 0 or "" is no list of none
     look = [dict(check="", level="look", item="", detail="", text=text, section=section) for section, text in LOOK]
     lint = sch_lint_line(path)
     if lint:

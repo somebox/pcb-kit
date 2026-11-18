@@ -27,7 +27,8 @@ it.
                             the board in pcbkit.toml, else the nets its schematic's power symbols name, ground
                             among them
   test-pad-labels   note    a test pad with no such text, whose value is not shown and whose reference no board
-                            text names (a legend: "TP1 RUN", "GND TP8,12,13"), each on the pad's side as above. A
+                            text names (a legend: "TP1 RUN", "GND TP8,12,13"), each on the pad's side as above; a
+                            pad marked as a test point on another part with no text beside the pad itself. A
                             number drawn as a polygon beside the pad is not a text: a board with such badges waives
                             the check and says so
   mounting          note    a mounting hole (every pad unplated, or a MountingHole* footprint) with neither a
@@ -35,8 +36,8 @@ it.
                             the footprint's own; a board with no hole at all
   fiducials         note    fewer than three fiducials (a Fiducial* footprint, a reference FID*, or a pad marked as a
                             global fiducial, each pad counted where it is) on a side the assembler places a part with
-                            an LCSC number on; one whose centre is under 4.35 mm from the board's edge or a cut-out;
-                            three or more on one line
+                            an LCSC number on; one whose centre is under 4.35 mm from the board's edge or a cut-out,
+                            or not on the board at all; three or more on one line
   references        note    a soldered part (it has pads and is in the BOM; not DNP, a test pad, a fiducial, a hole
                             or a net tie) whose reference is not shown on the silkscreen: as its field, as a text
                             of the footprint that says ${REFERENCE}, or in a board text beside it that names it;
@@ -649,9 +650,21 @@ def test_pad_findings(pcbnew, board, texts, distance, rails, rails_from):
             net = next((p.GetNetname() for p in fp.Pads() if p.GetNetname()), "no net")
             unnamed.append(finding("test-pad-labels", "note", f"a test pad with no silkscreen text within {distance:g} "
                                    "mm on its side, no value shown and no legend naming it", ref, net))
+    # a pad marked as a test point on a part that is something else: it counts for its rail above, so it is named
+    # like a test pad, by a text beside the pad itself (the part's own label is the part's)
+    marked = [(fp, p) for fp in board.GetFootprints() if not is_test_pad(pcbnew, fp) for p in fp.Pads()
+              if p.GetProperty() == pcbnew.PAD_PROP_TESTPOINT]
+    for fp, p in sorted(marked, key=lambda m: _natural(f"{m[0].GetReference()}.{m[1].GetNumber()}")):
+        box = _box(pcbnew, p.GetBoundingBox())
+        sides = {s for s, layer in (("F", pcbnew.F_Cu), ("B", pcbnew.B_Cu)) if p.IsOnLayer(layer)}
+        if not any(t["kind"] == "board" and t["side"] in sides and _gap(box, t["box"]) <= distance for t in texts):
+            unnamed.append(finding("test-pad-labels", "note", "a pad marked as a test point with no silkscreen text "
+                                   f"within {distance:g} mm of the pad, on a side it is on",
+                                   f"{fp.GetReference()}.{p.GetNumber()}", p.GetNetname() or "no net"))
     out += unnamed
-    if tps and not unnamed:
-        out.append(ok("test-pad-labels", f"{len(tps)} test pad{'s' * (len(tps) != 1)}, each named on the silkscreen"))
+    n = len(tps) + len(marked)
+    if n and not unnamed:
+        out.append(ok("test-pad-labels", f"{n} test pad{'s' * (n != 1)}, each named on the silkscreen"))
     return out
 
 
@@ -717,8 +730,9 @@ def _to_segment(p, a, b):
 
 
 def edge_distance(pcbnew, board):
-    """A function from a point (mm) to its distance from the board's edge, the cut-outs inside it included; None for a
-    board without a closed outline."""
+    """A function from a point (mm) to its distance from the board's edge, the cut-outs inside it included, negative
+    for a point that is not on the board (outside its outline, or in a cut-out); None for a board without a closed
+    outline."""
     poly = pcbnew.SHAPE_POLY_SET()
     try:
         closed = board.GetBoardPolygonOutlines(poly, False)
@@ -731,7 +745,11 @@ def edge_distance(pcbnew, board):
         for chain in [poly.Outline(i)] + [poly.Hole(i, j) for j in range(poly.HoleCount(i))]:
             pts = [(pcbnew.ToMM(chain.CPoint(k).x), pcbnew.ToMM(chain.CPoint(k).y)) for k in range(chain.PointCount())]
             segments += list(zip(pts, pts[1:] + pts[:1]))
-    return lambda p: min(_to_segment(p, a, b) for a, b in segments)
+    def distance(p):
+        d = min(_to_segment(p, a, b) for a, b in segments)
+        on_board = poly.Contains(pcbnew.VECTOR2I(pcbnew.FromMM(p[0]), pcbnew.FromMM(p[1])))
+        return d if on_board else -d
+    return distance
 
 
 def _on_one_line(pts, within=0.5):
@@ -769,7 +787,10 @@ def fiducial_findings(pcbnew, board, placed, assembly=True):
     for side in ("front", "back"):
         for ref, at in sorted(fids[side], key=lambda f: _natural(f[0])):
             d = distance(at) if distance else None
-            if d is not None and d < EDGE - 0.005:
+            if d is not None and d < 0:
+                out.append(finding("fiducials", "note", "a fiducial that is not on the board: outside its outline, or "
+                                   "in a cut-out", ref, f"{-d:.2f} mm off"))
+            elif d is not None and d < EDGE - 0.005:
                 out.append(finding("fiducials", "note", f"a fiducial whose centre is under {EDGE:g} mm from the board's "
                                    "edge (JLC wants its opening 3.35 mm clear)", ref, f"{d:.2f} mm"))
     if not out:

@@ -332,6 +332,20 @@ class Outline(unittest.TestCase):
         self.assertEqual((n["gr_line Edge.Cuts"], n["gr_arc Edge.Cuts"]), (4, 4))      # one outline, not one and a part
         self.assertEqual({k: v for k, v in n.items() if k.startswith("group")}, {"group pcbkit:outline": 1})
 
+    def test_a_run_that_fails_while_drawing_leaves_the_board_as_it_was(self):
+        """The earlier outline is off the file before the new one is drawn. A mount without its hole, a drawing with
+        a number missing: whatever stops the drawing, the file goes back, outline and all."""
+        self.outline(SPEC)
+        before = self.read()
+        for bad in (dict(SPEC, mounts=[{"x": 0, "y": 0, "boss": 5}]),                    # no "hole"
+                    dict(SPEC, keepouts=[{"x": 0, "d": 7.5}]),                             # no "y"
+                    dict(SPEC, drawings=[{"circle": [1, 2]}])):                            # no diameter
+            with self.assertRaises((KeyError, ValueError, IndexError)):
+                self.outline(bad)
+            self.assertEqual(self.read(), before)
+        self.outline(SMALLER)                         # and it is as rerunnable as before
+        self.assertEqual(self.counts()["group pcbkit:outline"], 1)
+
     def test_the_groups_items_load_as_one_group_in_kicad(self):
         self.outline(SPEC)
         b = self.pcbnew.LoadBoard(self.path)

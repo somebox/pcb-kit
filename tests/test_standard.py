@@ -631,12 +631,18 @@ class Board(unittest.TestCase):
         self.part("U1", 30, 10, "SOT-23", "LDO", nets=("VIN", "GND", "+3V3"))
         self.assertEqual(dict(S.probe_nets(self.pcbnew, self.b)), {"VIN": ["J1.1"]})
         out = self.pads(["VIN", "GND"])
-        self.assertEqual(found(out), [("test-pads", "note", "GND")])
+        self.assertEqual(found(out, "test-pads"), [("test-pads", "note", "GND")])
         self.assertFalse(S.is_test_pad(self.pcbnew, j))
         self.assertEqual(self.labels(), [("labels", "note", "J1")])
         self.assertTrue(self.references()[0]["text"].startswith("2 of 2 soldered parts"))    # J1 is one of them
         self.part("TP1", 50, 10, "TestPoint_Pad_D1.0mm", "GND", nets=("GND",), show=("Value",))
+        # and since it counts for its rail, the marked pad is named like a test pad: by a text beside that pad
+        out = self.pads(["VIN", "GND"])
+        self.assertEqual(found(out), [("test-pad-labels", "note", "J1.1")])
+        self.assertEqual(out[-1]["detail"], "VIN")
+        self.text("VIN", 10, 12)
         self.assertEqual(found(self.pads(["VIN", "GND"])), [])
+        self.assertEqual(self.pads(["VIN", "GND"])[-1]["text"], "2 test pads, each named on the silkscreen")
         self.assertEqual(dict(S.probe_nets(self.pcbnew, self.b)), {"VIN": ["J1.1"], "GND": ["TP1"]})
 
     def test_no_rails_known_is_said(self):
@@ -751,6 +757,18 @@ class Board(unittest.TestCase):
         self.assertEqual([(f["item"], f["detail"]) for f in out if f["level"] != "ok"],
                          [("FID2", "3.00 mm"), ("FID3", "3.00 mm")])
         self.assertIn("under 4.35 mm from the board's edge", out[0]["text"])
+
+    def test_a_fiducial_that_is_not_on_the_board(self):
+        """Outside the outline, or in a cut-out, it is 5 mm from an edge and on no board."""
+        self.outline(cut_out=(30, 20, 6))
+        self.part("R1", 20, 34)
+        self.fiducial("FID1", 5, 5)
+        self.fiducial("FID2", 65, 5)                  # 5 mm beyond the right edge
+        self.fiducial("FID3", 30, 21)                 # in the cut-out, 5 mm from its edge
+        out = self.fiducials()
+        self.assertEqual([(f["item"], f["detail"]) for f in out if f["level"] != "ok"],
+                         [("FID2", "5.00 mm off"), ("FID3", "5.00 mm off")])
+        self.assertIn("not on the board", out[0]["text"])
 
     def test_three_fiducials_on_one_line(self):
         self.outline()

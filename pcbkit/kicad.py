@@ -24,6 +24,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import threading
 
 NOISE = ("wxApp", "swig/python", "Debug: Adding duplicate image handler")
 SOURCE, STAMP = "PcbkitKiCad", "PcbkitStamp"      # in the background copy's Info.plist: the KiCad it was made from
@@ -127,18 +128,22 @@ else:
     # KiCad's Linux packages and its Docker images (kicad/kicad): kicad-cli on PATH, pcbnew in the system Python
     KICAD_PYTHON = "/usr/bin/python3"
     KICAD_SYMBOLS = "/usr/share/kicad/symbols"
-_CLI = None
+_CLI, _CLI_LOCK = None, threading.Lock()
 
 
 def kicad_cli():
     """kicad-cli's path: on macOS in KiCad's background copy, which the first call makes if there is none yet; on
-    Linux the one on PATH. Found once a process."""
+    Linux the one on PATH. Found once a process, by one thread: pcbkit previews renders its turntable from four at
+    once, and two making the copy together would each build in the same folder (it is named by the process) and
+    remove the other's."""
     global _CLI
     if _CLI is None:
-        if sys.platform == "darwin":
-            _CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
-        else:
-            _CLI = shutil.which("kicad-cli") or "kicad-cli"
+        with _CLI_LOCK:
+            if _CLI is None:
+                if sys.platform == "darwin":
+                    _CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
+                else:
+                    _CLI = shutil.which("kicad-cli") or "kicad-cli"
     return _CLI
 
 

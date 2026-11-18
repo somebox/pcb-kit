@@ -112,6 +112,28 @@ class Help(unittest.TestCase):
         with self.assertRaises(AttributeError):
             kicad.KICAD_CLY
 
+    def test_kicad_cli_is_found_by_one_thread(self):
+        """pcbkit previews renders its turntable from four threads; the first to ask makes the copy, the rest wait."""
+        import threading
+        import time
+        from pcbkit import kicad
+        calls, got = [], []
+
+        def slow(app):
+            calls.append(app)
+            time.sleep(0.05)
+            return "/tools/KiCadCLI.app"
+        with mock.patch.object(kicad, "_CLI", None), mock.patch.object(kicad, "background_app", slow), \
+                mock.patch.object(kicad.sys, "platform", "darwin"):
+            threads = [threading.Thread(target=lambda: got.append(kicad.kicad_cli())) for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(set(got), {"/tools/KiCadCLI.app/Contents/MacOS/kicad-cli"})
+        self.assertEqual(len(got), 8)
+
     def test_link_reads_remove(self):
         from pcbkit import kicad
         for argv, remove in ((("link",), False), (("link", "--remove"), True)):

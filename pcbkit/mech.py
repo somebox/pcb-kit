@@ -288,8 +288,24 @@ def apply(board_path, spec, take_over=False):
     bd = spec["board"]
     # before anything is removed: a description that doesn't fit stops here, with the board as it was
     outline = outline_points(bd["width"], bd["height"], bd.get("corner_radius", 2), bd.get("notches"), bd.get("cutouts"))
-    # an earlier run's items go on the text: BOARD.Remove() corrupts the bindings
+    # an earlier run's items go on the text: BOARD.Remove() corrupts the bindings. From here the file is without
+    # its outline until the new one is saved, so whatever goes wrong before that (a mount without its "hole", a
+    # drawing with a number missing) puts the file back as it was
+    with open(board_path, encoding="utf-8") as fh:
+        before = fh.read()
     removed = strip_template(board_path, take_over)
+    try:
+        _draw(pcbnew, board_path, spec, outline, removed, P, MM)
+    except BaseException:
+        with open(board_path, "w", encoding="utf-8") as fh:
+            fh.write(before)
+        raise
+
+
+def _draw(pcbnew, board_path, spec, outline, removed, P, MM):
+    """apply()'s drawing, on a board whose earlier outline is already off: every item into the pcbkit:outline group,
+    then saved."""
+    bd = spec["board"]
     board = pcbnew.LoadBoard(str(board_path))
     made = []                          # every item added to the board: they become the pcbkit:outline group
 

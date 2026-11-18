@@ -45,14 +45,8 @@ guide", "Orders" and "Costs"). It covered three boards, three ways of splitting 
    `PLACEMENT-<board>-<label>-jlcpcb.md` in the release folder and the order's `upload/`, or `PLACEMENT-<board>.md`
    from `pcbkit fab`. It lists every placed part whose orientation matters, with the rotation rule behind its CPL
    angle and when that rule was last seen right. A release made before pcbkit wrote the checklist has none, and
-   `pcbkit release` never rewrites a release. Make one beside it, leaving the release alone:
-   - Find the commit that added the release: `git log --diff-filter=A --format=%h -- <release dir>/MANIFEST.txt`.
-   - Extract the board's folder as it was then: `git archive <commit> <board folder> | tar -x -C <scratch>`.
-   - Run `pcbkit fab` on that copy into a scratch folder, passing the project's `placed` setting as `--placed`.
-   - If its CPL for the release's sides is the same file as the release's CPL, its checklist holds for the release.
-   - If they differ, the rotation table has changed since the release, and the release's CPL has the old angles.
-     Tell the user: `pcbkit release` would make a new version with the new angles and its own checklist. Until
-     then, compare the viewer's hover readings with the pad positions in KiCad at that version.
+   **`pcbkit release` never rewrites a release**. Make the checklist beside the release, with no new release, by the
+   steps in [old-release.md](old-release.md).
 3. Know each board's PCB options from PRODUCTION.md's order checklist (layers, thickness, mask, finish, order-number
    mark) and what JLC assembles. Write any options that aren't there into it first.
 
@@ -68,7 +62,9 @@ few boards, the per-order fees are most of the cost; the bom-cost skill has the 
   - one side only, and green mask only;
   - parts that JLC lists as Standard-only (the ESP32-S3-MINI-1, C2913206) are left unticked on the BOM page;
   - it drills two 1.152 mm tooling holes into a board that has none, wherever JLC chooses.
-- **Standard** assembles both sides and puts 5 mm edge rails on the board.
+- **Standard** assembles both sides and puts 5 mm edge rails on the board. JLC asks for fiducials on a Standard
+  order: the board's own (this kit's `docs/CONVENTIONS.md`, "What a released board carries"). A board without them
+  is named in the order's diff.
 - **Black mask** cost $8 more for 5 boards and rules out Economic. For a first order use green, unless the colour is
   the board's function (a diffuser, a front panel).
 - Record every quote, the removed ones too, with JLC's cart number (Y146) and the PCB and assembly prices (Record

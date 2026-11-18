@@ -194,9 +194,10 @@ apply. A question that applies and was not answered is an open check.
 
 ## Mechanics and set-up
 
-- The board against this kit's `docs/CONVENTIONS.md`, "What a released board carries": its name, version and
-  date; the power input, jumpers, connectors, pins, buttons and LEDs labelled; test pads named; mounting holes
-  with their keep-outs. What a prototype leaves out is noted in LAYOUT.md.
+- The board against this kit's `docs/CONVENTIONS.md`, "What a released board carries": its name, version, date and
+  author; the power input, jumpers, connectors, pins, buttons and LEDs labelled; every soldered part's reference;
+  test pads named; mounting holes with their keep-outs; fiducials. What is left out is noted in LAYOUT.md, with the
+  reason.
 - Mated boards: the stack height, what sits under and over each connector, the parts that face each other.
 - Screw heads, stand-offs and the enclosure's ribs over copper and parts (the enclosure-fit skill has the paper
   check).

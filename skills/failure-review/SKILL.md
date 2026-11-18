@@ -8,10 +8,15 @@ description: "Review a board for what could fail once it is built, before it is 
 **Read-only until the user has the briefing.** Gather, calculate and simulate, but don't edit the schematic, the
 board or the design data the board is generated from. Changes follow the user's choice among the recommendations.
 
-ERC and DRC don't see a divider that sits on a threshold at the tolerance corners, an input that powers a chip
-whose rail is off, or a charger that passes its input straight through in one of its modes. This review looks for
-those, before the order, and plans how each would be found on the bench. A smaller scope: "Kinds of review". A
-built board that has failed: "When a built board has failed".
+ERC and DRC don't see a divider that sits on a threshold at the tolerance corners, an input that powers a chip whose
+rail is off, or a charger that passes its input straight through in one of its modes. This review looks for those,
+before the order, and plans how each would be found on the bench. A smaller scope: "Kinds of review". A built board
+that has failed: "When a built board has failed".
+
+[briefing.md](briefing.md) has the briefing's template and rules: the status line every review opens with (a look's
+reply included), the evidence marks, how findings are rated and numbered, and what a sent briefing may still gain.
+Read it before writing or adding to one: steps 5 and 9 to 12, a look, a failed board's document.
+[test-points.md](test-points.md) is step 6.
 
 Worked examples:
 - dodeca control board v1.3, `~/src/dodeca-v2-hardware/hardware/control-board/v1.3/POWER_REVIEW.md`: two review
@@ -72,10 +77,12 @@ Worked examples:
      an order", step 5);
    - firmware duties from the firmware's code where it exists (siebenuhr's had no current cap and restored full
      brightness at boot).
-   Mark each result with the briefing's evidence marks. Anything inferred, or recalled rather than looked up, says
-   so until it is checked.
+
+   Mark each result with the briefing's evidence marks ([briefing.md](briefing.md)). Anything inferred, or recalled
+   rather than looked up, says so until it is checked.
 6. **Plan debug access** for each failure mode that matters: where it would be measured, and what would be done if
-   it turns out real (below).
+   it turns out real. [test-points.md](test-points.md) is this step's content: what to measure, isolate and
+   override, and the pins that must not get a pad.
 7. **Test each recommendation like a finding.** The user applies it as written, and a change is a new design:
    - what else hangs on the node or the part being changed, and what the old arrangement did that nobody wrote
      down;
@@ -99,14 +106,16 @@ Worked examples:
    - Keep what was refuted, with the source that refuted it, so it isn't raised again. Round 2 of the dodeca
      review corrected round 1 on when the charger sets BATFET_DIS.
    - If the design has moved since step 1, run the checks again, and the simulations the move touches.
-9. **Write the briefing** (below) as `docs/reviews/<date>-<board>.md` in the project, send it to the user, and **stop**.
+9. **Write the briefing** as `docs/reviews/<date>-<board>.md` in the project, from the template in
+   [briefing.md](briefing.md) and by the rules under it. Send it to the user, and **stop**.
 10. **After the user decides,** each accepted change becomes a numbered decision in DESIGN.md, then the edits,
     followed by `pcbkit erc`, the assertions, `pcbkit cleanup`, `pcbkit drc --save` and `pcbkit check`, and the
-    simulations the change touches run again on the design as edited. The briefing gets a Decisions table, dated.
-    Test points go into LAYOUT.md, the bench list into PRODUCTION.md's bring-up section. Carry each accepted change
-    to the boards that share the circuit, or give the reason in the Decisions table: the sign's module kept the 33 Ω
-    outputs that the controller had already changed to 100 Ω, until its own review found them. A review and its
-    decisions are a round of the project's overview page: bring it up to date with the project-overview skill.
+    simulations the change touches run again on the design as edited. The briefing gets a Decisions table, dated,
+    below what was sent: nothing in a sent briefing is renumbered or rewritten. Test points go into LAYOUT.md, the
+    bench list into PRODUCTION.md's bring-up section. Carry each accepted change to the boards that share the
+    circuit, or give the reason in the Decisions table: the sign's module kept the 33 Ω outputs that the controller
+    had already changed to 100 Ω, until its own review found them. A review and its decisions are a round of the
+    project's overview page: bring it up to date with the project-overview skill.
 11. **Review the changes before the order.** In every project with a second round, a change accepted in the first
     caused a finding in the second. Review what changed (below) at the commit that will be ordered, as a new dated
     briefing that links this one: `<date>-<board>-round2.md` when the date is the same, so no briefing is
@@ -141,7 +150,7 @@ line says which.
   one is not web research), and steps 7 and 8 on what it found; a recommendation that needs a simulation reads
   "bench test before deciding". Step 2's wider search, step 5's simulations and step 6 are listed under "not
   covered"; a doubt they would have settled is an open check. It never reads "ready to order". Without a finding it
-  is a reply under the status line; a finding makes it a briefing.
+  is a reply under the status line, in briefing.md's form; a finding makes it a briefing.
 - **Deeper** adds what the user names: every threshold at its corners, a second refuting pass by a fresh agent,
   the boards that share a circuit.
 - **Always:** step 1's checks run at this commit, a datasheet claim read from the PDF, steps 7 and 8 for every
@@ -161,113 +170,6 @@ findings are the same for both; the actions are not.
   costs more than the prototype is there to spend.
 - Still changed on a prototype: what would kill the board in the use it is given, what would hide the thing the
   prototype is built to find out, and what costs nothing.
-
-## The briefing
-
-The reader should be able to decide from the first screen. The reasoning stays in the design notes and sim results
-it links to.
-
-```markdown
-# <Board> <rev>: failure review
-
-Status (<date>): reviewed at <commit>; <full review | changes since <review> | schematic only | layout only |
-one block | imported or built design>, <a look | as written | deeper: what was added>; <prototype, used with
-<supply, handling> | product>; covers <blocks>; not covered: <blocks, and steps left out with why>; open checks:
-<...>; shares circuits with: <boards>.
-Checks at this commit: ERC <n>; DRC <errors, unconnected, parity>; assertions <n nets, n failures>;
-KiCadRoutingTools' checkers <ran | not run, why>. Second pass: <what tried to refute the findings>.
-Evidence marks: *ds* datasheet text (document, section, column), *sim*, *calc*, *board* (netlist or layout,
-measured), *meas* (measured on a built unit), *inferred*, *recalled* (not checked).
-
-## Verdict
-Three to five lines: ready to order or not, the findings to settle first, and any check still open that could
-kill the board.
-
-## Findings
-| # | Finding | Effect | Likelihood | Found at | Evidence | How it shows up, how to tell | Action (cost) |
-|---|---|---|---|---|---|---|---|
-| F1 | ... | dead | likely | bench | *ds* TPS2116 SLVSFG1A §7.6.1; *sim* sim/results/<question>.txt | symptom; reading at TP3 | change / test point / firmware / bench test / accept for this build |
-
-## Earlier findings
-In a review of changes: each finding of the earlier review, and whether it is fixed (by which decision), carried
-over, accepted or open.
-
-## Verified OK
-What was checked and holds, with its source.
-
-## Refuted
-What the second pass removed, and the source that removed it.
-
-## Firmware duties
-Each state of the hardware that depends on firmware, as a requirement for whoever writes it.
-
-## Test points and rework provisions
-| Net or part | Why | Where | Footprint |
-
-## Bench list
-The first power-up, then the tests that settle the open findings, in order. For each: where to probe, the reading
-that passes and the one that fails, and what to lift or cut to isolate the block.
-
-## Notes, stock and tools
-What isn't a failure mode: design notes that disagree with the board, parts low in stock, a tool that misled.
-
-## Questions for the user
-
-## Not covered
-
-## Decisions (<date>)
-Added after the user decides: | Finding | Decision | State |
-
-## Bench results (<date>)
-Added when the boards are built.
-```
-
-- **Effect:** *dead* (no function, or damage), *function lost* (the rest works), *degraded* (out of spec, or works
-  with a workaround), *nuisance*. **Likelihood:** *will*, *likely*, *possible*, *unlikely*. **Found at:**
-  *power-up* (the first power-up shows it), *bench* (a test on the bench list shows it), *field* (only time, a rare
-  event or a part at its tolerance corner shows it).
-- Order the findings by what to settle first. Weigh effect and likelihood together: a *function lost* that *will*
-  happen goes above a *dead* that is *unlikely*. Of two alike, the one found only in the field goes first. A
-  finding without evidence is a question and goes under "Questions for the user".
-- Number the findings F1, F2, … and carry on from the last number in a later round, so a number means one finding
-  for the life of the board. Use no other prefix: R6 would read as a resistor.
-- Each action names its cost: a pad, a part, a re-route, a firmware duty, or a bench test before deciding. On a
-  prototype the cheapest action that holds is often a condition written down (above).
-- "Not covered" is for what was left out on purpose: blocks out of scope, and the steps a look leaves out. A check
-  that belongs to the review and wasn't done (a connector's footprint against its drawing, the placement viewer) is
-  an open check: it goes into the status line, and into the verdict when it could kill the board. Orbitchron's first
-  review listed connector mating under "Not covered", and both board-to-board footprints turned out mirrored
-  (checklist.md, "Connectors and anything that leaves the board").
-- Once sent, the briefing is a record. Decisions and bench results are added below, dated, and a later round is a
-  new dated file that links it. Nothing is renumbered or rewritten in place.
-
-## Test points and rework provisions
-
-The boards come back assembled from JLC, so isolating a block or trying another value means rework. Plan for it
-while it costs a pad:
-
-- **Measure.** A test pad on every rail, and on each signal a failure is diagnosed by: reset, enable, strap,
-  power-good, fault, sense nodes, a switch node for the scope. A GND pad close to each, for a probe's ground
-  spring. Pads at both ends of a high-current path measure its drop (siebenuhr v2.2's TP7 and TP14 across R17 and
-  the shunt). The projects use `TestPoint:TestPoint_Pad_D1.0mm` (siebenuhr, bottom side) and `TestPoint_Pad_D1.5mm`
-  (esp32-s3-ha-node); a `TestPoint_Loop_*` takes a scope's ground clip. Put them on the side that can be reached
-  with the board in its enclosure, with the net name on silk.
-- **Isolate.** A 0 Ω link (0603 or larger, so it can be lifted with an iron) or a bridged solder jumper
-  (`Jumper:SolderJumper-2_P1.3mm_Bridged_*`) in series with each rail into a block, so a short can be found by
-  elimination and a block's current measured. Keep its trace on an outer layer where a knife can reach.
-- **Override.** Strap, enable and mode pins through a resistor to their level, not straight to a rail, so a wire
-  can override them. siebenuhr's CH224K had CFG1 on a 0 Ω link to the connector's VBUS.
-- **Options.** DNP footprints for the alternative a finding points to: dodeca v1.3 has R209 (DNP) for leakage on
-  QON, JP601 (DNP) to let the INA226 alert cut the LED rail, and C402 to remove if the BATFET trips on wake.
-- **Reach.** A spare GPIO on a pad near the circuit most likely to need firmware help. Any net under a QFN or BGA
-  that might need a wire, brought out to a pad or via. The debug UART, boot and reset pins on pads. The I2C bus on
-  a header, so the chips can be read without the product firmware: v1.2's charger driver wrote 0 mA into the
-  charge-current register, and a register dump told that apart from a hardware fault.
-- **Pins with a role.** A pad on a pin that must float or that the ROM drives at boot is not neutral. dodeca v1.3
-  removed v1.2's TP_SCL2/TP_SDA2 from Teensy pins 24/25 for that reason.
-
-A pad costs nothing and a 0 Ω is a Basic part. Room and routing are the limits on a dense board; the briefing says
-which provisions were left out and why.
 
 ## When a built board has failed
 

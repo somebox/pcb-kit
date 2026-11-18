@@ -168,13 +168,16 @@ unsaid. A look never clears an order. What a skill marks **always** holds at eve
 
 ## What a released board carries
 
-The standard a board meets before `pcbkit release` for an order. The failure review checks it, mostly on
-`pcbkit previews`' pictures; a line names the tool where one checks it. A prototype may leave out what its line
-allows, and LAYOUT.md then says what was left out and why. The rest costs nothing and is not waived.
+The standard a board meets before `pcbkit release` for an order. The failure review checks it, mostly on `pcbkit
+previews`' pictures; a line names the tool where one checks it. A board leaves out only what its line allows (for a
+prototype, or where there is no room), and LAYOUT.md then says what was left out and why. A board reviewed before a
+line was written takes that line up at its next revision, on the user's word. The rest is not waived.
 
-- **Name, version, date.** On the silkscreen once: the board's name, `${REVISION}` and `${ISSUE_DATE}`, never typed
-  (above). Release refuses `v${REVISION}` and `${CURRENT_DATE}` but passes a board with no version text, so look.
-  A title block on the board and on every schematic sheet (`pcbkit sch-lint --only title-block`).
+- **Name, version, date, author.** On the silkscreen once: the board's name, `${REVISION}` and `${ISSUE_DATE}`,
+  never typed (above); and, typed, the author's name with an address where the design is found (the author's site or
+  the repository), or the name alone where there is no room. Release refuses `v${REVISION}` and `${CURRENT_DATE}`
+  but passes a board with no version text, so look. A title block on the board and on every schematic sheet (`pcbkit
+  sch-lint --only title-block`).
 - **Power in.** At each power input: the voltage range and the polarity (+ and -, or the centre-pin symbol at a
   barrel jack). Where the user chooses the supply, also its current limit or the fuse's rating.
 - **Jumpers, switches, solder bridges.** What each position does, in a few words, and the default
@@ -185,15 +188,24 @@ allows, and LAYOUT.md then says what was left out and why. The rest costs nothin
   and the power pins on a header between its own boards.
 - **Buttons and LEDs.** Named for what they do (BOOT, RESET, STATUS, CHG).
 - **Test pads.** One on every rail and a GND pad near them, each with its net's name on the silkscreen beside it or
-  in a numbered legend, on the side reachable in the enclosure. The failure-review skill ("Test points and rework
-  provisions") says which signals and rework links are added; the briefing says which of those were left out and
-  why, and LAYOUT.md repeats it.
+  in a numbered legend, on the side reachable in the enclosure. The failure-review skill's test-points.md says which
+  signals and rework links are added; the briefing says which of those were left out and why, and LAYOUT.md repeats
+  it.
 - **Mounting.** Holes for the screws that hold it (2.2, 2.7 or 3.2 mm for M2, M2.5, M3), unplated unless DESIGN.md
   says they ground the board, each with a keep-out for the screw head or standoff, which DRC then enforces
   (`pcbkit outline` draws both from `enclosure.json`). A board with none says in LAYOUT.md how it is held.
+- **Fiducials.** Three on each side JLC assembles, near three corners of the board (on a round board, spread along
+  its edge and not on one line): `Fiducial:Fiducial_1mm_Mask2mm`, a 1 mm copper dot in a 2 mm mask opening, as a
+  board-only footprint so parity holds, its centre 4.35 mm or more from the board's edge. JLC asks for fiducials on
+  Standard PCBA, with "a minimum clearance of 3.35 mm from the board edge, including the fiducial keep-out area"
+  ([its help page](https://jlcpcb.com/help/article/how-to-add-edge-rails-fiducials-for-pcb-assembly-order), read
+  2026-11-18); 4.35 mm to the centre meets that whether it is measured to the centre or to the opening. A board with
+  no room for them says so in LAYOUT.md; in a `pcbkit panel` the rails carry three.
 - **Silkscreen.** Text no smaller than the project's DRC minimum (0.8 mm on most of the boards), clear of pads, and
   of mask openings unless the board prints inside them on purpose (`keep_silk_in_mask`). Every polarised part's mark
-  is visible beside the part.
+  is visible beside the part. The reference of every soldered part (not a test pad, a fiducial or a hole) is beside
+  it, readable with the part fitted. Where there is no room, references are left off: LAYOUT.md says where, and
+  `board.pdf` from `pcbkit previews` shows them on its Fab layer, front and back.
 - **Schematic.** `pcbkit erc` with 0 errors, its warnings explained in DESIGN.md. `pcbkit sch-lint --summary` read,
   and each finding fixed or explained: no text over text, references and values beside their parts, small local nets
   wired, each block framed and titled where the sheet is generated. Then `schematic.pdf` looked at.

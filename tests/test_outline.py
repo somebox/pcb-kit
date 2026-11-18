@@ -133,6 +133,28 @@ class Marks(unittest.TestCase):
             self.strip(BOARD, take_over=True)
         self.assertIn("nothing to take over", str(stop.exception))
 
+    def test_an_outline_of_curves_is_an_outline(self):
+        """KiCad writes a Bezier curve as gr_curve and a text box as gr_text_box. An unmarked outline drawn with
+        curves stops the run like any other, and --take-over takes it with the rest."""
+        curve = '\t(gr_curve (pts (xy 0 0) (xy 3 -2) (xy 6 2) (xy 9 0)) (stroke (width 0.1)) (layer "Edge.Cuts") (uuid "c-1"))\n'
+        box = '\t(gr_text_box "a note" (start 0 0) (end 9 3) (layer "Cmts.User") (uuid "c-2"))\n'
+        other = '\t(gr_bbox (start 0 0) (end 9 3) (layer "Dwgs.User") (uuid "c-3"))\n'       # a kind yet to come
+        silk = '\t(gr_curve (pts (xy 0 0) (xy 3 -2) (xy 6 2) (xy 9 0)) (layer "F.SilkS") (uuid "c-4"))\n'
+        only = "(kicad_pcb (version 20241229)\n" + curve + box + other + silk + ")\n"
+        old = mech.legacy_items(only)
+        self.assertEqual([x[2] for x in old], ["curves on Edge.Cuts", "text boxes on Cmts.User", "bbox drawings on Dwgs.User"])
+        self.assertEqual([x[2] for x in mech.in_the_way(old)], ["curves on Edge.Cuts"])
+        with self.assertRaises(SystemExit) as stop:
+            self.strip(only)
+        self.assertIn("1 curves on Edge.Cuts.", str(stop.exception))
+        n, text = self.strip(only, take_over=True)
+        self.assertEqual((n, uuids(text)), (3, ["c-4"]))               # the silkscreen is nobody's to take
+        # beside lines: the curve goes with them, so no part of the old outline is left under the new one
+        unmarked = BOARD.replace('"pcbkit:outline"', '"somebody else"').replace("\t(gr_line (start 5 5)", curve + "\t(gr_line (start 5 5)", 1)
+        n, text = self.strip(unmarked, take_over=True)
+        self.assertNotIn("c-1", uuids(text))
+        self.assertEqual(n, 9)
+
     def test_drawings_alone_are_nobodys_outline(self):
         notes = "\n".join(l for l in BOARD.splitlines() if "mine-1" in l or "silk" in l or l.startswith(("(kicad", ")")))
         self.assertEqual(self.strip(notes + "\n"), (0, notes + "\n"))
@@ -286,6 +308,25 @@ class Outline(unittest.TestCase):
         self.assertEqual(self.read(), before)
         self.assertIn("4 arcs on Edge.Cuts", str(stop.exception))
         self.assertIn("--take-over", str(stop.exception))
+
+    def test_an_outline_drawn_by_hand_with_a_curve_stops_the_run(self):
+        pcbnew = self.pcbnew
+        b = pcbnew.LoadBoard(self.path)
+        c = pcbnew.PCB_SHAPE(b)
+        c.SetShape(pcbnew.SHAPE_T_BEZIER)
+        c.SetLayer(pcbnew.Edge_Cuts)
+        c.SetStart(self.mm(80, 90)); c.SetBezierC1(self.mm(90, 85)); c.SetBezierC2(self.mm(110, 95)); c.SetEnd(self.mm(120, 90))
+        b.Add(c)
+        kicad.save_board(b, self.path)
+        before = self.read()
+        self.assertIn("(gr_curve", before)
+        with self.assertRaises(SystemExit) as stop:
+            self.outline(SPEC)
+        self.assertIn("1 curves on Edge.Cuts", str(stop.exception))
+        self.assertEqual(self.read(), before)
+        self.outline(SPEC, take_over=True)
+        n = self.counts()
+        self.assertEqual((n["gr_curve Edge.Cuts"], n["gr_line Edge.Cuts"], n["gr_arc Edge.Cuts"]), (0, 4, 4))
 
     def test_take_over_once_then_reruns_touch_the_group_only(self):
         self.outline(SPEC)

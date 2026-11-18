@@ -246,10 +246,11 @@ waived. A board reviewed before a line was written takes that line up at its nex
   `pcbkit standard` prints how many findings sch-lint has, as a line to look at.
 - **Parts.** Every placed part has its LCSC number [`lcsc`, error]: `pcbkit fab` leaves one without out of the BOM
   and the placement file, and names it in its summary. A part soldered by hand is marked "Exclude from position
-  files", and is then not a placed part. A JLC Basic part wherever one does the job; each Extended part has its
-  reason in BOM.md, with the fee it adds for the order's PCBA type, none under Standard (`pcbkit production` counts
-  them) [`extended`: the placed Extended parts, from konnect's parts cache, that BOM.md does not name by LCSC number
-  or MPN]. Parts from `library/PARTS.md` first.
+  files", and is then not a placed part (under a `field:` placement rule it is its field that says so, not the
+  flag). A JLC Basic part wherever one does the job; each Extended part has its reason in BOM.md, with the fee it
+  adds for the order's PCBA type, none under Standard (`pcbkit production` counts them) [`extended`: the placed
+  Extended parts, from konnect's parts cache, that BOM.md does not name by LCSC number or MPN]. Parts from
+  `library/PARTS.md` first.
 - **Documents.** Dated status lines, the review's briefing and the bring-up list in PRODUCTION.md; the version's
   section in CHANGELOG.md follows the release (step 7 below).
 

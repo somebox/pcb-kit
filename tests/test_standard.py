@@ -174,6 +174,18 @@ class TitleBlocks(unittest.TestCase):
                                       ("title-block", "error", os.path.join("sub", "mcu.kicad_sch"))])
         self.assertEqual([f["text"] for f in out], ["no title block", "a title block without a title"])
 
+    def test_a_sheet_file_that_is_not_found_is_not_a_sheet_with_a_title(self):
+        """The root names power.kicad_sch and it is not there: the sheets that are found do not make the schematic
+        complete."""
+        write(self.pcb, board())
+        self.sheets(demo=sheet("Demo", ["power.kicad_sch", "io.kicad_sch"]), io=sheet("Demo", ["sub/adc.kicad_sch"]))
+        out = S.title_findings(self.pcb)
+        self.assertEqual(found(out), [("title-block", "error", "power.kicad_sch"),
+                                      ("title-block", "error", "sub/adc.kicad_sch")])
+        self.assertEqual([f["detail"] for f in out], ["named in demo.kicad_sch", "named in io.kicad_sch"])
+        self.assertIn("not found", out[0]["text"])
+        self.assertNotIn("ok", [f["level"] for f in out])              # and nothing says the sheets have their titles
+
     def test_one_title_between_the_board_and_its_root_is_enough(self):
         """Release gives each the other's title; with neither, schematic.pdf and the board are nameless."""
         write(self.pcb, board(title=""))
@@ -438,6 +450,28 @@ class Board(unittest.TestCase):
         self.part("J2", 30, 10, "JST_PH", "PORT1", show=("Reference", "Value"))
         self.assertEqual(self.labels(), [("labels", "note", "J1")])
 
+    def test_a_board_text_that_says_only_a_reference_is_that_reference_and_no_name(self):
+        """"J1" drawn beside the connector as a board text, by hand or by an importer, names it no more than its
+        Reference field would."""
+        self.part("J1", 10, 10, "JST_PH", "PORT0")
+        self.text("J1", 10, 12)
+        self.part("J2", 30, 10, "JST_PH", "PORT1")
+        self.text("J2 PORT1", 30, 12)                                  # a reference and a name
+        self.part("TP1", 50, 10, "TestPoint_Pad_D1.0mm", "RUN", nets=("RUN",))
+        self.text("TP1", 50, 12)
+        self.part("TP2", 70, 10, "TestPoint_Pad_D1.0mm", "EN", nets=("EN",))
+        self.text("TP2", 70, 12)
+        self.text("TP2  EN", 90, 40)                                   # its legend, elsewhere
+        self.assertEqual(self.labels(), [("labels", "note", "J1")])
+        self.assertEqual(found(self.pads(["GND"]), "test-pad-labels"), [("test-pad-labels", "note", "TP1")])
+        # and it is the reference shown, for the parts whose field is hidden: "J1" alone, and "J2" in its label
+        self.assertEqual([f["text"] for f in self.references()], ["2 soldered parts, each with its reference on the silkscreen"])
+        self.part("J3", 110, 10, "JST_PH", "PORT2")
+        self.text("PORT2", 110, 12)                                    # named, but its reference is printed nowhere
+        self.assertEqual(found(self.references()), [("references", "note", "J3")])
+        kinds = {t["text"]: (t["kind"], t["owner"]) for t in S.silk_texts(self.pcbnew, self.b)}
+        self.assertEqual((kinds["J1"], kinds["J2 PORT1"]), (("reference", "J1"), ("board", None)))
+
     def test_a_value_shown_on_the_other_side_does_not_name_a_surface_mount_part(self):
         F, B = self.pcbnew.F_SilkS, self.pcbnew.B_SilkS
         led = self.part("D1", 10, 10, "LED_0603_1608Metric", "STATUS", back=True, show=("Value",))
@@ -620,6 +654,28 @@ class Board(unittest.TestCase):
         self.assertEqual(found(out), [("fiducials", "note", "front")])
         self.assertIn("lie on one line", out[0]["text"])
 
+    def test_pads_marked_as_fiducials_count_each_where_it_is(self):
+        """A footprint with three marked pads (a frame, a rail) is three fiducials, at the pads and not at its own
+        place; one of the pads too near the edge is found there."""
+        pcbnew = self.pcbnew
+        self.outline()
+        self.part("R1", 30, 20)
+        frame = self.part("M1", 30, 20, "Frame", "x", nets=("", "", ""), lcsc="", board_only=True, no_bom=True, no_pos=True)
+        for p, (x, y) in zip(sorted(frame.Pads(), key=lambda p: p.GetNumber()), ((-25, -15), (25, -15), (-25, 15))):
+            p.SetProperty(pcbnew.PAD_PROP_FIDUCIAL_GLBL)
+            p.SetFPRelativePosition(self.at(x, y))                     # at 5,5 55,5 5,35 on the board
+        out = self.fiducials()
+        self.assertEqual(found(out), [])
+        self.assertEqual(out[0]["text"], "3 on the front, each 4.35 mm or more from the edge")
+        self.assertEqual(sorted(S.fiducials(pcbnew, self.b)["front"]),
+                         [("M1.1", (5.0, 5.0)), ("M1.2", (55.0, 5.0)), ("M1.3", (5.0, 35.0))])
+        next(p for p in frame.Pads() if p.GetNumber() == "2").SetFPRelativePosition(self.at(27, -15))     # 57,5
+        out = self.fiducials()
+        self.assertEqual([(f["item"], f["detail"]) for f in out if f["level"] != "ok"], [("M1.2", "3.00 mm")])
+        # a pad of the part that is not marked is no fiducial, and a marked pad on the back counts for the back
+        self.part("C1", 40, 20, back=True)
+        self.assertEqual(found(self.fiducials())[0], ("fiducials", "note", "back"))
+
     def test_what_a_fiducial_is_and_a_board_without_an_outline(self):
         self.part("R1", 20, 20)
         self.fiducial("FID1", 5, 5)                                          # by its footprint's name
@@ -702,18 +758,31 @@ class Board(unittest.TestCase):
         self.part("J2", 40, 10, "JST_PH", "PORT", lcsc="", no_pos=True)       # soldered by hand: marked so
         self.part("TP1", 50, 10, "TestPoint", "X", lcsc="", no_bom=True, no_pos=True)
         self.part("R3", 60, 10, lcsc="", dnp=True)
-        self.part("LOGO", 70, 10, "Logo", "", lcsc="", board_only=True)
+        self.part("LOGO", 70, 10, "Logo", "", lcsc="", board_only=True, no_bom=True, no_pos=True)
         out, parts = self.lcsc()
         self.assertEqual(found(out), [("lcsc", "error", "J1")])
-        self.assertIn("Exclude from position files", out[0]["text"])
+        self.assertIn("mark it 'Exclude from position files' if it is soldered by hand", out[0]["text"])
         self.assertEqual(parts, {"C25804": (["R1", "R2"], "")})
+        # a board-only footprint the placement rule takes: pcbkit fab exports it when it has a number, so it is
+        # named when it has none, and counted when it has
+        self.part("R8", 80, 10, lcsc="", board_only=True)
+        self.part("R9", 90, 10, lcsc="C25804", board_only=True)
+        out, parts = self.lcsc()
+        self.assertEqual(found(out), [("lcsc", "error", "J1"), ("lcsc", "error", "R8")])
+        self.assertEqual(parts, {"C25804": (["R1", "R2", "R9"], "")})
         self.assertEqual([f["level"] for f in self.lcsc(assembly=False)[0]], ["ok"])      # a bare board places nothing
 
     def test_placed_by_a_field(self):
         a = self.part("R1", 10, 10, lcsc="")
         a.SetField("Assembly", "jlc")
         self.part("J1", 30, 10, "JST_PH", "PORT", lcsc="")             # not the assembler's
-        self.assertEqual(found(self.lcsc("field:Assembly=jlc")[0]), [("lcsc", "error", "R1")])
+        out = self.lcsc("field:Assembly=jlc")[0]
+        self.assertEqual(found(out), [("lcsc", "error", "R1")])
+        # that rule reads no exclusion flag, so the advice is the field
+        self.assertIn("give its Assembly field another value than 'jlc' if it is soldered by hand", out[0]["text"])
+        self.assertNotIn("Exclude from position files", out[0]["text"])
+        a.SetExcludedFromPosFiles(True)
+        self.assertEqual(found(self.lcsc("field:Assembly=jlc")[0]), [("lcsc", "error", "R1")])     # as fab takes it
 
     def test_the_summary_of_pcbkit_fab_names_them(self):
         from pcbkit.release import jlc_fab
@@ -721,6 +790,14 @@ class Board(unittest.TestCase):
         self.part("J10", 30, 10, "JST_PH", "PORT", lcsc="")
         self.part("J2", 40, 10, "JST_PH", "PORT", lcsc="")
         self.assertEqual([fp.GetReference() for fp in jlc_fab.unnumbered(self.b, jlc_fab.selector(None))], ["J2", "J10"])
+        self.part("R7", 50, 10, lcsc="", board_only=True)              # selected, so exported if it had a number
+        self.part("H1", 60, 10, "MountingHole", "M3", kind="npth", lcsc="", board_only=True, no_bom=True, no_pos=True)
+        self.assertEqual([fp.GetReference() for fp in jlc_fab.unnumbered(self.b, jlc_fab.selector(None))],
+                         ["J2", "J10", "R7"])
+        self.assertEqual(jlc_fab.by_hand(None), "mark it 'Exclude from position files' if it is soldered by hand")
+        self.assertEqual(jlc_fab.by_hand("not-excluded"), jlc_fab.by_hand(None))
+        self.assertEqual(jlc_fab.by_hand("field:Assembly=jlc"),
+                         "give its Assembly field another value than 'jlc' if it is soldered by hand")
 
 
 @unittest.skipUnless(kicad.have_pcbnew(), "needs KiCad's Python")

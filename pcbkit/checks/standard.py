@@ -16,11 +16,12 @@ it.
   version-print     error   v${REVISION} (prints vv1.0) and ${CURRENT_DATE} (the plot's day); never waived
   date              note    no ${ISSUE_DATE} on the silkscreen, or a date typed into a text release does not stamp
   title-block       error   neither the board nor its root schematic has a title; a sheet under the root without a
-                            title block, or with one that has no title
+                            title block, or with one that has no title; a sheet file that is not found
   labels            note    a connector (J), jumper (JP), switch (SW), battery holder (BT) or LED with no silkscreen
                             text within label_distance that names it: a board text, or its own value shown; its
-                            reference does not count. The text, the value too, is on the part's side, or on
-                            either side of a through-hole part
+                            reference does not count, as its field or as a board text that says only that.
+                            The text, the value too, is on the part's side, or on either side of a through-hole
+                            part
   test-pads         note    a rail without a test pad: a part TP* or TestPoint*, or a pad marked as a test point
                             (that pad alone, on a part that is something else). The rails are [standard.rails] for
                             the board in pcbkit.toml, else the nets its schematic's power symbols name, ground
@@ -32,14 +33,16 @@ it.
   mounting          note    a mounting hole (every pad unplated, or a MountingHole* footprint) with neither a
                             courtyard nor a rule area over it; a board with no hole at all
   fiducials         note    fewer than three fiducials (a Fiducial* footprint, a reference FID*, or a pad marked as a
-                            global fiducial) on a side the assembler places a part with an LCSC number on; one whose
-                            centre is under 4.35 mm from the board's edge or a cut-out; three or more on one line
+                            global fiducial, each pad counted where it is) on a side the assembler places a part with
+                            an LCSC number on; one whose centre is under 4.35 mm from the board's edge or a cut-out;
+                            three or more on one line
   references        note    a soldered part (it has pads and is in the BOM; not DNP, a test pad, a fiducial, a hole
-                            or a net tie) whose reference is not shown on the silkscreen, as its field or as a text
-                            of the footprint that says ${REFERENCE}; one finding for the board when more than half
-                            of them are left off
+                            or a net tie) whose reference is not shown on the silkscreen: as its field, as a text
+                            of the footprint that says ${REFERENCE}, or in a board text that names it; one finding
+                            for the board when more than half of them are left off
   lcsc              error   a part the assembler places ([release] placed), not DNP, with no LCSC number: `pcbkit fab`
-                            leaves it out of the BOM and the placement file
+                            leaves it out of the BOM and the placement file. A board-only footprint counts when the
+                            placement rule takes it, as fab exports one that has a number
   extended          note    a placed JLC Extended part (konnect's parts cache) that BOM.md does not name
 
 and, as lines to look at, what only a person can check: the board's name and its author, voltages and polarity,
@@ -192,6 +195,9 @@ def title_findings(pcb_path):
     place, _, missing = freeze.sheets(root)
     base = os.path.dirname(os.path.abspath(pcb_path))
     sheets = sorted(p for p in place if os.path.realpath(p) != os.path.realpath(root))
+    for where, name in missing:        # named by a sheet, and not there: nothing of it is read, its title neither
+        out.append(finding("title-block", "error", "a sheet file that is not found, so its title block and what is "
+                           "under it are not read", freeze._unq(name), f"named in {where}"))
     for p in sheets:
         text = _read(p)
         if not V.title_block(text):
@@ -382,7 +388,8 @@ def silk_texts(pcbnew, board):
     """Every text the silkscreen prints: dicts with box (mm), text, side ("F" or "B"), kind (board, reference, value,
     field, or text for one drawn in a footprint) and owner (the footprint's reference, None for a board text). A
     footprint's own text that says ${REFERENCE} prints its reference, with the field itself hidden or not, and is a
-    reference."""
+    reference. So is a board text that says exactly a footprint's reference ("J1", drawn beside it by hand or by an
+    importer): it is that part's reference, and the name of nothing."""
     side = {pcbnew.F_SilkS: "F", pcbnew.B_SilkS: "B"}
     out = []
 
@@ -399,6 +406,10 @@ def silk_texts(pcbnew, board):
         for g in fp.GraphicalItems():
             if g.GetClass() in ("PCB_TEXT", "PCB_TEXTBOX"):
                 add(g, "reference" if "${REFERENCE}" in g.GetText() else "text", ref)
+    refs = {fp.GetReference() for fp in board.GetFootprints()} - {""}
+    for t in out:
+        if t["kind"] == "board" and t["text"].strip() in refs:
+            t.update(kind="reference", owner=t["text"].strip())
     return out
 
 
@@ -583,6 +594,30 @@ def is_fiducial(pcbnew, fp):
         any(p.GetProperty() == pcbnew.PAD_PROP_FIDUCIAL_GLBL for p in fp.Pads())
 
 
+def fiducials(pcbnew, board):
+    """The board's fiducials by side, {"front": [(name, (x, y) in mm)], "back": [...]}: each pad marked as a global
+    fiducial, where the pad is and on the side its copper is; and of a fiducial footprint without such a mark
+    (Fiducial*, FID*) each pad likewise, or the footprint's own place when it has none."""
+    def mm(p):
+        return (pcbnew.ToMM(p.x), pcbnew.ToMM(p.y))
+    out = {"front": [], "back": []}
+    for fp in board.GetFootprints():
+        ref = fp.GetReference() if fp.GetReference() and "*" not in fp.GetReference() else ""
+        marked = [p for p in fp.Pads() if p.GetProperty() == pcbnew.PAD_PROP_FIDUCIAL_GLBL]
+        named = _name(fp).startswith("Fiducial") or _prefix(fp.GetReference()) == "FID"
+        pads = marked or (list(fp.Pads()) if named else [])
+        for p in pads:
+            at = mm(p.GetPosition())
+            name = (ref + (f".{p.GetNumber()}" if len(pads) > 1 and p.GetNumber() else "")) or f"at {at[0]:.1f}, {at[1]:.1f}"
+            for side, layer in (("front", pcbnew.F_Cu), ("back", pcbnew.B_Cu)):
+                if p.IsOnLayer(layer):
+                    out[side].append((name, at))
+        if named and not pads:
+            at = mm(fp.GetPosition())
+            out["back" if fp.IsFlipped() else "front"].append((ref or f"at {at[0]:.1f}, {at[1]:.1f}", at))
+    return out
+
+
 def _to_segment(p, a, b):
     dx, dy = b[0] - a[0], b[1] - a[1]
     t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
@@ -623,16 +658,10 @@ def fiducial_findings(pcbnew, board, placed, assembly=True):
     if not assembly:
         return [ok("fiducials", "a bare board: nothing is placed, so none is needed")]
     is_placed = jlc_fab.selector(placed)
-    sides, fids = collections.Counter(), {"front": [], "back": []}
+    sides, fids = collections.Counter(), fiducials(pcbnew, board)
     for fp in board.GetFootprints():
-        side = "back" if fp.IsFlipped() else "front"
-        if is_fiducial(pcbnew, fp):
-            at = fp.GetPosition()
-            at = (pcbnew.ToMM(at.x), pcbnew.ToMM(at.y))
-            ref = fp.GetReference()
-            fids[side].append((ref if ref and "*" not in ref else f"at {at[0]:.1f}, {at[1]:.1f}", at))
-        elif not fp.IsDNP() and not fp.IsBoardOnly() and is_placed(fp) and jlc_fab.field(fp, "LCSC"):
-            sides[side] += 1               # one without a number is in no placement file (the lcsc check says so)
+        if not is_fiducial(pcbnew, fp) and not fp.IsDNP() and is_placed(fp) and jlc_fab.field(fp, "LCSC"):
+            sides["back" if fp.IsFlipped() else "front"] += 1      # one without a number is in no placement file
     if not sides:
         return [ok("fiducials", "no part is placed by the assembler, so none is needed")]
     out, distance = [], edge_distance(pcbnew, board)
@@ -660,8 +689,9 @@ def fiducial_findings(pcbnew, board, placed, assembly=True):
 
 def reference_findings(pcbnew, board, texts):
     """Every soldered part's reference on the silkscreen: a part with pads that is in the BOM and fitted, and is not a
-    test pad, a fiducial, a mounting hole or a net tie."""
-    shown = {t["owner"] for t in texts if t["kind"] == "reference"}
+    test pad, a fiducial, a mounting hole or a net tie. The reference is printed by its field, by a text of the
+    footprint that says ${REFERENCE}, or by a board text that names it ("J1", "JP1 USB->BUS")."""
+    shown = {t["owner"] for t in texts if t["kind"] == "reference"} | legend_names(texts)
     parts = [fp for fp in board.GetFootprints()
              if list(fp.Pads()) and not fp.IsBoardOnly() and not fp.IsDNP() and not fp.IsExcludedFromBOM()
              and not fp.IsNetTie() and not is_test_pad(pcbnew, fp) and not is_fiducial(pcbnew, fp)
@@ -688,7 +718,7 @@ def lcsc_findings(pcbnew, board, placed, assembly=True):
     is_placed = jlc_fab.selector(placed)
     parts, n = {}, 0
     for fp in sorted(board.GetFootprints(), key=lambda f: _natural(f.GetReference())):
-        if fp.IsDNP() or fp.IsBoardOnly() or not is_placed(fp):
+        if fp.IsDNP() or not is_placed(fp):        # as pcbkit fab takes them, a board-only footprint too
             continue
         lcsc = jlc_fab.field(fp, "LCSC")
         if lcsc:
@@ -696,8 +726,7 @@ def lcsc_findings(pcbnew, board, placed, assembly=True):
             refs, _ = parts.setdefault(lcsc, ([], jlc_fab.field(fp, "MPN")))
             refs.append(fp.GetReference())
     out = [finding("lcsc", "error", "placed, but no LCSC number, so pcbkit fab leaves it out of the BOM and placement "
-                   "file (give it one, or mark it 'Exclude from position files' if soldered by hand)",
-                   fp.GetReference(), fp.GetValue())
+                   f"file (give it one, or {jlc_fab.by_hand(placed)})", fp.GetReference(), fp.GetValue())
            for fp in jlc_fab.unnumbered(board, is_placed)]
     if not out:
         out.append(ok("lcsc", f"{n} placed part{'s' * (n != 1)}, each with an LCSC number"))

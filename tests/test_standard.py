@@ -130,6 +130,19 @@ class VersionAndDate(unittest.TestCase):
         out = S.version_findings(board("Demo v2.0", "made for v1.0 cases", rev="v2.0"))
         self.assertEqual(found(out, "version"), [("version", "note", ""), ("version", "note", "")])   # restamped, and not
 
+    def test_a_text_box_that_says_the_same_as_a_restamped_text_is_still_never_updated(self):
+        """The same words in a board text and in a text box (or a footprint's text): release rewrites the first only,
+        so the second would read the old version and date beside the new ones."""
+        for twin in (text_box("Demo v1.0 2026-11-01"), footprint_text("Demo v1.0 2026-11-01")):
+            out = S.version_findings(board("Demo v1.0 2026-11-01", more=twin))
+            self.assertEqual(found(out), [("version", "note", ""), ("version", "note", ""),
+                                          ("date", "note", "'Demo v1.0 2026-11-01'")], twin)
+            self.assertIn("release restamps a board text that reads v1.0", out[0]["text"])
+            self.assertIn("a version typed into the silkscreen that no release updates ('Demo v1.0 2026-11-01')", out[1]["text"])
+        # two board texts that say the same are both rewritten
+        self.assertEqual(found(S.version_findings(board("Demo v1.0 2026-11-01", "Demo v1.0 2026-11-01"))),
+                         [("version", "note", "")])
+
     def test_a_date_beside_a_version_no_release_updates_is_never_updated_either(self):
         out = S.version_findings(board("${REVISION}", rev="v2.0", more=text_box("v2.0 2026-11-01")))
         self.assertEqual(found(out), [("version", "note", ""), ("date", "note", "'v2.0 2026-11-01'")])

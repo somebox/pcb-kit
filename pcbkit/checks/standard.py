@@ -132,21 +132,25 @@ def version_findings(text, last_label=""):
     label, which release looks for in the texts when the title block's rev is not a label itself."""
     rev = V.title_rev(text)
     items = V.plotted_items(text)
-    silk = [s for s, layer, _ in items if layer.endswith(".SilkS")]
+    silk = [(s, kind) for s, layer, kind in items if layer.endswith(".SilkS")]      # each text with what it is
     wrong, _ = V.label_problems(text, rev, [(s, layer) for s, layer, _ in items])
     out = [finding("version-print", "error", w) for w in wrong]
-    with_rev = [s for s in silk if "${REVISION}" in s]
+    with_rev = [s for s, _ in silk if "${REVISION}" in s]
     right = [s for s in with_rev if not re.search(r"(?i)v\$\{REVISION\}", s)]
     # What release rewrites (versions.stamp): a board text that reads the label it looks for. A version typed anywhere
-    # else stays as it is through every release: another version, a text box, a footprint's text or field.
+    # else stays as it is through every release: another version, a text box, a footprint's text or field. Each item
+    # is judged as what it is: a text box that says the same as a board text is still not rewritten.
     old = V.stamp_label(rev, last_label)
     reads_old = rf"(?<![\w.]){re.escape(old)}(?![\w.])" if old else None
     reads_rev = rf"(?<![\w.]){re.escape(rev)}(?![\w.])" if rev.strip() else None
-    restamped = [s for s, layer, kind in items if kind == "gr_text" and layer.endswith(".SilkS") and reads_old
-                 and re.search(reads_old, s)]
-    typed = [s for s, layer, kind in items if layer.endswith(".SilkS")
-             and (re.search(V.LABEL_IN_TEXT, s) or (reads_rev and re.search(reads_rev, s)))]
-    stuck = [s for s in typed if s not in restamped]
+
+    def restamps(s, kind):
+        return kind == "gr_text" and bool(reads_old and re.search(reads_old, s))
+
+    def has_version(s):
+        return bool(re.search(V.LABEL_IN_TEXT, s) or (reads_rev and re.search(reads_rev, s)))
+    restamped = [s for s, kind in silk if restamps(s, kind)]
+    stuck = [s for s, kind in silk if has_version(s) and not restamps(s, kind)]
     never = ("release restamps only a board text that reads " + (old or "the label it looks for, and this board has "
              "none yet") + ", not another version, a text box or a footprint's text: write ${REVISION}")
     if right:
@@ -167,17 +171,16 @@ def version_findings(text, last_label=""):
         out.append(finding("version", "note", "a version typed into the silkscreen that no release updates ("
                            + ", ".join(V._quote(s) for s in stuck[:3]) + "): " + never))
 
-    def stamped(s):                    # a text release rewrites, and its ISO dates with it
-        return s in restamped
-    dated = [s for s in silk if "${ISSUE_DATE}" in s]
-    loose = [s for s in silk if TYPED_DATE.search(s) and "${ISSUE_DATE}" not in s
-             and not (stamped(s) and re.search(V.DATE, s))]
+    def stamped(s, kind):              # a text release rewrites, and its ISO dates with it
+        return restamps(s, kind) and bool(re.search(V.DATE, s))
+    dated = [s for s, _ in silk if "${ISSUE_DATE}" in s]
+    loose = [s for s, kind in silk if TYPED_DATE.search(s) and "${ISSUE_DATE}" not in s and not stamped(s, kind)]
     for s in loose:
         out.append(finding("date", "note", "a date typed into the silkscreen, which release does not update: write "
                            "${ISSUE_DATE}", V._quote(s)))
     if dated:
         out.append(ok("date", "the silkscreen prints the date: " + ", ".join(V._quote(s) for s in dated[:3])))
-    elif not loose and not any(stamped(s) and re.search(V.DATE, s) for s in silk):
+    elif not loose and not any(stamped(s, kind) for s, kind in silk):
         out.append(finding("date", "note", "no date on the silkscreen: add ${ISSUE_DATE}, the release's date"))
     return out
 

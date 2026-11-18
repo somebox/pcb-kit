@@ -13,6 +13,9 @@ Frameworks, PlugIns, Resources and SharedSupport; its DRC reports and renders ma
 10.0.6). There is one copy for each KiCad and version, made on first use and never changed, so a KICAD_CLI that a
 process holds stays valid while others make copies of another KiCad or a newer version; a copy whose KiCad has
 changed since is removed. PCBKIT_KICAD_DOCK=1 runs KiCad's own kicad-cli.
+
+First use is the first call of kicad_cli() (or the first read of KICAD_CLI, which is that call), not the loading of
+this module: a command that only prints its help, or only reads, starts no process and writes no file.
 """
 import hashlib
 import json
@@ -117,15 +120,33 @@ if "PCBKIT_KICAD_APP" in os.environ:
     # every other child would inherit the gone path
     os.environ["PCBKIT_KICAD_APP"] = KICAD_APP
 if sys.platform == "darwin":
-    KICAD_CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
     KICAD_PYTHON = os.path.join(KICAD_APP, "Contents", "Frameworks", "Python.framework", "Versions", "Current", "bin",
                                 "python3")
     KICAD_SYMBOLS = os.path.join(KICAD_APP, "Contents", "SharedSupport", "symbols")
 else:
     # KiCad's Linux packages and its Docker images (kicad/kicad): kicad-cli on PATH, pcbnew in the system Python
-    KICAD_CLI = shutil.which("kicad-cli") or "kicad-cli"
     KICAD_PYTHON = "/usr/bin/python3"
     KICAD_SYMBOLS = "/usr/share/kicad/symbols"
+_CLI = None
+
+
+def kicad_cli():
+    """kicad-cli's path: on macOS in KiCad's background copy, which the first call makes if there is none yet; on
+    Linux the one on PATH. Found once a process."""
+    global _CLI
+    if _CLI is None:
+        if sys.platform == "darwin":
+            _CLI = os.path.join(background_app(KICAD_APP), "Contents", "MacOS", "kicad-cli")
+        else:
+            _CLI = shutil.which("kicad-cli") or "kicad-cli"
+    return _CLI
+
+
+def __getattr__(name):
+    """pcbkit.kicad.KICAD_CLI, as project scripts take it: kicad_cli(), found on the first read."""
+    if name == "KICAD_CLI":
+        return kicad_cli()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def have_pcbnew():
@@ -153,7 +174,7 @@ def ensure_pcbnew():
 
 def cli(*args, check=True, capture=True):
     """Run kicad-cli. Returns the CompletedProcess; raises on failure when check is set."""
-    return subprocess.run([KICAD_CLI, *args], check=check, capture_output=capture, text=True)
+    return subprocess.run([kicad_cli(), *args], check=check, capture_output=capture, text=True)
 
 
 def cli_report(out, *args):

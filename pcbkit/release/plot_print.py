@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-from ..kicad import KICAD_CLI, ensure_pcbnew
+from ..kicad import ensure_pcbnew, kicad_cli
 
 
 def plot(src, out, hide_refs=None):
@@ -44,7 +44,7 @@ def plot(src, out, hide_refs=None):
             copy = os.path.join(tmp, side, os.path.basename(src))       # keeps the real name in the title block
             pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, copy, b)
             pdf = os.path.join(tmp, f"{side}.pdf")
-            subprocess.run([KICAD_CLI, "pcb", "export", "pdf", "--mode-single", "--layers",
+            subprocess.run([kicad_cli(), "pcb", "export", "pdf", "--mode-single", "--layers",
                             f"Edge.Cuts,{side}.Fab,{side}.SilkS,{side}.Mask", "--sketch-pads-on-fab-layers",
                             "--exclude-value", "--include-border-title", "--scale", "1", *extra, "-o", pdf, copy],
                            check=True, capture_output=True)

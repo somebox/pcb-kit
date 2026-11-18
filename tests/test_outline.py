@@ -99,6 +99,21 @@ class Marks(unittest.TestCase):
         self.assertEqual(uuids(text), ["mine-1", "silk-1", "mine-2", "mine-3", "g-2"])
         sexp.parse(text)               # still one balanced form
 
+    def test_a_group_made_inside_the_group_goes_with_it(self):
+        """Two of the outline's lines grouped again in KiCad, and one of those once more: all of it is the command's."""
+        nested = BOARD.replace('(members "a-1" "a-2" "a-3" "a-4" "a-5" "a-6"))',
+                               '(members "g-3" "a-3" "a-4" "a-5" "a-6"))\n'
+                               '\t(group "" (uuid "g-3") (members "a-1" "g-4"))\n'
+                               '\t(group "inner" (uuid "g-4") (members "a-2"))')
+        self.assertNotEqual(nested, BOARD)
+        own = mech.own_items(nested)
+        self.assertEqual(sorted(mech.own_uuid(nested[s:e]) for s, e in own),
+                         ["a-1", "a-2", "a-3", "a-4", "a-5", "a-6", "g-1", "g-3", "g-4"])
+        n, text = self.strip(nested)
+        self.assertEqual(n, 6)                    # the same six items
+        self.assertEqual(uuids(text), ["mine-1", "silk-1", "mine-2", "mine-3", "g-2"])     # somebody's group stays
+        sexp.parse(text)
+
     def test_an_unmarked_outline_stops_the_run_and_take_over_removes_as_before(self):
         unmarked = BOARD.replace('"pcbkit:outline"', '"somebody else"')
         with self.assertRaises(SystemExit) as stop:
@@ -297,6 +312,25 @@ class Outline(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.outline(bad)
         self.assertEqual(self.read(), before)
+
+    def test_a_rerun_after_part_of_the_outline_was_grouped_again_in_kicad(self):
+        pcbnew = self.pcbnew
+        self.outline(SPEC)
+        b = pcbnew.LoadBoard(self.path)
+        (group,) = [g for g in b.Groups() if g.GetName() == mech.GROUP]
+        edges = [i for i in group.GetItems() if i.GetClass() == "PCB_SHAPE" and i.GetLayer() == pcbnew.Edge_Cuts][:3]
+        inner = pcbnew.PCB_GROUP(b)
+        for item in edges:
+            group.RemoveItem(item)
+            inner.AddItem(item)
+        b.Add(inner)
+        group.AddItem(inner)
+        kicad.save_board(b, self.path)
+        self.assertEqual(sum(v for k, v in self.counts().items() if k.startswith("group")), 2)
+        self.outline(SPEC)
+        n = self.counts()
+        self.assertEqual((n["gr_line Edge.Cuts"], n["gr_arc Edge.Cuts"]), (4, 4))      # one outline, not one and a part
+        self.assertEqual({k: v for k, v in n.items() if k.startswith("group")}, {"group pcbkit:outline": 1})
 
     def test_the_groups_items_load_as_one_group_in_kicad(self):
         self.outline(SPEC)

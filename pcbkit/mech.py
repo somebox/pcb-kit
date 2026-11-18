@@ -174,17 +174,27 @@ def own_uuid(block):
 
 def own_items(text):
     """What earlier runs marked as theirs: the spans (start, end) of every pcbkit:outline group and of the top-level
-    items that are its members; None when the board has no such group."""
+    items that are its members, the members of a group made inside it (items of the outline grouped again in
+    KiCad) among them; None when the board has no such group."""
     blocks = top_level_blocks(text)
-    members, spans = set(), []
+    groups, members, spans = {}, set(), []           # groups: a group's own uuid -> (its span, its members)
     for s, e, head in blocks:
         if head == "group":
             node = sexp.parse(text[s:e])
+            inside = {str(m) for m in (sexp.first(node, "members") or [])[1:]}
+            groups[own_uuid(text[s:e])] = ((s, e), inside)
             if len(node) > 1 and str(node[1]) == GROUP:
-                members |= {str(m) for m in (sexp.first(node, "members") or [])[1:]}
+                members |= inside
                 spans.append((s, e))
     if not spans:
         return None
+    todo = [m for m in members if m in groups]
+    while todo:                                      # a member that is a group: it goes, with what is in it
+        span, inside = groups.pop(todo.pop())
+        if span not in spans:
+            spans.append(span)
+        todo += [m for m in inside - members if m in groups]
+        members |= inside
     if members:
         named = re.compile("|".join(re.escape(m) for m in members))
         spans += [(s, e) for s, e, head in blocks
@@ -263,7 +273,7 @@ def strip_template(board_path, take_over=False):
         i = e
     out.append(text[i:])
     path.write_text("".join(out), encoding="utf-8")
-    return len(drop) - sum(1 for s, e in drop if text.startswith("(group", s))
+    return len(drop) - sum(1 for s, e in drop if text.startswith("(group", s))     # the groups themselves aside
 
 
 def circle_poly(x, y, r, n=48):
@@ -463,9 +473,9 @@ def fit_check_pdf(board_path, out, parts=False):
     notes, standoff rings and the holes at actual size. parts=True adds the placed parts' body outlines and
     references (F.Fab, F.Silkscreen), for checking a placement against the enclosure."""
     import subprocess
-    from .kicad import KICAD_CLI
+    from .kicad import kicad_cli
     layers = "User.1,Dwgs.User,Cmts.User,B.CrtYd,Edge.Cuts" + (",F.Fab,F.Silkscreen" if parts else "")
-    r = subprocess.run([KICAD_CLI, "pcb", "export", "pdf", "--layers", layers, "--mode-single", "--drill-shape-opt", "2",
+    r = subprocess.run([kicad_cli(), "pcb", "export", "pdf", "--layers", layers, "--mode-single", "--drill-shape-opt", "2",
                         "--scale", "1", "--black-and-white", "--include-border-title", "-o", str(out), str(board_path)], capture_output=True, text=True)
     if r.returncode:
         raise SystemExit("fit-check export failed: " + r.stderr[-500:])

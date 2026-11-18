@@ -482,6 +482,22 @@ class Board(unittest.TestCase):
         self.assertEqual(found(out), [])
         self.assertEqual(out[0]["text"], "a test pad on each of 3 rails (GND, +3V3, VIN; pcbkit.toml's [standard.rails])")
 
+    def test_a_pad_marked_as_a_test_point_is_that_pad_alone(self):
+        """One pad of a connector marked as a test point: its net can be probed there, the connector's other nets
+        cannot, and the connector is still a connector, with its label and its reference to show."""
+        j = self.part("J1", 10, 10, "PinHeader_1x02", "PWR", kind="tht", nets=("VIN", "GND"))
+        next(p for p in j.Pads() if p.GetNumber() == "1").SetProperty(self.pcbnew.PAD_PROP_TESTPOINT)
+        self.part("U1", 30, 10, "SOT-23", "LDO", nets=("VIN", "GND", "+3V3"))
+        self.assertEqual(dict(S.probe_nets(self.pcbnew, self.b)), {"VIN": ["J1.1"]})
+        out = self.pads(["VIN", "GND"])
+        self.assertEqual(found(out), [("test-pads", "note", "GND")])
+        self.assertFalse(S.is_test_pad(self.pcbnew, j))
+        self.assertEqual(self.labels(), [("labels", "note", "J1")])
+        self.assertTrue(self.references()[0]["text"].startswith("2 of 2 soldered parts"))    # J1 is one of them
+        self.part("TP1", 50, 10, "TestPoint_Pad_D1.0mm", "GND", nets=("GND",), show=("Value",))
+        self.assertEqual(found(self.pads(["VIN", "GND"])), [])
+        self.assertEqual(dict(S.probe_nets(self.pcbnew, self.b)), {"VIN": ["J1.1"], "GND": ["TP1"]})
+
     def test_no_rails_known_is_said(self):
         self.part("TP1", 30, 10, "TestPoint_Pad_D1.0mm", "SYS", nets=("SYS",), show=("Value",))
         out = self.pads([], "the schematic names no net with a power symbol")
@@ -642,6 +658,30 @@ class Board(unittest.TestCase):
         out = self.references()
         self.assertEqual([(f["level"], f["text"]) for f in out],
                          [("ok", "8 soldered parts, each with its reference on the silkscreen")])
+
+    def fp_text(self, fp, s, layer=None):
+        """A text drawn in the footprint, as a library footprint has its ${REFERENCE}."""
+        pcbnew = self.pcbnew
+        t = pcbnew.PCB_TEXT(fp)
+        t.SetText(s)
+        t.SetLayer(pcbnew.F_SilkS if layer is None else layer)
+        fp.Add(t)
+        return t
+
+    def test_a_reference_printed_through_the_variable_is_a_reference(self):
+        """A footprint may hide its Reference field and print ${REFERENCE} in a text of its own (pcbkit print's
+        --hide-refs hides both)."""
+        self.fp_text(self.part("R1", 10, 10), "${REFERENCE}")
+        self.fp_text(self.part("R2", 20, 10), "${REFERENCE}", self.pcbnew.F_Fab)      # on the fab layer: not printed
+        self.fp_text(self.part("R3", 30, 10), "K")                                     # a mark is no reference
+        for i in range(4, 8):
+            self.part("R%d" % i, 10 * i, 30, show=("Reference",))
+        self.assertEqual(found(self.references()), [("references", "note", "R2"), ("references", "note", "R3")])
+        # and it is the shown reference a legend names a test pad by
+        self.fp_text(self.part("TP1", 80, 10, "TestPoint_Pad_D1.0mm", "RUN", nets=("RUN",)), "${REFERENCE}")
+        self.part("TP2", 90, 10, "TestPoint_Pad_D1.0mm", "EN", nets=("EN",))
+        self.text("TP1 RUN  TP2 EN", 80, 40)
+        self.assertEqual(found(self.pads(["GND"]), "test-pad-labels"), [("test-pad-labels", "note", "TP2")])
 
     def test_references_left_off_most_of_a_board_are_one_finding(self):
         for i in range(1, 6):

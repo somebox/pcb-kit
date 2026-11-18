@@ -55,7 +55,7 @@ import uuid
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .kicad import KICAD_CLI, KICAD_PYTHON, KICAD_SYMBOLS, ensure_pcbnew, quiet
+from .kicad import KICAD_PYTHON, KICAD_SYMBOLS, ensure_pcbnew, kicad_cli, quiet
 
 POWER_LIB = Path(KICAD_SYMBOLS) / "power.kicad_sym"
 U = 0.254  # EasyEDA schematic unit (10 mil) in mm
@@ -1084,7 +1084,7 @@ def export_footprints(pcb_path, items, libdir, kept=(), fix=True):
 def read_netlist(sch_path):
     with tempfile.TemporaryDirectory() as t:
         out = Path(t) / "n.net"
-        subprocess.run([KICAD_CLI, "sch", "export", "netlist", "--format", "kicadsexpr", "-o", str(out), str(sch_path)],
+        subprocess.run([kicad_cli(), "sch", "export", "netlist", "--format", "kicadsexpr", "-o", str(out), str(sch_path)],
                        check=True, capture_output=True)
         text = out.read_text()
     pins = {}
@@ -1889,7 +1889,7 @@ def convert(sch_json, pcb_json, out_dir, name, lib_dir=None, nick=None, meta=Non
     root, subs, links = write_schematic(sch, out_dir, sym_of, defs, power, name, nick, meta, set(shown))
     write_project(out_dir, name, root, subs, nick, lib_rel)
     pcb_path = out_dir / f"{name}.kicad_pcb"
-    r = subprocess.run([KICAD_CLI, "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
+    r = subprocess.run([kicad_cli(), "pcb", "import", "-o", str(pcb_path), str(pcb_json)], capture_output=True, text=True)
     if r.returncode or not pcb_path.exists():
         sys.exit("kicad-cli pcb import failed:\n" + quiet(r.stdout + r.stderr)[-800:])
     # KiCad's importer points each model at a STEP file it doesn't write: EasyEDA's meshes, converted to VRML

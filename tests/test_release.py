@@ -1255,12 +1255,20 @@ class Release(unittest.TestCase):
         out = release(root)
         self.assertIn("checked: no silkscreen text prints the version", out)
         self.assertIn("no title block: sheets/power.kicad_sch", out)
+        # nothing after the checks runs, release's own refusal of v${REVISION} neither: it is said here, once
+        edit(root, silk_text("v${REVISION} ${CURRENT_DATE}"))
+        out = release(root)
+        self.assertIn("checked: F.SilkS text 'v${REVISION} ${CURRENT_DATE}' would print vv", out)
+        self.assertEqual(out.count("would print vv"), 1)
+        self.assertEqual(out.count("prints the day the Gerbers are made"), 1)
+        self.assertIn("no title block: sheets/power.kicad_sch", out)
+        self.assertEqual(entries(root)[-1]["label"], "v1.0")           # and nothing is released
 
     def test_the_default_profile_checks_the_standard(self):
         from pcbkit.config import DEFAULT_PROFILE
         self.assertEqual(DEFAULT_PROFILE["checks"], ["erc", "drc", "parity", "standard"])
         from pcbkit.release import release as R
-        self.assertEqual(R.standard("no.kicad_pcb", dict(checks=["erc", "drc"])), dict(errors=[], said=""))
+        self.assertEqual(R.standard("no.kicad_pcb", dict(checks=["erc", "drc"])), dict(errors=[], prints=[], said=""))
 
     def test_the_fab_fingerprint_is_of_the_board_as_stamped(self):
         """A board without a title takes the schematic's when stamped; ${TITLE} then prints it, so the fab

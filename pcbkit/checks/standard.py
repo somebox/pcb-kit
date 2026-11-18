@@ -21,9 +21,10 @@ it.
                             text within label_distance that names it: a board text, or its own value shown; its
                             reference does not count. The text, the value too, is on the part's side, or on
                             either side of a through-hole part
-  test-pads         note    a rail without a test pad (a footprint TP*, TestPoint*, or with a test-point pad). The
-                            rails are [standard.rails] for the board in pcbkit.toml, else the nets its schematic's
-                            power symbols name, ground among them
+  test-pads         note    a rail without a test pad: a part TP* or TestPoint*, or a pad marked as a test point
+                            (that pad alone, on a part that is something else). The rails are [standard.rails] for
+                            the board in pcbkit.toml, else the nets its schematic's power symbols name, ground
+                            among them
   test-pad-labels   note    a test pad with no such text, whose value is not shown and whose reference no board
                             text names (a legend: "TP1 RUN", "GND TP8,12,13"), each on the pad's side as above. A
                             number drawn as a polygon beside the pad is not a text: a board with such badges waives
@@ -34,8 +35,9 @@ it.
                             global fiducial) on a side the assembler places a part with an LCSC number on; one whose
                             centre is under 4.35 mm from the board's edge or a cut-out; three or more on one line
   references        note    a soldered part (it has pads and is in the BOM; not DNP, a test pad, a fiducial, a hole
-                            or a net tie) whose reference is not shown on the silkscreen; one finding for the board
-                            when more than half of them are left off
+                            or a net tie) whose reference is not shown on the silkscreen, as its field or as a text
+                            of the footprint that says ${REFERENCE}; one finding for the board when more than half
+                            of them are left off
   lcsc              error   a part the assembler places ([release] placed), not DNP, with no LCSC number: `pcbkit fab`
                             leaves it out of the BOM and the placement file
   extended          note    a placed JLC Extended part (konnect's parts cache) that BOM.md does not name
@@ -378,7 +380,9 @@ def _text_box(pcbnew, t):
 
 def silk_texts(pcbnew, board):
     """Every text the silkscreen prints: dicts with box (mm), text, side ("F" or "B"), kind (board, reference, value,
-    field, or text for one drawn in a footprint) and owner (the footprint's reference, None for a board text)."""
+    field, or text for one drawn in a footprint) and owner (the footprint's reference, None for a board text). A
+    footprint's own text that says ${REFERENCE} prints its reference, with the field itself hidden or not, and is a
+    reference."""
     side = {pcbnew.F_SilkS: "F", pcbnew.B_SilkS: "B"}
     out = []
 
@@ -394,7 +398,7 @@ def silk_texts(pcbnew, board):
             add(f, "reference" if f.IsReference() else "value" if f.IsValue() else "field", ref)
         for g in fp.GraphicalItems():
             if g.GetClass() in ("PCB_TEXT", "PCB_TEXTBOX"):
-                add(g, "text", ref)
+                add(g, "reference" if "${REFERENCE}" in g.GetText() else "text", ref)
     return out
 
 
@@ -432,8 +436,25 @@ def labelled_kind(fp):
 
 
 def is_test_pad(pcbnew, fp):
+    """A part made to be probed: a reference TP*, a TestPoint* footprint, or one whose every pad is marked as a test
+    point. A connector with one pad so marked is a connector, and that pad a test point (probe_nets)."""
+    pads = list(fp.Pads())
     return _prefix(fp.GetReference()) == "TP" or _name(fp).startswith("TestPoint") or \
-        any(p.GetProperty() == pcbnew.PAD_PROP_TESTPOINT for p in fp.Pads())
+        bool(pads) and all(p.GetProperty() == pcbnew.PAD_PROP_TESTPOINT for p in pads)
+
+
+def probe_nets(pcbnew, board):
+    """Where each net can be probed: {net: the test pads on it, and the pads of other parts marked as test points
+    ("J1.2")}. A test pad counts with every pad it has; another part only with the pads that are marked."""
+    nets = collections.defaultdict(list)
+    for fp in board.GetFootprints():
+        whole = is_test_pad(pcbnew, fp)
+        for p in fp.Pads():
+            if p.GetNetname() and (whole or p.GetProperty() == pcbnew.PAD_PROP_TESTPOINT):
+                name = fp.GetReference() if whole else f"{fp.GetReference()}.{p.GetNumber()}"
+                if name not in nets[p.GetNetname()]:
+                    nets[p.GetNetname()].append(name)
+    return nets
 
 
 def is_hole(pcbnew, fp):
@@ -502,14 +523,11 @@ def test_pad_findings(pcbnew, board, texts, distance, rails, rails_from):
     that list came from, for the report."""
     out, pads_on = [], collections.Counter()
     tps = [fp for fp in board.GetFootprints() if is_test_pad(pcbnew, fp)]
-    nets = collections.defaultdict(list)       # net -> the test pads on it
+    nets = probe_nets(pcbnew, board)           # net -> the test pads and marked pads on it
     for fp in board.GetFootprints():
         for p in fp.Pads():
             if p.GetNetname():
                 pads_on[p.GetNetname()] += 1
-    for fp in tps:
-        for net in sorted({p.GetNetname() for p in fp.Pads() if p.GetNetname()}):
-            nets[net].append(fp.GetReference())
     on_board = [r for r in rails if pads_on[r]]
     if not rails:
         out.append(finding("test-pads", "note", "no rails known, so none is checked for a test pad: "

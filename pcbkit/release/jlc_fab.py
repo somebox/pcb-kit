@@ -63,7 +63,7 @@ import subprocess
 import tempfile
 import zipfile
 
-from ..kicad import KICAD_CLI, data_path, ensure_pcbnew
+from ..kicad import data_path, ensure_pcbnew, kicad_cli
 
 DESIGNATOR_MAX = 2000                  # JLC's BOM limit is 2048 characters per Designator cell
 
@@ -102,7 +102,7 @@ def gerbers(src, out, name, n_cu, extra_layers=(), keep_silk_in_mask=False):
     subtract = [] if keep_silk_in_mask else ["--subtract-soldermask"]
     tmp = tempfile.mkdtemp()
     try:
-        run = lambda *a: subprocess.run([KICAD_CLI, "pcb", "export", *a], check=True, capture_output=True)
+        run = lambda *a: subprocess.run([kicad_cli(), "pcb", "export", *a], check=True, capture_output=True)
         run("gerbers", "--layers", ",".join(layers), *subtract, "--no-protel-ext", "--use-drill-file-origin",
             "--check-zones", "-o", tmp + "/", src)
         run("drill", "--format", "excellon", "--excellon-units", "mm", "--excellon-separate-th", "--drill-origin", "plot",

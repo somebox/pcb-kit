@@ -5,11 +5,18 @@
 `pcbkit info`, `link`, `setup-kikit` and `setup-router` used to be handed to their functions before any argument
 was read, so asking for help reinstalled KiKit or the router from the network, or rewrote the pcbkit.pth files. Each
 case here calls the CLI with everything that starts a process, removes, creates or writes a file made to fail.
+
+Loading a command's module may do none of that either. pcbkit.kicad used to make kicad-cli's background copy as it
+loaded (a folder under the tools dir, codesign, a first run of kicad-cli), so on a machine without that copy every
+`--help` made it. This file loads no module of pcbkit's but the CLI before the guards are up, and one case asks
+every command for help in a new process whose tools dir is empty.
 """
 import contextlib
 import io
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -17,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.dont_write_bytecode = True         # importing a command's module must not write either
 
-from pcbkit import cli, kicad  # noqa: E402  (kicad: it finds KiCad as it loads, before anything is forbidden)
+from pcbkit import cli  # noqa: E402  (and nothing else of pcbkit's: its modules load under the guards)
 
 FORBIDDEN = ("subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
              "subprocess.check_output", "os.execve", "os.execv", "os.system", "os.remove", "os.unlink", "os.rename",
@@ -72,7 +79,41 @@ class Help(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn("unrecognized arguments", err)
 
+    def test_help_from_a_cold_start_prepares_nothing(self):
+        """A new process and an empty tools dir, as on a machine that has never run pcbkit: every module loads under
+        the guards, and kicad-cli's background copy is not made for a help text."""
+        with tempfile.TemporaryDirectory() as tools:
+            code = ("import sys\n"
+                    "sys.path[:0] = [%r, %r]\n"
+                    "import test_cli\n"
+                    "assert not [m for m in sys.modules if m.startswith('pcbkit.') and m != 'pcbkit.cli'], sys.modules\n"
+                    "for name in test_cli.cli.COMMANDS:\n"
+                    "    for flag in ('--help', '-h'):\n"
+                    "        code, out, err = test_cli.pcbkit(name, flag)\n"
+                    "        assert code == 0 and len(out.strip()) > 40, (name, flag, code, err)\n"
+                    "import pcbkit.kicad\n"
+                    "print('helped', len(test_cli.cli.COMMANDS), 'kicad-cli found:', pcbkit.kicad._CLI)\n"
+                    % (ROOT, os.path.dirname(os.path.abspath(__file__))))
+            r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                               env=dict(os.environ, PCBKIT_TOOLS=tools))
+            self.assertEqual(r.stdout.strip(), "helped %d kicad-cli found: None" % len(cli.COMMANDS), r.stderr[-3000:])
+            self.assertEqual(os.listdir(tools), [])
+
+    def test_kicad_cli_is_found_when_first_asked_for(self):
+        from pcbkit import kicad
+        with mock.patch.object(kicad, "_CLI", None), mock.patch.object(kicad, "background_app") as made, \
+                mock.patch.object(kicad.shutil, "which", return_value="/usr/bin/kicad-cli"):
+            made.return_value = "/tools/KiCadCLI.app"
+            made.assert_not_called()                                   # loading the module asked for nothing
+            first = kicad.KICAD_CLI                                    # the name project scripts take
+            self.assertEqual(first, kicad.kicad_cli())
+            self.assertIn(first, ("/tools/KiCadCLI.app/Contents/MacOS/kicad-cli", "/usr/bin/kicad-cli"))
+            self.assertLessEqual(made.call_count, 1)                   # once a process
+        with self.assertRaises(AttributeError):
+            kicad.KICAD_CLY
+
     def test_link_reads_remove(self):
+        from pcbkit import kicad
         for argv, remove in ((("link",), False), (("link", "--remove"), True)):
             with mock.patch.object(kicad, "link") as link:
                 self.assertEqual(pcbkit(*argv)[0], 0)

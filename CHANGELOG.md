@@ -110,8 +110,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 ### Fixed
 - **`--help` and `-h` print help for every command.** `pcbkit info`, `link`, `setup-kikit` and `setup-router` ran
   instead: two reinstalled a tool from the network and one rewrote the `pcbkit.pth` files. Each now reads its
-  arguments first, and an argument it does not take is an error (`pcbkit setup-kikit --target x`).
-  `tests/test_cli.py` asks every command for help where starting a process or writing a file fails the test.
+  arguments first, and an argument it does not take is an error (`pcbkit setup-kikit --target x`). Loading a
+  command's module prepares nothing either: `pcbkit.kicad` made kicad-cli's background copy as it loaded, so on a
+  machine without one every `--help` made it. kicad-cli is now found when first used (`pcbkit.kicad.kicad_cli()`;
+  `KICAD_CLI` still reads it). `tests/test_cli.py` asks every command for help where starting a process or writing a
+  file fails the test, once more in a new process with an empty tools folder.
 - **Help and output that disagreed with the tool.** `pcbkit drc --help` showed `[--parity]` for `--no-parity`;
   `pcbkit --help` said `setup-kikit` installs "into KiCad's Python (--target)", where it installs under
   `~/.local/share/pcbkit/kikit` and takes no flag; `pcbkit overview --check` exits 1 on a `to build:` line as well

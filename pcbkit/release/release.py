@@ -60,7 +60,7 @@ import tempfile
 
 from .. import production, tomlw
 from ..config import Project
-from ..kicad import KICAD_CLI
+from ..kicad import kicad_cli
 from . import freeze
 from . import versions as V
 
@@ -117,11 +117,12 @@ FAILS = ("erc", "drc", "unconnected", "parity")
 
 def standard(pcb_path, profile):
     """What `pcbkit standard` finds on a board, run as a process (it needs pcbnew): errors, its errors left unwaived
-    as the report says them, one line a kind (v${REVISION} and ${CURRENT_DATE} aside, which release refuses in its
-    own words), and said, its notes and waivers counted ("standard: 4 notes, 2 waived"). Nothing when the profile's
-    checks leave "standard" out."""
+    as the report says them, one line a kind; prints, those of them that release refuses in its own words where it
+    releases (v${REVISION} and ${CURRENT_DATE}, from V.label_problems), kept apart so that they are said once; and
+    said, its notes and waivers counted ("standard: 4 notes, 2 waived"). Nothing when the profile's checks leave
+    "standard" out."""
     if "standard" not in profile["checks"]:
-        return dict(errors=[], said="")
+        return dict(errors=[], prints=[], said="")
     from ..checks import standard as S
     env = dict(os.environ)
     env["PYTHONPATH"] = PKG_ROOT + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -132,11 +133,12 @@ def standard(pcb_path, profile):
     except ValueError:                 # no JSON: it stopped (exit status 1 with JSON is findings, not a failure)
         raise SystemExit(f"pcbkit standard {pcb_path} failed:\n{r.stdout[-1500:]}{r.stderr[-1500:]}")
     found = res["findings"]
-    errors = [said for _, _, said in S.lines([f for f in found if f["level"] == "error"
-                                              and f["check"] != "version-print"])]
+    left = [f for f in found if f["level"] == "error"]
+    errors = [said for _, _, said in S.lines([f for f in left if f["check"] != "version-print"])]
+    prints = [said for _, _, said in S.lines([f for f in left if f["check"] == "version-print"])]
     rest = [k for k in ("note", "waived") if res[k]]
     said = "standard: " + ", ".join(f"{res[k]} {k}{'s' * (k == 'note' and res[k] != 1)}" for k in rest) if rest else ""
-    return dict(errors=errors, said=said)
+    return dict(errors=errors, prints=prints, said=said)
 
 
 STANDARD_HINT = " (pcbkit standard says more: fix, or waive with a note in pcbkit.toml)"
@@ -269,7 +271,7 @@ def write_release(project, pcb, pcb_path, profile, version, label, entry):
             files.append(dst)
     sch = os.path.splitext(pcb_path)[0] + ".kicad_sch"   # this version's drawings, whatever the previews hold
     if os.path.exists(sch):
-        subprocess.run([KICAD_CLI, "sch", "export", "pdf", "-o", os.path.join(vdir, "schematic.pdf"), sch], check=True,
+        subprocess.run([kicad_cli(), "sch", "export", "pdf", "-o", os.path.join(vdir, "schematic.pdf"), sch], check=True,
                        capture_output=True)
         files.append("schematic.pdf")
     pcbkit("print", pcb_path, os.path.join(vdir, "board.pdf"))
@@ -367,7 +369,9 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         return dict(state="mockup", checks=c, errors=errs)
     std = standard(pcb_path, profile)
     if not project.release["enabled"]:
-        said = "; ".join(x for x in ("; ".join(std["errors"]) + STANDARD_HINT if std["errors"] else "", std["said"]) if x)
+        # checks only: nothing below runs, V.label_problems neither, so the texts that print wrong are said here
+        errors = std["prints"] + std["errors"]
+        said = "; ".join(x for x in ("; ".join(errors) + STANDARD_HINT if errors else "", std["said"]) if x)
         return dict(state="checked", checks=c, **(dict(note=said) if said else {}))
     rdir = project.release_dir(pcb)
     last = V.current(rdir)

@@ -2,7 +2,7 @@
 
   pcbkit panel BOARD.kicad_pcb OUT_DIR [--style vcut|mousebite|both] [--rows 3] [--previews DIR] [--hide-refs REGEX]
                [--preset X.json ...]
-  pcbkit setup-kikit                  # once: installs the pinned KiKit into ~/.local/share/pcbkit
+  pcbkit setup-kikit                  # once: installs the pinned KiKit under ~/.local/share/pcbkit/kikit
 
 Styles (presets in data/panel/):
   vcut       V-cut between modules. JLC Standard assembly only. Clean edges.
@@ -41,6 +41,17 @@ def setup_kikit():
     subprocess.run([KICAD_PYTHON, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--target", d,
                     f"git+https://github.com/yaqwsx/KiKit@{KIKIT_COMMIT}"], check=True)
     print(f"KiKit {KIKIT_COMMIT[:7]} installed in {d}")
+
+
+def setup_main(argv=None):
+    """pcbkit setup-kikit: nothing is removed or installed until the arguments are read."""
+    ap = argparse.ArgumentParser(
+        prog="pcbkit setup-kikit",
+        description=f"Install KiKit at the pinned commit {KIKIT_COMMIT[:7]}, for pcbkit panel: removes {kikit_dir()} "
+                    "(PCBKIT_TOOLS moves it) and installs KiKit there again from GitHub, with KiCad's Python "
+                    "(pip --target). Nothing goes into KiCad's own site-packages. Takes no options.")
+    ap.parse_args(argv)
+    setup_kikit()
 
 
 def kpy(*args):

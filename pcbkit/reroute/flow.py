@@ -72,6 +72,18 @@ def setup_router():
     print(f"the router's Python is in {d}")
 
 
+def setup_main(argv=None):
+    """pcbkit setup-router: nothing is removed or installed until the arguments are read."""
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="pcbkit setup-router",
+        description=f"Install the router's own Python, for pcbkit reroute: removes {router_dir()} (PCBKIT_TOOLS moves "
+                    "it) and makes it again with uv, a Python 3.12 venv with numba, numpy, scipy and pillow "
+                    "(pcbkit_router/requirements.txt), from the network. Takes no options.")
+    ap.parse_args(argv)
+    setup_router()
+
+
 def router():
     py = os.path.join(router_dir(), "bin", "python")
     if not os.path.exists(py):

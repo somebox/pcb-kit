@@ -226,3 +226,13 @@ def link(remove=False):
 
 
 link_kicad = link  # old name
+
+
+def link_main(argv=None):
+    """pcbkit link [--remove]: nothing is written until the arguments are read."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="pcbkit link", description=link.__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--remove", action="store_true", help="remove the pcbkit.pth files instead of writing them")
+    a = ap.parse_args(argv)
+    link(remove=a.remove)

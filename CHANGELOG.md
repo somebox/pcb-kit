@@ -39,6 +39,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 - **The project-overview skill has "The pattern".** What the three pages built by hand share: where it stands
   at the top, what changed since the user last looked, a viewer to work, one block at a time, decisions sorted by
   whose move it is, a source on every card, one set of status chips, and the rounds kept.
+- **JLC rotations for KiCad's Vishay PowerPAK 1212-8 footprints (2026-11-18).** Neither had a rule, so their CPL
+  angle was KiCad's own. KiCad lays both out with pads 1-4 down the left; LCSC's footprints for seven single-FET
+  parts (the WSD20L75DN33, C148391, and six Vishay parts) have them along the bottom, a quarter turn, so
+  `^Vishay_PowerPAK_1212-8_Single` adds 270, as `^PowerPAK_SO-8_Single` does. The dual comes both ways: the SIS932EDN
+  (C727405) and SIS903DN (C3279452) lie as the single, so `^Vishay_PowerPAK_1212-8_Dual` adds 270, and the
+  SI7904BDN (C143037) lies as KiCad's, so a part rule gives it 0. All three rows are read from the footprints and
+  not yet seen in JLC's viewer, so their Checked dates are empty. A board with a part on one of these footprints
+  gets a new CPL, and so its next version from `pcbkit release`.
 
 ## [0.5.0] - 2026-11-16
 

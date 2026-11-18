@@ -70,6 +70,21 @@ class Corrections(unittest.TestCase):
         other = self.rule("SOT-23-6", "C0")
         self.assertEqual((other[0], other[1]), ("^SOT-23-6(_Handsoldering)?$", -90))
 
+    def test_powerpak_1212_8_single_turns_as_powerpak_so8(self):
+        # KiCad has pads 1-4 down the left and the drain on the right; LCSC's footprint for the WSD20L75DN33 has
+        # pads 1-4 along the bottom, so it is KiCad's turned a quarter, as on PowerPAK SO-8
+        r = self.rule("Vishay_PowerPAK_1212-8_Single", "C148391", ref="Q1", value="WSD20L75DN33")
+        self.assertEqual((r[0], r[1], r[3], r[4]), ("^Vishay_PowerPAK_1212-8_Single", 270, "", "footprint"))
+
+    def test_powerpak_1212_8_dual_comes_both_ways(self):
+        # LCSC's SIS932EDN (C727405) has pads 1-4 along the bottom like the single; its SI7904BDN has them down the
+        # left, as KiCad does
+        r = self.rule("Vishay_PowerPAK_1212-8_Dual", "C727405", ref="Q2", value="SIS932EDN")
+        self.assertEqual((r[0], r[1], r[4]), ("^Vishay_PowerPAK_1212-8_Dual", 270, "footprint"))
+        si7904 = self.rule("Vishay_PowerPAK_1212-8_Dual", "C143037", ref="Q2", value="SI7904BDN")
+        self.assertEqual((si7904[0], si7904[1], si7904[4], si7904[5]),
+                         ("C143037", 0, "LCSC", "^Vishay_PowerPAK_1212-8_Dual"))
+
     def test_part_rule_needs_a_package_rule(self):
         # an LCSC row does nothing for a footprint no rule matches
         self.assertIsNone(self.rule("SOT-583-8_L2.1-W1.2-P0.50-LS1.6-BL", "C46550459"))

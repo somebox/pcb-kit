@@ -107,8 +107,11 @@ def version_findings(text):
     wrong, typed = V.label_problems(text, rev)
     out = [finding("version-print", "error", w) for w in wrong]
     with_rev = [s for s in silk if "${REVISION}" in s]
-    if with_rev:
-        out.append(ok("version", "the silkscreen prints the version: " + ", ".join(V._quote(s) for s in with_rev[:3])))
+    right = [s for s in with_rev if not re.search(r"(?i)v\$\{REVISION\}", s)]
+    if right:
+        out.append(ok("version", "the silkscreen prints the version: " + ", ".join(V._quote(s) for s in right[:3])))
+    elif with_rev:
+        pass                           # only as v${REVISION}: the error above says it
     elif typed:
         out.append(finding("version", "note", "the version is typed into the silkscreen (" + ", ".join(typed[:3])
                            + "): release restamps a text that reads the old label, ${REVISION} follows the title "
@@ -233,18 +236,22 @@ def extended_findings(parts, cache, bom_path, root=""):
     bom = _read(bom_path) if bom_path else ""
     where = os.path.relpath(bom_path, root) if bom_path and root else bom_path or ""
     named = []
+
+    def refs_of(refs):
+        return ", ".join(refs[:4]) + (f" and {len(refs) - 4} more" if len(refs) > 4 else "")
+    if ext and not bom_path:           # one finding for the project: there is nowhere to look each part up
+        out.append(finding("extended", "note", f"{len(ext)} JLC Extended part{'s' * (len(ext) > 1)} placed, and the "
+                           "project has no BOM.md to give each its reason and the fee it adds: "
+                           + ", ".join(f"{lcsc} ({refs_of(refs)})" for lcsc, refs, _ in ext)))
+        ext = []
     for lcsc, refs, mpn in ext:
         hit = re.search(rf"(?<![\w]){re.escape(lcsc)}(?!\w)", bom) or \
             (len(mpn) >= 4 and re.search(re.escape(mpn), bom, re.I))
-        detail = ", ".join(refs[:4]) + (f" and {len(refs) - 4} more" if len(refs) > 4 else "") + (f"; {mpn}" if mpn else "")
         if hit:
             named.append(lcsc)
-        elif bom_path:
-            out.append(finding("extended", "note", f"a JLC Extended part that {where} does not name: its reason, and "
-                               "the fee it adds, go there", lcsc, detail))
         else:
-            out.append(finding("extended", "note", "a JLC Extended part, and the project has no BOM.md to give its "
-                               "reason", lcsc, detail))
+            out.append(finding("extended", "note", f"a JLC Extended part that {where} does not name: its reason, and "
+                               "the fee it adds, go there", lcsc, refs_of(refs) + (f"; {mpn}" if mpn else "")))
     if unknown:
         out.append(finding("extended", "note", f"{len(unknown)} placed part{'s' * (len(unknown) > 1)} not in the JLC "
                            "parts cache, so not known to be Basic or Extended: " + ", ".join(unknown[:8])

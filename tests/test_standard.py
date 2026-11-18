@@ -83,6 +83,9 @@ class VersionAndDate(unittest.TestCase):
         out = S.version_findings(board("DRIVER v${REVISION}", "${CURRENT_DATE}"))
         self.assertEqual(found(out), [("version-print", "error", ""), ("version-print", "error", ""), ("date", "note", "")])
         self.assertIn("would print vv", out[0]["text"])
+        self.assertEqual(len(out), 3)             # and no line saying the version is printed: it isn't, rightly
+        self.assertEqual([f["level"] for f in S.version_findings(board("v${REVISION}", "${REVISION} ${ISSUE_DATE}"))],
+                         ["error", "ok", "ok"])
 
     def test_a_version_typed_in_is_restamped_and_only_noted(self):
         out = S.version_findings(board("Demo v1.0 2026-11-01"))
@@ -180,14 +183,17 @@ class Extended(unittest.TestCase):
         out = S.extended_findings(self.parts, self.cache, self.bom, self.dir.name)
         self.assertEqual(found(out), [("extended", "note", "C11")])    # C110 does not name C11
         self.assertEqual(out[0]["detail"], "D1; SS34")
+        many = dict(self.parts, C11=(["D1", "D2", "D3", "D4", "D5", "D6"], ""))
+        self.assertEqual(S.extended_findings(many, self.cache, self.bom, self.dir.name)[0]["detail"],
+                         "D1, D2, D3, D4 and 2 more; SS34")
         self.assertIn("BOM.md does not name", out[0]["text"])
         self.assertEqual(out[-1]["text"], "2 Extended parts named in BOM.md")
 
-    def test_without_a_bom_md_every_extended_part_is_a_finding(self):
+    def test_without_a_bom_md_there_is_one_finding_for_the_project(self):
         out = S.extended_findings(self.parts, self.cache, None)
-        self.assertEqual(found(out), [("extended", "note", "C11"), ("extended", "note", "C7"), ("extended", "note", "C9")])
-        self.assertEqual([f["detail"] for f in out], ["D1; SS34", "U1; TPS259470A", "U2; AP2112K-3.3TRG1"])   # by reference
-        self.assertIn("no BOM.md", out[0]["text"])
+        self.assertEqual(found(out), [("extended", "note", "")])
+        self.assertEqual(out[0]["text"], "3 JLC Extended parts placed, and the project has no BOM.md to give each its "
+                                         "reason and the fee it adds: C11 (D1), C7 (U1), C9 (U2)")       # by reference
 
     def test_without_the_parts_cache_it_says_so(self):
         out = S.extended_findings(self.parts, Cache({}, db=None), self.bom)

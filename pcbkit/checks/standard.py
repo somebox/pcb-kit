@@ -3,25 +3,31 @@
   pcbkit standard [PCB ...] [--json]
 
 For every PCB of the project that is released (or those named, by key, path or folder, as `pcbkit release` takes
-them; a .kicad_pcb outside any project is read with the defaults), what a tool can check of the standard:
+them), what a tool can check of the standard. A .kicad_pcb that is not one of the project's PCBs is read with the
+defaults alone: no pcbkit.toml's settings, placement rule or waivers reach it, and its BOM.md is looked for beside
+it.
 
   check             level   finds
   version           error   no silkscreen text prints the version: ${REVISION}, which release fills from the title
-                            block (a version typed in, which release restamps, is a note)
+                            block. A version typed into a board text that reads the label release looks for (the
+                            title block's, else the last release's) is restamped, and only a note; one typed
+                            anywhere else (another version, a text box, a footprint's text) is never updated: an
+                            error when it is the board's only version, a note beside a right one
   version-print     error   v${REVISION} (prints vv1.0) and ${CURRENT_DATE} (the plot's day); never waived
   date              note    no ${ISSUE_DATE} on the silkscreen, or a date typed into a text release does not stamp
   title-block       error   neither the board nor its root schematic has a title; a sheet under the root without a
                             title block, or with one that has no title
   labels            note    a connector (J), jumper (JP), switch (SW), battery holder (BT) or LED with no silkscreen
                             text within label_distance that names it: a board text, or its own value shown; its
-                            reference does not count. The text is on the part's side, or on either side of a
-                            through-hole part
+                            reference does not count. The text, the value too, is on the part's side, or on
+                            either side of a through-hole part
   test-pads         note    a rail without a test pad (a footprint TP*, TestPoint*, or with a test-point pad). The
                             rails are [standard.rails] for the board in pcbkit.toml, else the nets its schematic's
                             power symbols name, ground among them
   test-pad-labels   note    a test pad with no such text, whose value is not shown and whose reference no board
-                            text names (a legend: "TP1 RUN", "GND TP8,12,13"). A number drawn as a polygon beside the
-                            pad is not a text: a board with such badges waives the check and says so
+                            text names (a legend: "TP1 RUN", "GND TP8,12,13"), each on the pad's side as above. A
+                            number drawn as a polygon beside the pad is not a text: a board with such badges waives
+                            the check and says so
   mounting          note    a mounting hole (every pad unplated, or a MountingHole* footprint) with neither a
                             courtyard nor a rule area over it; a board with no hole at all
   fiducials         note    fewer than three fiducials (a Fiducial* footprint, a reference FID*, or a pad marked as a
@@ -113,29 +119,48 @@ def _natural(s):
 
 
 # ---- from the files' text --------------------------------------------------------------------------------------------
-def version_findings(text):
-    """The version and date on the silkscreen, from a board file's text."""
+def version_findings(text, last_label=""):
+    """The version and date on the silkscreen, from a board file's text. last_label: the board's last release's
+    label, which release looks for in the texts when the title block's rev is not a label itself."""
     rev = V.title_rev(text)
-    silk = [s for s, layer in V.plotted_texts(text) if layer.endswith(".SilkS")]
-    wrong, typed = V.label_problems(text, rev)
+    items = V.plotted_items(text)
+    silk = [s for s, layer, _ in items if layer.endswith(".SilkS")]
+    wrong, _ = V.label_problems(text, rev, [(s, layer) for s, layer, _ in items])
     out = [finding("version-print", "error", w) for w in wrong]
     with_rev = [s for s in silk if "${REVISION}" in s]
     right = [s for s in with_rev if not re.search(r"(?i)v\$\{REVISION\}", s)]
+    # What release rewrites (versions.stamp): a board text that reads the label it looks for. A version typed anywhere
+    # else stays as it is through every release: another version, a text box, a footprint's text or field.
+    old = V.stamp_label(rev, last_label)
+    reads_old = rf"(?<![\w.]){re.escape(old)}(?![\w.])" if old else None
+    reads_rev = rf"(?<![\w.]){re.escape(rev)}(?![\w.])" if rev.strip() else None
+    restamped = [s for s, layer, kind in items if kind == "gr_text" and layer.endswith(".SilkS") and reads_old
+                 and re.search(reads_old, s)]
+    typed = [s for s, layer, kind in items if layer.endswith(".SilkS")
+             and (re.search(V.LABEL_IN_TEXT, s) or (reads_rev and re.search(reads_rev, s)))]
+    stuck = [s for s in typed if s not in restamped]
+    never = ("release restamps only a board text that reads " + (old or "the label it looks for, and this board has "
+             "none yet") + ", not another version, a text box or a footprint's text: write ${REVISION}")
     if right:
         out.append(ok("version", "the silkscreen prints the version: " + ", ".join(V._quote(s) for s in right[:3])))
     elif with_rev:
         pass                           # only as v${REVISION}: the error above says it
-    elif typed:
-        out.append(finding("version", "note", "the version is typed into the silkscreen (" + ", ".join(typed[:3])
-                           + "): release restamps a text that reads the old label, ${REVISION} follows the title "
-                           "block by itself"))
+    elif restamped:
+        out.append(finding("version", "note", "the version is typed into the silkscreen ("
+                           + ", ".join(V._quote(s) for s in restamped[:3]) + "): release restamps a board text that "
+                           f"reads {old}, ${{REVISION}} follows the title block by itself"))
+    elif stuck:
+        out.append(finding("version", "error", "the silkscreen's only version is typed where no release updates it ("
+                           + ", ".join(V._quote(s) for s in stuck[:3]) + "): " + never))
     else:
         out.append(finding("version", "error", "no silkscreen text prints the version: add one with ${REVISION} "
                            "(and ${ISSUE_DATE}), which release fills from the title block"))
-    word = rf"(?<![\w.]){re.escape(rev)}(?![\w.])" if rev.strip() else None
+    if stuck and (right or restamped):
+        out.append(finding("version", "note", "a version typed into the silkscreen that no release updates ("
+                           + ", ".join(V._quote(s) for s in stuck[:3]) + "): " + never))
 
-    def stamped(s):                    # a text release rewrites: it carries the label, and its ISO dates go with it
-        return bool(re.search(V.LABEL_IN_TEXT, s) or (word and re.search(word, s)))
+    def stamped(s):                    # a text release rewrites, and its ISO dates with it
+        return s in restamped
     dated = [s for s in silk if "${ISSUE_DATE}" in s]
     loose = [s for s in silk if TYPED_DATE.search(s) and "${ISSUE_DATE}" not in s
              and not (stamped(s) and re.search(V.DATE, s))]
@@ -416,17 +441,26 @@ def is_hole(pcbnew, fp):
     return bool(pads) and all(p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH for p in pads) or "MountingHole" in _name(fp)
 
 
+def read_from(pcbnew, fp):
+    """The sides of the board a part's name may be on: its own, or both for a through-hole part, which is read and
+    wired from either."""
+    if any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in fp.Pads()):
+        return {"F", "B"}
+    return {"B" if fp.IsFlipped() else "F"}
+
+
 def _names_it(pcbnew, texts, fp, distance):
-    """Whether a silkscreen text names the part: a board text within distance of it, on its side (either side of a
-    through-hole part, which is read and wired from both), or its own value or another of its fields shown. A
-    reference names nothing, and a mark drawn in the footprint (+, K, 1) is not a name."""
-    ref, side = fp.GetReference(), "B" if fp.IsFlipped() else "F"
-    through = any(p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH for p in fp.Pads())
+    """Whether a silkscreen text names the part, on a side it is read from (read_from): a board text within distance
+    of it, or its own value or another of its fields shown. A reference names nothing, and a mark drawn in the
+    footprint (+, K, 1) is not a name."""
+    ref, sides = fp.GetReference(), read_from(pcbnew, fp)
     box = part_box(pcbnew, fp)
     for t in texts:
+        if t["side"] not in sides:
+            continue
         if t["kind"] in ("value", "field") and t["owner"] == ref:
             return True
-        if t["kind"] == "board" and (through or t["side"] == side) and _gap(box, t["box"]) <= distance:
+        if t["kind"] == "board" and _gap(box, t["box"]) <= distance:
             return True
     return False
 
@@ -434,12 +468,12 @@ def _names_it(pcbnew, texts, fp, distance):
 LIST = re.compile(r"([A-Za-z]+)(\d+(?:\s*[,/]\s*\d+)+)")
 
 
-def legend_names(texts):
-    """The references a board's silkscreen texts name, as a legend does: every word, and "TP8,12,13" as TP8, TP12 and
-    TP13."""
+def legend_names(texts, sides=("F", "B")):
+    """The references the board texts on the given sides of the silkscreen name, as a legend does: every word, and
+    "TP8,12,13" as TP8, TP12 and TP13."""
     out = set()
     for t in texts:
-        if t["kind"] == "board":
+        if t["kind"] == "board" and t["side"] in sides:
             out |= set(re.findall(r"[A-Za-z]+\d+", t["text"]))
             for m in LIST.finditer(t["text"]):
                 out |= {m.group(1) + n for n in re.findall(r"\d+", m.group(2))}
@@ -488,12 +522,14 @@ def test_pad_findings(pcbnew, board, texts, distance, rails, rails_from):
         if not bare:
             out.append(ok("test-pads", f"a test pad on each of {len(on_board)} rail{'s' * (len(on_board) != 1)} ("
                                        + ", ".join(on_board) + f"; {rails_from})"))
-    legend = legend_names(texts)
-    shown = {t["owner"] for t in texts if t["kind"] == "reference"}
+    legend = {side: legend_names(texts, (side,)) for side in "FB"}
+    shown = {(t["owner"], t["side"]) for t in texts if t["kind"] == "reference"}
     unnamed = []
     for fp in sorted(tps, key=lambda f: _natural(f.GetReference())):
-        ref = fp.GetReference()
-        if not (ref in shown and ref in legend) and not _names_it(pcbnew, texts, fp, distance):
+        ref, sides = fp.GetReference(), read_from(pcbnew, fp)
+        # a legend names the pad where the pad is read: its reference shown, and the legend, on a side it is read from
+        in_legend = any((ref, s) in shown for s in sides) and any(ref in legend[s] for s in sides)
+        if not in_legend and not _names_it(pcbnew, texts, fp, distance):
             net = next((p.GetNetname() for p in fp.Pads() if p.GetNetname()), "no net")
             unnamed.append(finding("test-pad-labels", "note", f"a test pad with no silkscreen text within {distance:g} "
                                    "mm on its side, no value shown and no legend naming it", ref, net))
@@ -668,7 +704,8 @@ def check(project, pcb, cache=None):
     import pcbnew
     cfg = dict(DEFAULTS, **project.cfg.get("standard", {}))
     path = pcb["abspath"]
-    out = version_findings(_read(path)) + title_findings(path)
+    last = V.current(project.release_dir(pcb))
+    out = version_findings(_read(path), last["label"] if last else "") + title_findings(path)
     rails = (cfg.get("rails") or {}).get(pcb["key"])
     if rails is not None:
         rails_from = "pcbkit.toml's [standard.rails]"
@@ -745,9 +782,10 @@ def report(path, findings):
 
 
 def targets(project, names):
-    """The PCBs to check: those named (in the project, or a .kicad_pcb outside it, read with the defaults), else
-    every one the project releases."""
-    from ..config import DEFAULT_PROFILE
+    """The PCBs to check: those named, else every one the project releases. A .kicad_pcb named that is not one of the
+    project's PCBs comes with a project of its own ("project"): the defaults, rooted at its folder, so that no
+    setting, placement rule or waiver of the project it was named from reaches it."""
+    from ..config import DEFAULT_PROFILE, Project
     if not names:
         return [p for p in project.pcbs() if not p["excluded"] and p["profile"]["release"]]
     out = []
@@ -757,9 +795,10 @@ def targets(project, names):
         except SystemExit:
             if not (n.endswith(".kicad_pcb") and os.path.isfile(n)):
                 raise
-            out.append(dict(key=os.path.splitext(os.path.basename(n))[0], path=os.path.abspath(n),
-                            folder=os.path.dirname(os.path.abspath(n)), sub="", profile=dict(DEFAULT_PROFILE),
-                            excluded=False, outside=True))
+            folder = os.path.dirname(os.path.abspath(n))
+            out.append(dict(key=os.path.splitext(os.path.basename(n))[0], path=os.path.abspath(n), folder=folder,
+                            sub="", profile=dict(DEFAULT_PROFILE), excluded=False, outside=True,
+                            project=Project.defaults(folder)))
     return out
 
 
@@ -776,7 +815,7 @@ def main(argv=None):
     results, failed = [], False
     for pcb in targets(project, a.pcbs):
         pcb["abspath"] = pcb["path"] if os.path.isabs(pcb["path"]) else os.path.join(project.root, pcb["path"])
-        found = check(project, pcb)
+        found = check(pcb.get("project") or project, pcb)
         failed = failed or any(f["level"] == "error" for f in found)
         shown = project.rel(pcb["abspath"]) if not pcb.get("outside") else pcb["abspath"]
         results.append(dict(pcb=shown, key=pcb["key"], findings=found, **count(found)))

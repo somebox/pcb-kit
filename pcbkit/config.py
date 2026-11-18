@@ -104,6 +104,18 @@ class Project:
         self.release = self.cfg["release"]
         self.production = self.cfg["production"]
 
+    @classmethod
+    def defaults(cls, root):
+        """A project of the defaults at root, reading no pcbkit.toml: for a board that is in no project, which no
+        project's settings may reach."""
+        self = cls.__new__(cls)
+        self.root = os.path.abspath(root)
+        self.path = os.path.join(self.root, "pcbkit.toml")
+        self.cfg = copy.deepcopy(DEFAULTS)
+        self.release = self.cfg["release"]
+        self.production = self.cfg["production"]
+        return self
+
     def rel(self, path):
         return os.path.relpath(os.path.abspath(path), self.root)
 

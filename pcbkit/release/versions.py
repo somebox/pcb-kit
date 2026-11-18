@@ -182,6 +182,12 @@ def _hidden(node):
 def plotted_texts(text):
     """Every text on a board that its Gerbers draw, as (the text as written, its layer): board texts and text boxes,
     and the shown texts and fields of footprints, on the silkscreen, copper or mask."""
+    return [(s, layer) for s, layer, _ in plotted_items(text)]
+
+
+def plotted_items(text):
+    """plotted_texts() with what each text is, (the text, its layer, its kind): gr_text for a board text, the only
+    kind stamp() rewrites; gr_text_box; fp_text, fp_text_box or property for a footprint's."""
     out = []
 
     def walk(node):
@@ -193,7 +199,7 @@ def plotted_texts(text):
                 s = c[2] if head in ("fp_text", "property") and len(c) > 2 else c[1] if len(c) > 1 else ""
                 layer = next((str(x[1]) for x in c if isinstance(x, list) and len(x) > 1 and x[0] == "layer"), "")
                 if isinstance(s, str) and PLOTTED.match(layer) and not _hidden(c):
-                    out.append((str(s), layer))
+                    out.append((str(s), layer, str(head)))
             elif head in ("footprint", "module", "group"):
                 walk(c)
     tree = sexp.parse(text)
@@ -206,15 +212,24 @@ def _quote(s, most=60):
     return "'" + (s if len(s) <= most else s[:most - 3] + "...") + "'"
 
 
-def label_problems(text, rev=""):
+STAMPED_REV = re.compile(r"v\d+(?:\.\d+){1,2}")
+
+
+def stamp_label(rev, last_label=""):
+    """The label stamp() looks for in a board's texts, to replace it with the new one: the title block's rev when that
+    is a label (v1.4, v1.0.1), else the last release's label, else none (nothing typed in is rewritten)."""
+    return rev if STAMPED_REV.fullmatch(rev) else last_label or ""
+
+
+def label_problems(text, rev="", texts=None):
     """What a board's own texts would print wrong once stamped, and the texts with a version typed in: (errors,
-    typed). An error stops a release: v${REVISION} prints "vv1.0", since the title block's rev is the label with its
+    typed). texts: plotted_texts(text), when the caller has them. An error stops a release: v${REVISION} prints "vv1.0", since the title block's rev is the label with its
     v; ${CURRENT_DATE} prints the day of the plot, so the release's Gerbers can't be made again and its fab
     fingerprint changes every day. typed are the texts that carry a version as written (the old label, or the
     title block's rev as a word), which ${REVISION} and ${ISSUE_DATE} would keep in step with the title block."""
     errors, typed = [], []
     word = rf"(?<![\w.]){re.escape(rev)}(?![\w.])" if rev.strip() else None
-    for s, layer in plotted_texts(text):
+    for s, layer in (plotted_texts(text) if texts is None else texts):
         if re.search(r"(?i)v\$\{REVISION\}", s):
             errors.append(f"{layer} text {_quote(s)} would print vv: the title block's rev is the label, v "
                           "included; write ${REVISION}")

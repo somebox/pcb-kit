@@ -373,7 +373,7 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
     last = V.current(rdir)
     src = source_key(project, pcb)
     on_board = V.title_rev(open(pcb_path, encoding="utf-8").read())
-    old_label = on_board if re.fullmatch(r"v\d+(?:\.\d+){1,2}", on_board) else last["label"] if last else ""
+    old_label = V.stamp_label(on_board, last["label"] if last else "")
     exact = last and src == last["source"]
     circ = None if exact else V.circuit(pcb_path)
     cfp = circ and V.circuit_fingerprint(circ)

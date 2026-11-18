@@ -190,10 +190,12 @@ waived. A board reviewed before a line was written takes that line up at its nex
 - **Name, version, date, author.** On the silkscreen once: the board's name, `${REVISION}` and `${ISSUE_DATE}`,
   never typed (above); and, typed, the author's name with an address where the design is found (the author's site or
   the repository), or the name alone where there is no room. Release refuses `v${REVISION}` and `${CURRENT_DATE}`,
-  and a board whose silkscreen prints no version [`version`, error]; a version typed in is noted, as is a board with
-  no date or with a date typed where release never updates it [`date`]. The board's name and the author are looked
-  at: a tool does not know either. A title block with a title on every schematic sheet, and a title on the board or
-  its root schematic, which release gives to the other [`title-block`, error].
+  and a board whose silkscreen prints no version, or only one typed where no release updates it: another version
+  than the title block's, a text box, a footprint's text [`version`, error]. A version typed into a board text that
+  release restamps is noted, as is a board with no date or with a date typed where release never updates it
+  [`date`]. The board's name and the author are looked at: a tool does not know either. A title block with a title
+  on every schematic sheet, and a title on the board or its root schematic, which release gives to the other
+  [`title-block`, error].
 - **Power in.** At each power input: the voltage range and the polarity (+ and -, or the centre-pin symbol at a
   barrel jack). Where the user chooses the supply, also its current limit or the fuse's rating.
 - **Jumpers, switches, solder bridges.** What each position does, in a few words, and the default
@@ -205,16 +207,16 @@ waived. A board reviewed before a line was written takes that line up at its nex
 - **Buttons and LEDs.** Named for what they do (BOOT, RESET, STATUS, CHG).
 - **Of the four lines above, a tool checks that the label is there** [`labels`]: each connector (J), jumper (JP),
   switch (SW), battery holder (BT) and LED has a silkscreen text within 2 mm (`[standard] label_distance`) that
-  names it, on its own side, or on either side of a through-hole part. Its reference is not a name. What the text
-  says is looked at.
+  names it, or its own value shown, on its own side, or on either side of a through-hole part. Its reference is not
+  a name. What the text says is looked at.
 - **Test pads.** One on every rail and a GND pad near them, each with its net's name on the silkscreen beside it or
   in a numbered legend, on the side reachable in the enclosure. The failure-review skill's test-points.md says which
   signals and rework links are added; the briefing says which of those were left out and why, and LAYOUT.md repeats
   it. Checked: a test pad on every rail [`test-pads`], the rails being the nets the schematic's power symbols name,
   ground among them, or `[standard.rails]` for a board whose schematic uses labels instead; and a name at every test
-  pad [`test-pad-labels`]: a text within 2 mm on its side, its value shown, or its reference shown and named in a
-  legend (`TP1 RUN`, `GND TP8,12,13`). A number drawn as a polygon is not read: a board with such badges waives the
-  check and says so.
+  pad [`test-pad-labels`]: a text within 2 mm, its value shown, or its reference shown and named in a legend (`TP1
+  RUN`, `GND TP8,12,13`), each on the pad's side. A number drawn as a polygon is not read: a board with such badges
+  waives the check and says so.
 - **Mounting.** Holes for the screws that hold it (2.2, 2.7 or 3.2 mm for M2, M2.5, M3), unplated unless DESIGN.md
   says they ground the board, each with a keep-out for the screw head or standoff, which DRC then enforces
   (`pcbkit outline` draws both from `enclosure.json`). A board with none says in LAYOUT.md how it is held. Checked

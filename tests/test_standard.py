@@ -34,13 +34,23 @@ def write(path, text):
         fh.write(text)
 
 
-def board(*texts, rev="v1.0", title="Demo"):
-    """A board file's text with silkscreen texts: (text, layer) pairs, or a text for B.SilkS."""
+def board(*texts, rev="v1.0", title="Demo", more=""):
+    """A board file's text with silkscreen texts: (text, layer) pairs, or a text for B.SilkS; more: other items, as
+    the file writes them."""
     out = f'(kicad_pcb (version 20241229)\n\t(title_block (title "{title}") (rev "{rev}") (date "2026-11-01"))\n'
     for t in texts:
         s, layer = t if isinstance(t, tuple) else (t, "B.SilkS")
         out += f'\t(gr_text "{s}" (at 10 10) (layer "{layer}") (uuid "u") (effects (font (size 1 1))))\n'
-    return out + ")\n"
+    return out + more + ")\n"
+
+
+def text_box(s):
+    return f'\t(gr_text_box "{s}" (start 0 0) (end 9 3) (layer "B.SilkS") (uuid "b") (effects (font (size 1 1))))\n'
+
+
+def footprint_text(s):
+    return (f'\t(footprint "demo:Tag" (layer "B.Cu") (uuid "f") (at 5 5)\n'
+            f'\t\t(fp_text user "{s}" (at 0 0) (layer "B.SilkS") (uuid "t") (effects (font (size 1 1)))))\n')
 
 
 def sheet(title=None, sheets=(), symbols=()):
@@ -92,6 +102,37 @@ class VersionAndDate(unittest.TestCase):
         out = S.version_findings(board("Demo v1.0 2026-11-01"))
         self.assertEqual(found(out), [("version", "note", "")])       # its ISO date is restamped with it
         self.assertIn("'Demo v1.0 2026-11-01'", out[0]["text"])
+        self.assertIn("release restamps a board text that reads v1.0", out[0]["text"])
+
+    def test_a_version_typed_where_no_release_updates_it_is_an_error(self):
+        """Release rewrites a board text that reads the label it looks for, and nothing else: a board whose only
+        version is another one, or sits in a text box or a footprint's text, would go out with it unchanged."""
+        for made, what in ((board("Demo v1.0", rev="v2.0"), "'Demo v1.0'"),                 # an older version
+                           (board("Demo", more=text_box("Demo v1.0")), "'Demo v1.0'"),      # a text box
+                           (board("Demo", more=footprint_text("v1.0")), "'v1.0'"),          # a footprint's text
+                           (board("Demo v0.1", rev="0.1-draft"), "'Demo v0.1'")):           # no label to look for yet
+            out = S.version_findings(made)
+            self.assertEqual(found(out, "version"), [("version", "error", "")], made)
+            self.assertIn("the silkscreen's only version is typed where no release updates it (" + what, out[0]["text"])
+        self.assertIn("reads v2.0, not another version", S.version_findings(board("Demo v1.0", rev="v2.0"))[0]["text"])
+        self.assertIn("this board has none yet", S.version_findings(board("Demo v0.1", rev="0.1-draft"))[0]["text"])
+
+    def test_the_label_release_looks_for_is_the_last_releases_when_the_title_block_has_none(self):
+        draft = board("Demo v1.2 2026-11-01", rev="1.3-draft")
+        self.assertEqual(found(S.version_findings(draft), "version"), [("version", "error", "")])
+        self.assertEqual(found(S.version_findings(draft, "v1.2")), [("version", "note", "")])
+        self.assertEqual(found(S.version_findings(draft, "v1.1"), "version"), [("version", "error", "")])
+
+    def test_an_obsolete_version_beside_the_right_one_is_noted(self):
+        out = S.version_findings(board("${REVISION} ${ISSUE_DATE}", rev="v2.0", more=footprint_text("PCB v1.0")))
+        self.assertEqual(found(out), [("version", "note", "")])
+        self.assertIn("a version typed into the silkscreen that no release updates ('PCB v1.0')", out[1]["text"])
+        out = S.version_findings(board("Demo v2.0", "made for v1.0 cases", rev="v2.0"))
+        self.assertEqual(found(out, "version"), [("version", "note", ""), ("version", "note", "")])   # restamped, and not
+
+    def test_a_date_beside_a_version_no_release_updates_is_never_updated_either(self):
+        out = S.version_findings(board("${REVISION}", rev="v2.0", more=text_box("v2.0 2026-11-01")))
+        self.assertEqual(found(out), [("version", "note", ""), ("date", "note", "'v2.0 2026-11-01'")])
 
     def test_a_date_typed_into_another_text_is_never_updated(self):
         out = S.version_findings(board("control board ${REVISION}", "2026-10  J.Seitz"))
@@ -397,6 +438,21 @@ class Board(unittest.TestCase):
         self.part("J2", 30, 10, "JST_PH", "PORT1", show=("Reference", "Value"))
         self.assertEqual(self.labels(), [("labels", "note", "J1")])
 
+    def test_a_value_shown_on_the_other_side_does_not_name_a_surface_mount_part(self):
+        F, B = self.pcbnew.F_SilkS, self.pcbnew.B_SilkS
+        led = self.part("D1", 10, 10, "LED_0603_1608Metric", "STATUS", back=True, show=("Value",))
+        self.assertEqual(led.Value().GetLayer(), B)                    # flipped with its part
+        self.assertEqual(self.labels(), [])
+        led.Value().SetLayer(F)                                         # the LED on the back, its name on the front
+        self.assertEqual(self.labels(), [("labels", "note", "D1")])
+        jack = self.part("J1", 30, 10, "BarrelJack", "DC 5V", kind="tht", back=True, show=("Value",))
+        jack.Value().SetLayer(F)                                        # a through-hole part is read from both
+        self.assertEqual(self.labels(), [("labels", "note", "D1")])
+        pad = self.part("TP1", 50, 10, "TestPoint_Pad_D1.0mm", "VIN", nets=("VIN",), back=True, show=("Value",))
+        self.assertEqual(found(self.pads(["VIN"]), "test-pad-labels"), [])
+        pad.Value().SetLayer(F)
+        self.assertEqual(found(self.pads(["VIN"]), "test-pad-labels"), [("test-pad-labels", "note", "TP1")])
+
     def test_which_parts_want_a_label(self):
         self.part("D1", 10, 10, "LED_0603_1608Metric", "PWR")
         self.part("D2", 20, 10, "D_SOD-123", "SS34")
@@ -449,6 +505,22 @@ class Board(unittest.TestCase):
         self.assertEqual(found(out, "test-pad-labels"), [("test-pad-labels", "note", "TP4"), ("test-pad-labels", "note", "TP5"),
                                                          ("test-pad-labels", "note", "TP13")])
         self.assertEqual([f["detail"] for f in out if f["check"] == "test-pad-labels"], ["EN", "IO4", "X"])
+
+    def test_a_legend_names_a_test_pad_on_the_side_the_pad_is_read_from(self):
+        self.part("TP1", 10, 10, "TestPoint_Pad_D1.0mm", "RUN", nets=("RUN",), back=True, show=("Reference",))
+        self.part("TP2", 20, 10, "TestPoint_Pad_D1.0mm", "EN", nets=("EN",), show=("Reference",))
+        self.part("TP3", 30, 10, "TestPoint_THTPad_D2.0mm", "GND", kind="tht", nets=("GND",), back=True, show=("Reference",))
+        self.text("TP1 RUN\nTP2 EN\nTP3 GND", 80, 30)                  # the legend, on the front
+        labels = lambda: found(self.pads(["GND"]), "test-pad-labels")   # noqa: E731
+        self.assertEqual(labels(), [("test-pad-labels", "note", "TP1")])        # TP1 is on the back, and so not named
+        self.text("TP1 RUN", 80, 30, back=True)
+        self.assertEqual(labels(), [])
+        # its reference on the other side does not make a legend there name it
+        self.part("TP4", 40, 10, "TestPoint_Pad_D1.0mm", "IO4", nets=("IO4",), back=True, show=("Reference",))
+        self.b.FindFootprintByReference("TP4").Reference().SetLayer(self.pcbnew.F_SilkS)
+        self.text("TP4 IO4", 80, 36)
+        self.assertEqual(labels(), [("test-pad-labels", "note", "TP4")])
+        self.assertEqual(S.legend_names(S.silk_texts(self.pcbnew, self.b), ("B",)), {"TP1"})
 
     def test_a_mounting_hole_wants_a_courtyard_or_a_keep_out(self):
         self.assertEqual(found(S.mounting_findings(self.pcbnew, self.b)), [("mounting", "note", "")])
@@ -704,6 +776,44 @@ class Command(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(out.startswith(path + ": what a released board carries"), out)
         self.assertIn("ok      the board has a title (it has no schematic)", out)
+
+    def test_no_setting_of_the_project_it_is_named_from_reaches_an_outside_board(self):
+        """An unscoped waiver would waive its missing LCSC number, a placement rule by field would hide it, and
+        a BOM.md or rails of the project would be read for a board that is not the project's."""
+        other = tempfile.TemporaryDirectory()
+        self.addCleanup(other.cleanup)
+        path = os.path.join(os.path.realpath(other.name), "demo.kicad_pcb")       # the same key as the project's
+        with open(os.path.join(self.root, "boards", "demo", "demo.kicad_pcb"), encoding="utf-8") as fh:
+            write(path, fh.read())
+        write(os.path.join(self.root, "pcbkit.toml"), self.TOML + '\n[release]\nplaced = "field:Assembly=jlc"\n'
+              '\n[standard]\nlabel_distance = 9.0\n[standard.rails]\ndemo = ["VIN"]\n'
+              '\n[[standard.waive]]\ncheck = "lcsc"\nnote = "every board of this project"\n'
+              '\n[[standard.waive]]\ncheck = "mounting"\nnote = "held by its connector"\n')
+        write(os.path.join(self.root, "BOM.md"), "| R1 | C1 |\n")
+        code, out = self.standard(path, "--json")
+        (r,) = json.loads(out)
+        self.assertEqual((code, r["pcb"], r["waived"]), (1, path, 0))
+        levels = {(f["check"], f["level"], f["item"]) for f in r["findings"]}
+        self.assertIn(("lcsc", "error", "R1"), levels)                 # the default placement rule, and no waiver
+        self.assertIn(("mounting", "note", ""), levels)
+        self.assertNotIn("waiver", {f["check"] for f in r["findings"]})        # nor a waiver "that matches nothing"
+        rails = [f["text"] for f in r["findings"] if f["check"] == "test-pads"]
+        self.assertTrue(rails and "no rails known" in rails[0], rails)          # not the project's [standard.rails]
+        # the project's own board of that name, from the same folder: its settings apply
+        code, out = self.standard("demo", "--json")
+        (r,) = json.loads(out)
+        self.assertEqual((r["pcb"], r["error"]), ("boards/demo/demo.kicad_pcb", 1))        # the title block only
+        self.assertEqual([f["check"] for f in r["findings"] if f["level"] == "error"], ["title-block"])
+
+    def test_a_project_of_defaults_reads_no_pcbkit_toml(self):
+        from pcbkit.config import DEFAULTS, Project
+        write(os.path.join(self.root, "pcbkit.toml"), self.TOML + '\n[release]\nplaced = "field:Assembly=jlc"\n')
+        inside = os.path.join(self.root, "boards", "demo")
+        p = Project.defaults(inside)
+        self.assertEqual((p.root, p.release["placed"], p.cfg["standard"]["waive"]), (inside, "not-excluded", []))
+        self.assertEqual(Project(inside).release["placed"], "field:Assembly=jlc")
+        p.cfg["standard"]["waive"].append("x")                         # its own copy of the defaults
+        self.assertEqual(DEFAULTS["standard"]["waive"], [])
 
 
 if __name__ == "__main__":

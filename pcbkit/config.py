@@ -1,5 +1,5 @@
 """A project's pcbkit.toml: which boards it has, how they are released, where its production record and its
-overview page live.
+overview page live, and what its boards leave out of the standard (pcbkit standard).
 
 Every key is optional; the defaults are the layout in docs/CONVENTIONS.md (boards/<name>/, releases/<board>/,
 docs/previews/<board>/, production/). The file sits at the project's root; pcbkit finds it from the current folder
@@ -53,8 +53,15 @@ DEFAULTS = {
         "layer_width": 1400,           # pixels across a layer picture
         "base": "",                    # a URL the page's sources link to (the repo's file view) instead of the files
     },
+    "standard": {                      # pcbkit standard: "What a released board carries" (docs/CONVENTIONS.md)
+        "label_distance": 2.0,         # mm from a part or test pad to a silkscreen text that counts as its label
+        "bom": "",                     # the BOM.md Extended parts are looked up in (default: the nearest one upwards)
+        "rails": {},                   # per PCB key, the nets that need a test pad (default: the power symbols' nets)
+        "waive": [],                   # [[standard.waive]]: board, check, items, and a note saying why
+    },
 }
-DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity"], "assembly": True,
+# "standard" refuses a release on the standard's errors (pcbkit standard); a profile that lists its checks adds it
+DEFAULT_PROFILE = {"match": "*", "release": True, "checks": ["erc", "drc", "parity", "standard"], "assembly": True,
                    "extra_layers": [], "keep_silk_in_mask": False}
 
 

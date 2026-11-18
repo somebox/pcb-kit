@@ -19,14 +19,15 @@ one; `pcbkit overview --check` says what is wrong with it. Texts take `` `code` 
 
 ## Its tables
 
-Each `[[...]]` may appear several times. `id` is lower-case letters, digits and hyphens, unique in the round: a
-note names its item by it, and the page's links (`overview.html#r3-power`) use it.
+Each `[[...]]` may appear several times. An `id` is unique in the round: a note names its item by it, and the
+page's links (`overview.html#r3-power`) use it. A board's is its PCB's file name as the project has it; every other
+is lower-case letters, digits and hyphens.
 
 | Table | Keys | Notes |
 | --- | --- | --- |
-| `[[board]]` | `id`, `version`, `mark`, `state`, `text`, `source` | `id` is the board's file name without `.kicad_pcb` |
+| `[[board]]` | `id`, `version`, `mark`, `state`, `text`, `source` | `id` is the board's file name without `.kicad_pcb`, as it is: `controller_v2`, `Main` |
 | `[[topic]]` | `id`, `title`, `mark`, `state`, `text`, `picture`, `source` | a block or a subject: power, the MCU, the case, firmware, bring-up. `picture` is a file of the project. A topic whose words changed since the round before is tagged "changed", a new id "new" |
-| `[[decision]]` | `id`, `ref`, `question`, `text`, `blocks`, `recommend`, `why`, `source` | `ref` is its number in the project (O9, Q3); `blocks` what waits on it; `recommend` the id of an option; `why` in a line |
+| `[[decision]]` | `id`, `ref`, `question`, `text`, `blocks`, `recommend`, `why`, `source`; `mark`, `state` | `ref` is its number in the project (O9, Q3); `blocks` what waits on it; `recommend` the id of an option; `why` in a line. `mark` only when it is not the user's to take yet (`blocked`), and `state` when there is a word to go with it: "waits for the range test", "asked again: the case changed" |
 | `[[decision.option]]` | `id`, `text`, `effect`, `cost` | two to four after each decision |
 | `[[decided]]` | `ref`, `text`, `source` | a decision taken in this round, by its number in DESIGN.md |
 | `[[fact]]` | `id`, `mark`, `state`, `value`, `text`, `date`, `source` | `id` is `cost`, `supply`, `fab` or `orders`; `value` the number or phrase; `date` when it was taken |
@@ -153,7 +154,9 @@ label = "Case section"
 ## What the command keeps beside the rounds
 
 `docs/overview/img/index.toml` says which pictures each round uses and holds a seal on each earlier round: the
-hash of its file without the notes. Don't edit it. A board's pictures are in `img/<board>-<hash>/` under the hash
+hash of its file without the notes, and a hash of each note it had at the last build, so notes are added after
+those and none of them is changed. Don't edit it. A board's pictures are in `img/<board>-<hash>/` under the hash
 of its board file, so two rounds of an unchanged board share one set; a named picture is copied in as
-`img/<hash>-<name>`, as it was that day. If an earlier round has to be corrected after all, with the user's word,
-delete its `seal` line; the next build seals it again.
+`img/<hash>-<name>`, as it was that day. A build and `--check` stop when a picture a round was built with is no
+longer there: restore `img/` as it was committed. If an earlier round has to be corrected after all, with the
+user's word, delete its `seal` line (its `notes` line for a note); the next build seals it again.

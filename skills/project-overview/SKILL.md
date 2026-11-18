@@ -75,19 +75,31 @@ page then gets a note that cites it.
    | fab, orders | the order guide in PRODUCTION.md, `production/orders/*/order.toml`, the quotes | fab-order |
    | pictures of the product | `docs/previews/`: exploded views, sections, photos | visual-review |
 
-3. `pcbkit overview --check` until it names no problem. A problem stops the page: a mark that is not one of the
-   six, a decision without two options and a recommendation, a source that is not in the project or does not hold
-   the number named (`DESIGN.md D49`), an earlier round that changed. A watch line asks for a look: a text over its
-   limit, a board version that differs from the records.
+3. `pcbkit overview --check` until it prints no `problem:` line. A problem is something wrong with a round file,
+   and it stops the page: a mark that is not one of the six, a decision without two options and a recommendation,
+   a source that is not in the project or does not hold the number named (`DESIGN.md D49`), an earlier round that
+   changed. A `watch:` line asks for a look: a text over its limit, a board version that differs from the records.
+   A `to build:` line (the round's pictures are not made yet, the page is not what the rounds say) is what the
+   next step does: before the first build of a round the check ends with those, and exits 1.
 4. `pcbkit overview` builds the page. It renders each board's turntable and layers the first time a round shows
    them (`kicad-cli`, `rsvg-convert`; `cwebp` from `brew install webp` keeps a board near 1 to 2 MB, and without it
-   the pictures are JPEG and PNG and several times larger). `--render` makes the newest round's pictures again after
-   the board changed; `--no-render` uses the stills `pcbkit previews` left.
+   the pictures are JPEG and PNG and several times larger).
+   - A new round draws a board again when its file or one of the project's own 3-D models it uses
+     (`${KIPRJMOD}/...`) changed, and reuses the earlier pictures when neither did.
+   - `--render` draws the newest round's again whatever is there: for a change the board file doesn't show (one
+     of KiCad's own models, a KiCad upgrade, a render that came out wrong), or after the board changed while the
+     round was being written. An earlier round keeps the pictures it had.
+   - A `watch:` line names a layer or a side of the turntable that could not be drawn, and why (`rsvg-convert`
+     missing, a render that failed). The viewer looks complete without it, so `--check` keeps saying it: put it
+     right, then `--render`.
+   - `--no-render` uses the stills `pcbkit previews` left. It refuses stills whose `SOURCE.txt` is of another
+     version of the board, and says so on the page when they don't record which board they show.
 5. Look at the page before the user does: open it, switch rounds, turn a board, switch its layers, read it at
    phone width and in the dark theme. What reads long is long.
 6. Show it. `pcbkit overview --single build/overview.html` writes one file with its pictures inside, to send with
    the harness's file tool or to publish; the page in `docs/` links its pictures and needs its folder.
-7. Commit `docs/overview.html` and `docs/overview/` together.
+7. `pcbkit overview --check` once more. Now it must print no `problem:` and no `to build:` line and exit 0: the
+   page is what the round files say. Then commit `docs/overview.html` and `docs/overview/` together.
 
 ## A new round, or a note
 
@@ -96,7 +108,7 @@ page then gets a note that cites it.
 | a review and its decisions, a re-layout, a release, an order placed or received, a bring-up | a new round |
 | a price or a stock figure moved; a part was swapped in the cart; a decision was taken; a test came back | a note |
 | a typo or a wrong number in the newest round, before the user has seen it | edit that round's file |
-| anything in an earlier round | a note on it (`--round N`); `--check` refuses an earlier round that was edited |
+| anything in an earlier round, a note of it included | a new note on it (`--round N`); `--check` refuses an earlier round that was edited, and one whose notes were changed, removed or reordered |
 
 ```bash
 pcbkit overview note "The RP2354A is gone: 0 at JLC and at LCSC." --on supply --mark blocked --state "RP2354A out of stock"
@@ -126,7 +138,12 @@ them once, under its title.
 
 - The mark is the kind of state, the word is the state. "In the cart, unpaid" is `decision`, because the next move
   is the user's; "ordered" is `work`.
-- An open decision needs no mark: it shows `decision` until a note closes it.
+- An open decision needs no mark: it shows `decision` until a note chooses an option (`--chose`) or marks it
+  `done`. One that has to wait can say so, in the round file or by a note (`--on antenna --mark blocked --state
+  "waits for the range test"`): it stays among the decisions, and the next round starts with it as it stands.
+- A decision that was taken stays taken. A later note may mark it `blocked` or `attention` (the part chosen is out
+  of stock): that shows beside the choice and does not ask again. Only a note that marks it `decision` gives it
+  back to the user, without the choice.
 - Do not invent a seventh mark or use a mark as decoration. If two marks fit, take the one that tells the user
   whether they have to act.
 
@@ -160,5 +177,5 @@ round keeps its own copy.
 - Nothing is on the page that is not in the project's documents first. If a fact has no source, write it where it
   belongs, then cite it.
 - Words the user will act on are exact: cart lines, prices with their date, part numbers, versions as released.
-- Run `--check` before every build you show, and build before every commit: `--check` also says when the page is
-  not what the round files say.
+- Check, build, check: `--check` before a build for what is wrong with the round, and after it, before the
+  commit, where it must be silent but for watch lines. A `to build:` line then means the page was not rebuilt.

@@ -158,6 +158,19 @@ def _resolve(path, dst):
     return os.path.normpath(full if os.path.isabs(full) else os.path.join(dst, full)), ""
 
 
+def model_files(pcb):
+    """The 3-D model files a board names that are found here and are not KiCad's own: [(the path as the board has
+    it, where that is)], resolved as KiCad does from the board's folder: ${KIPRJMOD}/... or $(KIPRJMOD)/..., a bare
+    relative path, an absolute one, a variable set here. Embedded models and KiCad's library (${KICAD10_3DMODEL_DIR})
+    are left out. What a render of the board shows beside the board file itself."""
+    folder, out = os.path.dirname(os.path.abspath(pcb)), []
+    for name in sorted({_unq(m.group(2)) for m in MODEL.finditer(_read(pcb))}):
+        path, _ = _resolve(name, folder)
+        if path and os.path.isfile(path):
+            out.append((name, path))
+    return out
+
+
 def unresolved(dst):
     """Every 3-D model and library the copy in dst names and doesn't find: (file, path, why)."""
     out = []

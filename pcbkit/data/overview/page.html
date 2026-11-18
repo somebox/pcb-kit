@@ -236,6 +236,7 @@ footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
     const flip = $(".flip"), ctl = $(".vctl"), key = $(".vkey"), cap = $(".vcap");
     const s = { tab: 0, mode: 0, side: 0, frame: null, pic: 0, on: null, z: 1, tx: 0, ty: 0, aspect: 4 / 3 };
     const seen = {}, ptrs = new Map();
+    const MOVE = "Zoom with the buttons, + and \u2212, a pinch or a double-click; 0 fits. Zoomed in, drag or use the arrow keys to move.";
     let slider = null, pinch = null, turn = null;
     const mode = () => tabs[s.tab].modes[s.mode];
     const frames = () => mode().sides[s.side].frames;
@@ -375,12 +376,12 @@ footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
           lab.append(cb, sw, l.id + " ", sm);
           key.appendChild(lab);
         });
-        cap.textContent = note + (s.side ? "Seen from the back, mirrored. " : "Seen from the front. ") + "Drag to move; pinch, double-click or the buttons to zoom.";
+        cap.textContent = note + (s.side ? "Seen from the back, mirrored. " : "Seen from the front. ") + MOVE;
       } else {
         seg(row, m.pics.map(p => p.label), s.pic, i => { s.pic = i; fit(); build(); }, "Picture");
         ctl.appendChild(row);
         ctl.appendChild(zoomButtons());
-        cap.textContent = note + "Drag to move; pinch, double-click or the buttons to zoom.";
+        cap.textContent = note + MOVE;
       }
       paint();
     }
@@ -427,7 +428,15 @@ footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
     });
     stage.addEventListener("keydown", e => {
       const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0, m = mode();
-      if (m.kind === "turn" && d) { e.preventDefault(); s.frame += d; preload(); paint(); }
+      const move = { ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+      if (m.kind !== "turn" && s.z > 1 && move) {            // zoomed in: the arrows move the view, a fifth of it a press
+        e.preventDefault();
+        s.tx += move[0] * stage.clientWidth / 5;
+        s.ty += move[1] * stage.clientHeight / 5;
+        clamp();
+        place();
+      }
+      else if (m.kind === "turn" && d) { e.preventDefault(); s.frame += d; preload(); paint(); }
       else if (m.kind === "pics" && d) { e.preventDefault(); s.pic = (s.pic + d + m.pics.length) % m.pics.length; fit(); build(); }
       else if (m.kind !== "turn" && (e.key === "+" || e.key === "=")) zoomAt(1.6, stage.clientWidth / 2, stage.clientHeight / 2);
       else if (m.kind !== "turn" && e.key === "-") zoomAt(1 / 1.6, stage.clientWidth / 2, stage.clientHeight / 2);

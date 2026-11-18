@@ -148,12 +148,13 @@ What the viewer has caught so far; the corrected rows and their dates are in `co
 
 - PRODUCTION.md: the options chosen and why, the fee table if it changed, and the viewer's fixes.
 - The kit: corrected rules and the dates of the rules seen right, in `corrections.csv`, on a branch with a PR.
-- Each quote and each cart change of released boards: a further `draft` event per board in the order's order.toml
-  with its `price` and, in `note`, the cart number, then `pcbkit production`, which lists the orders in
-  PRODUCTION.md. `submitted`, with the order number, follows once the user has paid. A quote from `pcbkit fab`'s
-  files at an unreleased commit gets no event, since an order.toml pins releases and `pcbkit production` refuses a
-  version without one: it goes under PRODUCTION.md's Costs, with its date, the commit, the cart number and the
-  prices. A project without `production/orders/` keeps an Orders table in PRODUCTION.md instead (date, version,
-  what, state).
+- Each quote of released boards, and each cart line added or updated: a further `draft` event per board in the
+  order's order.toml with its `price` and, in `note`, the cart number. A board taken out of the cart with nothing in
+  its place gets a `cancelled` event with its `pcb`: a `draft` would keep it, and its hand-assembly parts, among the
+  open orders. Then `pcbkit production`, which lists the orders in PRODUCTION.md. `submitted`, with the order
+  number, follows once the user has paid. A quote from `pcbkit fab`'s files at an unreleased commit gets no event,
+  since an order.toml pins releases and `pcbkit production` refuses a version without one: it goes under
+  PRODUCTION.md's Costs, with its date, the commit, the cart number and the prices. A project without
+  `production/orders/` keeps an Orders table in PRODUCTION.md instead (date, version, what, state).
 - Tell the user what each cart holds, the totals with and without shipping, anything turned by hand in the viewer,
   and what they solder themselves.

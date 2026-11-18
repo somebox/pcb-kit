@@ -128,6 +128,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   `~/.local/share/pcbkit/kikit` and takes no flag; `pcbkit overview --check` exits 1 on a `to build:` line as well
   as on a problem, and now says so; `pcbkit overview new` called a round file "the briefing" in its header, which
   is the failure review's document.
+- **The pcb-kit skill says which boards an order event covers.** It told an agent to add an `[[event]]` whenever
+  an order shipped. An event without `pcb` counts for every board in the order, so one written for a parts order
+  placed beside the boards (hand-assembly parts from a distributor) would have shown boards still in the cart as
+  shipped. The skill now says to give `pcb` unless the event is about every board, and to record a parts order's
+  news as a dated line in the order's `notes`.
 
 ## [0.5.0] - 2026-11-16
 

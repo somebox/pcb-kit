@@ -51,8 +51,9 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   whoever drew them. What a run adds now goes into one KiCad group, `pcbkit:outline`, and a rerun replaces that
   group only. A board with an outline, keep-outs or holes but no such group (drawn by hand, or outlined by pcbkit
   0.5 or earlier) stops the run, with nothing written and a list of what is in the way, the holes by reference;
-  `--take-over` does the earlier removal once. An enclosure description that does not fit is refused before
-  anything is removed.
+  `--take-over` does the earlier removal once. An outline drawn with Bezier curves counts as one, and `--take-over`
+  takes curves and text boxes with the rest. An enclosure description that does not fit is refused before anything
+  is removed, and a run that fails while drawing puts the file back as it was.
 - **`pcbkit fab` names the placed parts it leaves out for want of an LCSC number.** It was silent.
 - **`pcbkit changelog --all` heads a release as CHANGELOG.md does**, `## <board> v1.1 (released 2026-11-20)`,
   with what it was compared with on the line below; it was `## <board> v1.1 - 2026-11-20 (since v1.0)`.

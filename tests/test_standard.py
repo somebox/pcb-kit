@@ -3,9 +3,10 @@
   python3 tests/test_standard.py     # re-runs itself under KiCad's Python when pcbnew is not importable
 
 The texts, title blocks, rails, Extended parts and waivers are read from files written here, with no KiCad. The
-labels, test pads, mounting holes and LCSC numbers are checked on boards drawn in pcbnew: a connector with its name
-beside it or on the wrong side, a test pad with a text, a value or a legend, a hole with and without a keep-out, a
-part the assembler places without an LCSC number.
+labels, test pads, mounting holes, fiducials, references and LCSC numbers are checked on boards drawn in pcbnew: a
+connector with its name beside it or on the wrong side, a test pad with a text, a value or a legend, a hole with and
+without a keep-out, fiducials too few, too near the edge or on one line, a part whose reference is hidden, a part the
+assembler places without an LCSC number.
 """
 import contextlib
 import io
@@ -281,6 +282,14 @@ class Waivers(unittest.TestCase):
             "  1 error, 1 note, 2 waived"])
         self.assertEqual(S.summary([S.ok("mounting", "4 holes")]), "nothing found")
 
+    def test_a_line_names_twenty_items_and_counts_the_rest(self):
+        many = [S.finding("references", "note", "not on the silkscreen", "R%d" % i) for i in range(1, 26)]
+        ((section, level, said),) = S.lines(many)
+        self.assertEqual((section, level), ("silkscreen", "note"))
+        self.assertTrue(said.startswith("not on the silkscreen: R1, R2, "), said)
+        self.assertTrue(said.endswith("R19, R20 and 5 more"), said)
+        self.assertEqual(S.count(many)["note"], 25)                   # every one is counted, and in --json
+
 
 @unittest.skipUnless(kicad.have_pcbnew(), "needs KiCad's Python")
 class Board(unittest.TestCase):
@@ -452,6 +461,124 @@ class Board(unittest.TestCase):
         out = S.mounting_findings(self.pcbnew, self.b)
         self.assertEqual(found(out), [("mounting", "note", "H2"), ("mounting", "note", "H4")])
         self.assertEqual(out[0]["detail"], "1 mm")
+
+    def outline(self, w=60, h=40, cut_out=None):
+        """A w x h mm outline from the origin; cut_out: (x, y, r) of a round hole in the board."""
+        pcbnew = self.pcbnew
+        for x0, y0, x1, y1 in ((0, 0, w, 0), (w, 0, w, h), (w, h, 0, h), (0, h, 0, 0)):
+            e = pcbnew.PCB_SHAPE(self.b)
+            e.SetShape(pcbnew.SHAPE_T_SEGMENT); e.SetLayer(pcbnew.Edge_Cuts); e.SetStart(self.at(x0, y0)); e.SetEnd(self.at(x1, y1))
+            self.b.Add(e)
+        if cut_out:
+            x, y, r = cut_out
+            c = pcbnew.PCB_SHAPE(self.b)
+            c.SetShape(pcbnew.SHAPE_T_CIRCLE); c.SetLayer(pcbnew.Edge_Cuts); c.SetCenter(self.at(x, y)); c.SetEnd(self.at(x + r, y))
+            self.b.Add(c)
+
+    def fiducial(self, ref, x, y, back=False, name="Fiducial_1mm_Mask2mm"):
+        return self.part(ref, x, y, name, "Fiducial", lcsc="", back=back, board_only=True, no_bom=True, no_pos=True)
+
+    def fiducials(self, placed="not-excluded", assembly=True):
+        return S.fiducial_findings(self.pcbnew, self.b, placed, assembly)
+
+    def test_three_fiducials_on_each_side_the_assembler_places_parts_on(self):
+        self.outline()
+        self.part("R1", 20, 20)
+        self.part("R2", 30, 20)
+        self.part("C1", 40, 20, back=True)
+        out = self.fiducials()
+        self.assertEqual(found(out), [("fiducials", "note", "front"), ("fiducials", "note", "back")])
+        self.assertEqual([f["detail"] for f in out], ["none; 2 placed parts", "none; 1 placed part"])
+        for i, (x, y) in enumerate(((5, 5), (55, 5), (5, 35))):
+            self.fiducial("FID%d" % (i + 1), x, y)
+        self.fiducial("FID4", 5, 5, back=True)
+        out = self.fiducials()
+        self.assertEqual(found(out), [("fiducials", "note", "back")])
+        self.assertEqual(out[0]["detail"], "1; 1 placed part")
+        self.fiducial("FID5", 55, 5, back=True)
+        self.fiducial("FID6", 55, 35, back=True)
+        out = self.fiducials()
+        self.assertEqual(found(out), [])
+        self.assertEqual(out[0]["text"], "3 on the front and 3 on the back, each 4.35 mm or more from the edge")
+
+    def test_a_side_where_nothing_is_placed_needs_none(self):
+        self.outline()
+        self.part("R1", 20, 20)
+        self.part("J1", 40, 20, "PinHeader", "X", kind="tht", back=True, no_pos=True)     # soldered by hand
+        self.part("R9", 30, 20, back=True, dnp=True)
+        self.part("J2", 50, 20, "JST_PH", "X", lcsc="", back=True)        # no LCSC number: in no placement file
+        self.assertEqual(found(self.fiducials()), [("fiducials", "note", "front")])
+        self.assertEqual([f["level"] for f in self.fiducials(assembly=False)], ["ok"])      # a bare board
+        self.assertEqual(found(self.fiducials("field:Assembly=jlc")), [])                  # nothing is the assembler's
+        self.assertIn("no part is placed", self.fiducials("field:Assembly=jlc")[0]["text"])
+
+    def test_a_fiducial_too_near_the_edge_or_a_cut_out(self):
+        self.outline(cut_out=(30, 20, 3))
+        self.part("R1", 20, 30)
+        self.fiducial("FID1", 4.35, 4.35)             # exactly as far as the standard asks
+        self.fiducial("FID2", 57, 5)                  # 3 mm from the right edge
+        self.fiducial("FID3", 30, 26)                 # 3 mm from the cut-out
+        out = self.fiducials()
+        self.assertEqual([(f["item"], f["detail"]) for f in out if f["level"] != "ok"],
+                         [("FID2", "3.00 mm"), ("FID3", "3.00 mm")])
+        self.assertIn("under 4.35 mm from the board's edge", out[0]["text"])
+
+    def test_three_fiducials_on_one_line(self):
+        self.outline()
+        self.part("R1", 20, 20)
+        for i, x in enumerate((5, 30, 55)):
+            self.fiducial("FID%d" % (i + 1), x, 5)
+        out = self.fiducials()
+        self.assertEqual(found(out), [("fiducials", "note", "front")])
+        self.assertIn("lie on one line", out[0]["text"])
+
+    def test_what_a_fiducial_is_and_a_board_without_an_outline(self):
+        self.part("R1", 20, 20)
+        self.fiducial("FID1", 5, 5)                                          # by its footprint's name
+        self.part("FID2", 55, 5, "Dot", "x", lcsc="", board_only=True)       # by its reference
+        p = self.part("M1", 5, 35, "Dot", "x", lcsc="", board_only=True)     # by its pad's fabrication property
+        p.Pads()[0].SetProperty(self.pcbnew.PAD_PROP_FIDUCIAL_GLBL)
+        local = self.part("U1", 30, 20, "BGA", "x")                          # a part's own fiducial pad is not one
+        local.Pads()[0].SetProperty(self.pcbnew.PAD_PROP_FIDUCIAL_LOCAL)
+        out = self.fiducials()
+        self.assertEqual(found(out), [])
+        self.assertEqual(out[0]["text"], "3 on the front (no closed outline to measure their distance from)")
+
+    def references(self):
+        return S.reference_findings(self.pcbnew, self.b, S.silk_texts(self.pcbnew, self.b))
+
+    def test_every_soldered_parts_reference_is_on_the_silkscreen(self):
+        self.part("R1", 10, 10, show=("Reference",))
+        for i in range(5, 9):
+            self.part("R%d" % i, 10 * i, 30, show=("Reference",))
+        self.part("R2", 20, 10)                                              # hidden
+        fab = self.part("R3", 30, 10, show=("Reference",))                   # shown, but on the fab layer
+        fab.Reference().SetLayer(self.pcbnew.F_Fab)
+        self.part("J1", 40, 10, "PinHeader", "X", kind="tht", no_pos=True)   # soldered by hand: a soldered part
+        # none of these is a soldered part
+        self.part("TP1", 50, 10, "TestPoint_Pad_D1.0mm", "X", nets=("X",))
+        self.part("H1", 60, 10, "MountingHole_3.2mm_M3", "M3", kind="npth", lcsc="")
+        self.fiducial("FID1", 70, 10)
+        self.part("R4", 80, 10, dnp=True)
+        self.part("JP1", 90, 10, "SolderJumper", "X", lcsc="", no_bom=True)
+        self.part("LOGO", 100, 10, "Logo", "", lcsc="", board_only=True)
+        out = self.references()
+        self.assertEqual(found(out), [("references", "note", "J1"), ("references", "note", "R2"), ("references", "note", "R3")])
+        for ref in ("J1", "R2", "R3"):
+            self.b.FindFootprintByReference(ref).Reference().SetVisible(True)
+        fab.Reference().SetLayer(self.pcbnew.F_SilkS)
+        out = self.references()
+        self.assertEqual([(f["level"], f["text"]) for f in out],
+                         [("ok", "8 soldered parts, each with its reference on the silkscreen")])
+
+    def test_references_left_off_most_of_a_board_are_one_finding(self):
+        for i in range(1, 6):
+            self.part("R%d" % i, 10 * i, 10, show=("Reference",) if i < 3 else ())
+        out = self.references()
+        self.assertEqual(found(out), [("references", "note", "")])
+        self.assertTrue(out[0]["text"].startswith("3 of 5 soldered parts have no reference on the silkscreen"), out)
+        self.part("R6", 60, 10, show=("Reference",))                       # now half: each is named
+        self.assertEqual(found(self.references()), [("references", "note", "R%d" % i) for i in (3, 4, 5)])
 
     def lcsc(self, placed="not-excluded", assembly=True):
         return S.lcsc_findings(self.pcbnew, self.b, placed, assembly)

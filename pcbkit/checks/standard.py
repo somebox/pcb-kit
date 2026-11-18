@@ -24,12 +24,19 @@ them; a .kicad_pcb outside any project is read with the defaults), what a tool c
                             pad is not a text: a board with such badges waives the check and says so
   mounting          note    a mounting hole (every pad unplated, or a MountingHole* footprint) with neither a
                             courtyard nor a rule area over it; a board with no hole at all
+  fiducials         note    fewer than three fiducials (a Fiducial* footprint, a reference FID*, or a pad marked as a
+                            global fiducial) on a side the assembler places a part with an LCSC number on; one whose
+                            centre is under 4.35 mm from the board's edge or a cut-out; three or more on one line
+  references        note    a soldered part (it has pads and is in the BOM; not DNP, a test pad, a fiducial, a hole
+                            or a net tie) whose reference is not shown on the silkscreen; one finding for the board
+                            when more than half of them are left off
   lcsc              error   a part the assembler places ([release] placed), not DNP, with no LCSC number: `pcbkit fab`
                             leaves it out of the BOM and the placement file
   extended          note    a placed JLC Extended part (konnect's parts cache) that BOM.md does not name
 
-and, as lines to look at, what only a person can check: the board's name, voltages and polarity, what a jumper
-position does, pin names, polarity marks, and how many findings `pcbkit sch-lint` has.
+and, as lines to look at, what only a person can check: the board's name and its author, voltages and polarity,
+what a jumper position does, pin names, polarity marks, that a reference is beside its part, and how many findings
+`pcbkit sch-lint` has.
 
 An error stops `pcbkit release` (its profile's checks include "standard" unless the project lists others); a note
 never does. A prototype leaves a finding for a later revision with a waiver in pcbkit.toml, which must say why:
@@ -66,6 +73,8 @@ CHECKS = collections.OrderedDict([
     ("test-pads", ("test pads", True)),
     ("test-pad-labels", ("test pads", True)),
     ("mounting", ("mounting", True)),
+    ("fiducials", ("fiducials", True)),
+    ("references", ("silkscreen", True)),
     ("lcsc", ("parts", True)),
     ("extended", ("parts", True)),
     ("waiver", ("waivers", False)),
@@ -75,10 +84,14 @@ DEFAULTS = {"label_distance": 2.0, "bom": "", "rails": {}, "waive": []}
 LABELLED = (("JP", "jumper"), ("J", "connector"), ("SW", "switch"), ("BT", "battery holder"), ("LED", "LED"))
 TYPED_DATE = re.compile(r"(?<![\w.-])(?:(?:19|20)\d{2}-\d{2}(?:-\d{2})?|\d{1,2}[./]\d{1,2}[./](?:19|20)\d{2}"
                         r"|\d{1,2}[./](?:19|20)\d{2})(?![\w-])")
-LOOK = (("name, version, date", "the board's name is on the silkscreen, once"),
+EDGE = 4.35                            # mm from a fiducial's centre to the board's edge (docs/CONVENTIONS.md)
+MOST = 20                              # items a report line names; the rest are counted (--json has them all)
+LOOK = (("name, version, date", "the board's name is on the silkscreen, once, and its author with an address where "
+                                "the design is found"),
         ("labels", "the voltage range and polarity at each power input; what each jumper position does and its "
                    "default; pin 1 and every pin's signal at each connector; buttons and LEDs named for what they do"),
-        ("silkscreen", "every polarised part's mark is visible beside the part (text size and clearances are DRC's)"),
+        ("silkscreen", "every polarised part's mark is visible beside the part, and each reference beside its own, "
+                       "readable with the part fitted (text size and clearances are DRC's)"),
         ("documents", "PRODUCTION.md's status lines, briefing and bring-up list (pcbkit production --check)"))
 
 
@@ -511,6 +524,107 @@ def mounting_findings(pcbnew, board):
     return out
 
 
+def is_fiducial(pcbnew, fp):
+    return _name(fp).startswith("Fiducial") or _prefix(fp.GetReference()) == "FID" or \
+        any(p.GetProperty() == pcbnew.PAD_PROP_FIDUCIAL_GLBL for p in fp.Pads())
+
+
+def _to_segment(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy))) if dx or dy else 0.0
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+def edge_distance(pcbnew, board):
+    """A function from a point (mm) to its distance from the board's edge, the cut-outs inside it included; None for a
+    board without a closed outline."""
+    poly = pcbnew.SHAPE_POLY_SET()
+    try:
+        closed = board.GetBoardPolygonOutlines(poly, False)
+    except TypeError:                  # a KiCad whose pcbnew takes the outlines alone
+        closed = board.GetBoardPolygonOutlines(poly)
+    if not closed or not poly.OutlineCount():
+        return None
+    segments = []
+    for i in range(poly.OutlineCount()):
+        for chain in [poly.Outline(i)] + [poly.Hole(i, j) for j in range(poly.HoleCount(i))]:
+            pts = [(pcbnew.ToMM(chain.CPoint(k).x), pcbnew.ToMM(chain.CPoint(k).y)) for k in range(chain.PointCount())]
+            segments += list(zip(pts, pts[1:] + pts[:1]))
+    return lambda p: min(_to_segment(p, a, b) for a, b in segments)
+
+
+def _on_one_line(pts, within=0.5):
+    """Whether every point lies within `within` mm of the line through the two furthest apart."""
+    a, b = max(((p, q) for p in pts for q in pts), key=lambda pq: math.hypot(pq[0][0] - pq[1][0], pq[0][1] - pq[1][1]))
+    length = math.hypot(b[0] - a[0], b[1] - a[1])
+    if not length:
+        return True
+    return all(abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / length <= within for p in pts)
+
+
+def fiducial_findings(pcbnew, board, placed, assembly=True):
+    """Three fiducials on each side the assembler places parts on (parts with an LCSC number, as pcbkit fab lists
+    them), clear of the edge and not on one line."""
+    from ..release import jlc_fab
+    if not assembly:
+        return [ok("fiducials", "a bare board: nothing is placed, so none is needed")]
+    is_placed = jlc_fab.selector(placed)
+    sides, fids = collections.Counter(), {"front": [], "back": []}
+    for fp in board.GetFootprints():
+        side = "back" if fp.IsFlipped() else "front"
+        if is_fiducial(pcbnew, fp):
+            at = fp.GetPosition()
+            at = (pcbnew.ToMM(at.x), pcbnew.ToMM(at.y))
+            ref = fp.GetReference()
+            fids[side].append((ref if ref and "*" not in ref else f"at {at[0]:.1f}, {at[1]:.1f}", at))
+        elif not fp.IsDNP() and not fp.IsBoardOnly() and is_placed(fp) and jlc_fab.field(fp, "LCSC"):
+            sides[side] += 1               # one without a number is in no placement file (the lcsc check says so)
+    if not sides:
+        return [ok("fiducials", "no part is placed by the assembler, so none is needed")]
+    out, distance = [], edge_distance(pcbnew, board)
+    for side in ("front", "back"):
+        n = len(fids[side])
+        if sides[side] and n < 3:
+            out.append(finding("fiducials", "note", "fewer than three fiducials on a side the assembler places parts on "
+                               f"(three near three corners, their centres {EDGE:g} mm or more from the edge)", side,
+                               f"{n or 'none'}; {sides[side]} placed part{'s' * (sides[side] != 1)}"))
+        elif n >= 3 and _on_one_line([at for _, at in fids[side]]):
+            out.append(finding("fiducials", "note", "the fiducials of a side lie on one line: spread them to three "
+                               "corners", side))
+    for side in ("front", "back"):
+        for ref, at in sorted(fids[side], key=lambda f: _natural(f[0])):
+            d = distance(at) if distance else None
+            if d is not None and d < EDGE - 0.005:
+                out.append(finding("fiducials", "note", f"a fiducial whose centre is under {EDGE:g} mm from the board's "
+                                   "edge (JLC wants its opening 3.35 mm clear)", ref, f"{d:.2f} mm"))
+    if not out:
+        out.append(ok("fiducials", " and ".join(f"{len(fids[s])} on the {s}" for s in ("front", "back") if sides[s])
+                      + (f", each {EDGE:g} mm or more from the edge" if distance else " (no closed outline to "
+                                                                                    "measure their distance from)")))
+    return out
+
+
+def reference_findings(pcbnew, board, texts):
+    """Every soldered part's reference on the silkscreen: a part with pads that is in the BOM and fitted, and is not a
+    test pad, a fiducial, a mounting hole or a net tie."""
+    shown = {t["owner"] for t in texts if t["kind"] == "reference"}
+    parts = [fp for fp in board.GetFootprints()
+             if list(fp.Pads()) and not fp.IsBoardOnly() and not fp.IsDNP() and not fp.IsExcludedFromBOM()
+             and not fp.IsNetTie() and not is_test_pad(pcbnew, fp) and not is_fiducial(pcbnew, fp)
+             and not is_hole(pcbnew, fp)]
+    bare = [fp.GetReference() for fp in sorted(parts, key=lambda f: _natural(f.GetReference()))
+            if fp.GetReference() not in shown]
+    if len(bare) * 2 > len(parts):     # left off the board as a whole: one finding, for one line in LAYOUT.md
+        return [finding("references", "note", f"{len(bare)} of {len(parts)} soldered parts have no reference on the "
+                        "silkscreen: where there is no room they are left off, and LAYOUT.md says so")]
+    out = [finding("references", "note", "a soldered part whose reference is not on the silkscreen (where there is no "
+                   "room, LAYOUT.md says where they are left off)", ref) for ref in bare]
+    if not out:
+        out.append(ok("references", f"{len(parts)} soldered part{'s' * (len(parts) != 1)}, each with its reference on "
+                                    "the silkscreen"))
+    return out
+
+
 def lcsc_findings(pcbnew, board, placed, assembly=True):
     """Parts the assembler places that have no LCSC number, and the placed parts by number: (findings, {LCSC:
     (references, MPN)})."""
@@ -537,14 +651,15 @@ def lcsc_findings(pcbnew, board, placed, assembly=True):
 
 
 def board_findings(pcbnew, board, cfg, placed="not-excluded", assembly=True, rails=None, rails_from=""):
-    """The checks that need the board in pcbnew: labels, test pads, mounting holes and LCSC numbers; and the placed
-    parts by LCSC number, for the Extended parts."""
+    """The checks that need the board in pcbnew: labels, test pads, mounting holes, fiducials, references and LCSC
+    numbers; and the placed parts by LCSC number, for the Extended parts."""
     texts = silk_texts(pcbnew, board)
     distance = float(cfg.get("label_distance", DEFAULTS["label_distance"]))
     lcsc, parts = lcsc_findings(pcbnew, board, placed, assembly)
     return (label_findings(pcbnew, board, texts, distance)
             + test_pad_findings(pcbnew, board, texts, distance, rails or [], rails_from)
-            + mounting_findings(pcbnew, board) + lcsc), parts
+            + mounting_findings(pcbnew, board) + fiducial_findings(pcbnew, board, placed, assembly)
+            + reference_findings(pcbnew, board, texts) + lcsc), parts
 
 
 # ---- the report -----------------------------------------------------------------------------------------------------
@@ -593,7 +708,8 @@ def lines(findings):
     out = []
     for (check, level, text, note), f in order:
         section = CHECKS[check][0] if check in CHECKS else f.get("section", "")
-        items = ", ".join(groups[(check, level, text, note)])
+        items = groups[(check, level, text, note)]
+        items = ", ".join(items[:MOST]) + (f" and {len(items) - MOST} more" if len(items) > MOST else "")
         said = (f"{note} (waives: {text}" + (f": {items})" if items else ")")) if level == "waived" else \
             text + (f": {items}" if items else "")
         out.append((sections.index(section) if section in sections else len(sections), LEVELS.index(level), len(out),

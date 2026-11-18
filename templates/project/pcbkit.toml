@@ -58,7 +58,7 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # [[standard.waive]]                   # a finding left for a later revision; shown with its note in every report
 # board = "main"                       # a PCB's key, or a glob on its path or folder; without it, every board
 # check = "test-pads"                  # version, date, title-block, labels, test-pads, test-pad-labels, mounting,
-#                                      # lcsc, extended
+#                                      # fiducials, references, lcsc, extended
 # items = ["+5V"]                      # the references, nets or sheets it covers; without it, the whole check
 # note = "on J3 pin 2; a pad in v1.1"  # required: what is left out and why
 

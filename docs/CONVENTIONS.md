@@ -192,8 +192,8 @@ waived. A board reviewed before a line was written takes that line up at its nex
   the repository), or the name alone where there is no room. Release refuses `v${REVISION}` and `${CURRENT_DATE}`,
   and a board whose silkscreen prints no version [`version`, error]; a version typed in is noted, as is a board with
   no date or with a date typed where release never updates it [`date`]. The board's name and the author are looked
-  at. A title block with a title on every schematic sheet, and a title on the board or its root schematic, which
-  release gives to the other [`title-block`, error].
+  at: a tool does not know either. A title block with a title on every schematic sheet, and a title on the board or
+  its root schematic, which release gives to the other [`title-block`, error].
 - **Power in.** At each power input: the voltage range and the polarity (+ and -, or the centre-pin symbol at a
   barrel jack). Where the user chooses the supply, also its current limit or the fuse's rating.
 - **Jumpers, switches, solder bridges.** What each position does, in a few words, and the default
@@ -226,12 +226,18 @@ waived. A board reviewed before a line was written takes that line up at its nex
   Standard PCBA, with "a minimum clearance of 3.35 mm from the board edge, including the fiducial keep-out area"
   ([its help page](https://jlcpcb.com/help/article/how-to-add-edge-rails-fiducials-for-pcb-assembly-order), read
   2026-11-18); 4.35 mm to the centre meets that whether it is measured to the centre or to the opening. A board with
-  no room for them says so in LAYOUT.md; in a `pcbkit panel` the rails carry three.
+  no room for them says so in LAYOUT.md; in a `pcbkit panel` the rails carry three. Checked [`fiducials`]: three
+  on each side where the assembler places a part with an LCSC number, none under 4.35 mm from the edge or a cut-out,
+  and not all on one line. A fiducial is a `Fiducial*` footprint, a reference `FID*`, or a pad marked as a global
+  fiducial.
 - **Silkscreen.** Text no smaller than the project's DRC minimum (0.8 mm on most of the boards), clear of pads, and
   of mask openings unless the board prints inside them on purpose (`keep_silk_in_mask`). Every polarised part's mark
   is visible beside the part. The reference of every soldered part (not a test pad, a fiducial or a hole) is beside
   it, readable with the part fitted. Where there is no room, references are left off: LAYOUT.md says where, and
-  `board.pdf` from `pcbkit previews` shows them on its Fab layer, front and back.
+  `board.pdf` from `pcbkit previews` shows them on its Fab layer, front and back. Checked [`references`]: every
+  part with pads that is in the BOM and fitted shows its reference on the silkscreen; when more than half are left
+  off it is one finding for the board, to waive with where LAYOUT.md says so. That it sits beside its part is
+  looked at.
 - **Schematic.** `pcbkit erc` with 0 errors, its warnings explained in DESIGN.md. `pcbkit sch-lint --summary` read,
   and each finding fixed or explained: no text over text, references and values beside their parts, small local nets
   wired, each block framed and titled where the sheet is generated. Then `schematic.pdf` looked at.

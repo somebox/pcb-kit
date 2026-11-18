@@ -23,7 +23,7 @@ COMMANDS = {
     "courtyards": ("pcbkit.checks.courtyards", "courtyards that miss pads or the body, or sit on the other side (--fix redraws)"),
     "cleanup": ("pcbkit.checks.cleanup_tracks", "remove duplicate/zero-length/covered (--dangling: dead-end) segments, merge runs"),
     "standard": ("pcbkit.checks.standard", "what a released board carries, checked: version text, title blocks, labels, "
-                                           "test pads, holes, LCSC numbers (waivers in pcbkit.toml)"),
+                                           "test pads, holes, fiducials, references, LCSC numbers (waivers in pcbkit.toml)"),
     "release": ("pcbkit.release.release", "version, stamp and fab every changed board (pcbkit.toml), then production"),
     "changelog": ("pcbkit.release.changelog", "draft CHANGELOG.md: what changed in each board since its last release (--since)"),
     "production": ("pcbkit.production", "the production page: versions, orders, stock (--check)"),

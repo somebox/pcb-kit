@@ -57,8 +57,8 @@ line or the reply's first line:
 
 - **Scope:** which boards and blocks, at which commit, or only what changed since one.
 - **Depth:** a **look** (time-boxed: the project's records and the checks that take seconds; no web research,
-  simulation, sub-agents or browser), the steps **as written**, or **deeper** (as written, plus what the user
-  names).
+  simulation, sub-agents or browser, unless the skill's own look names one, as power-sim's names a single nominal
+  run), the steps **as written**, or **deeper** (as written, plus what the user names).
 
 Take both from the request. Where it leaves them open: before an order, as written; otherwise the smallest that
 answers the question. Ask which depth only when the difference costs money or more than an hour; what a skill says

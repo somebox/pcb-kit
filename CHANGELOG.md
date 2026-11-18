@@ -66,8 +66,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
     minutes to 3 hours; JLC's placement viewer has one name.
   - The project template: DESIGN.md has numbered open questions (O1, ...) beside its decisions, and LAYOUT.md's
     silkscreen line names the board with its version and author. The skills call PRODUCTION.md's section the order
-    checklist, as the template does, and a quote is a `draft` event in the order's order.toml, no longer also a row
-    in a hand-kept table.
+    checklist, as the template does, and a quote of released boards is a `draft` event in the order's order.toml, no
+    longer also a row in a hand-kept table; a quote from an unreleased commit goes under PRODUCTION.md's Costs.
   - Shorter: the skills' descriptions (764 to 591 words), lessons that were told twice now stand once beside their
     check, and the rules that must not be missed are in bold at the top of the pcb-kit and failure-review skills.
   - What loads when a skill triggers went from 15,618 words to 13,178. Seven passages that are read in one situation

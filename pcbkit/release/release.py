@@ -5,7 +5,10 @@
 For every PCB (or those named, by key, path or folder):
 1. Checks, per its profile (ERC; DRC with schematic parity; nothing unconnected). A PCB that fails is a mockup: it is
    reported, with its DRC errors by type and part, and left alone. An accepted error is a measured .kicad_dru rule
-   (docs/CONVENTIONS.md).
+   (docs/CONVENTIONS.md). Then `pcbkit standard` ("standard" in the profile's checks, as it is by default): what a
+   released board carries. An error of it (no version on the silkscreen, a sheet without a title block, a placed
+   part without an LCSC number) stops the release of a changed board, unless pcbkit.toml waives it with a note
+   ([[standard.waive]]); a board unchanged since its release is warned. Its notes and waivers are counted.
 2. Has it changed since its last release? First its source fingerprint (the board and its schematics with the version
    and date stamps masked, its custom rules, the project file's design settings and net classes, and the fab
    settings); if that differs, its fab fingerprint (every house's files made from a copy with neutral stamps), so a
@@ -23,7 +26,8 @@ For every PCB (or those named, by key, path or folder):
    asked for, --version names the version (it must come after the last). A board without releases takes --version
    when its title block names a version ("v1.4", "1.3.1": boards of it may have been built, and the output says what
    git knows of the circuit since); a draft's ("0.1-draft" -> 0.1.0) or none (1.0.0) is taken as it is.
-   A board whose texts would print wrong is not released: v${REVISION} (vv1.0) or ${CURRENT_DATE} (the plot's day).
+   A board whose texts would print wrong is not released: v${REVISION} (vv1.0) or ${CURRENT_DATE} (the plot's day);
+   nor one with an error of the standard left.
 4. The new version and the date (in [release] date_format) are stamped into the title blocks of the board, its root
    schematic and the sheets under it that have one (versions.stamp), and into silkscreen texts with the old label
    typed in; ${REVISION} and ${ISSUE_DATE} print them. Refused while KiCad has the folder open; then DRC again, which
@@ -46,6 +50,7 @@ circuit fingerprint gets it recorded, since its circuit is that release's. With
 import argparse
 import glob
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -108,6 +113,33 @@ def drc_errors(violations):
 
 
 FAILS = ("erc", "drc", "unconnected", "parity")
+
+
+def standard(pcb_path, profile):
+    """What `pcbkit standard` finds on a board, run as a process (it needs pcbnew): errors, its errors left unwaived
+    as the report says them, one line a kind (v${REVISION} and ${CURRENT_DATE} aside, which release refuses in its
+    own words), and said, its notes and waivers counted ("standard: 4 notes, 2 waived"). Nothing when the profile's
+    checks leave "standard" out."""
+    if "standard" not in profile["checks"]:
+        return dict(errors=[], said="")
+    from ..checks import standard as S
+    env = dict(os.environ)
+    env["PYTHONPATH"] = PKG_ROOT + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    r = subprocess.run([sys.executable, "-m", "pcbkit.cli", "standard", pcb_path, "--json"], capture_output=True,
+                       text=True, env=env)
+    try:
+        (res,) = json.loads(r.stdout[r.stdout.index("["):])
+    except ValueError:                 # no JSON: it stopped (exit status 1 with JSON is findings, not a failure)
+        raise SystemExit(f"pcbkit standard {pcb_path} failed:\n{r.stdout[-1500:]}{r.stderr[-1500:]}")
+    found = res["findings"]
+    errors = [said for _, _, said in S.lines([f for f in found if f["level"] == "error"
+                                              and f["check"] != "version-print"])]
+    rest = [k for k in ("note", "waived") if res[k]]
+    said = "standard: " + ", ".join(f"{res[k]} {k}{'s' * (k == 'note' and res[k] != 1)}" for k in rest) if rest else ""
+    return dict(errors=errors, said=said)
+
+
+STANDARD_HINT = " (pcbkit standard says more: fix, or waive with a note in pcbkit.toml)"
 
 
 def fab_args(project, profile):
@@ -333,8 +365,10 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
     c = checks(pcb_path, profile, errs)
     if any(c[k] for k in FAILS):
         return dict(state="mockup", checks=c, errors=errs)
+    std = standard(pcb_path, profile)
     if not project.release["enabled"]:
-        return dict(state="checked", checks=c)
+        said = "; ".join(x for x in ("; ".join(std["errors"]) + STANDARD_HINT if std["errors"] else "", std["said"]) if x)
+        return dict(state="checked", checks=c, **(dict(note=said) if said else {}))
     rdir = project.release_dir(pcb)
     last = V.current(rdir)
     src = source_key(project, pcb)
@@ -383,8 +417,11 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         # make now can differ from the release's (${CURRENT_DATE})
         with open(pcb_path, encoding="utf-8") as fh:
             wrong = V.label_problems(fh.read(), on_board)[0]
-        if wrong:
-            r["note"] = "; ".join(x for x in (r.get("note"), "warning: " + "; ".join(wrong)) if x)
+        if wrong or std["errors"]:     # the standard's errors likewise: its next release is refused until waived
+            r["note"] = "; ".join(x for x in (r.get("note"), "warning: " + "; ".join(wrong + std["errors"])
+                                              + (STANDARD_HINT if std["errors"] else "")) if x)
+        if std["said"]:
+            r["note"] = "; ".join(x for x in (r.get("note"), std["said"]) if x)
         if project.release["previews"] and not dry and not previews_current(project.previews_dir(pcb), pcb_path):
             r["previews"] = make_previews(project, pcb, pcb_path)
             V.update_last(rdir, key, previews=hashlib.sha1(V.preview_source(pcb_path).encode()).hexdigest())
@@ -413,11 +450,13 @@ def release(project, pcb, part=None, version=None, note="", dry=False):
         return dict(state=f"not released: {project.rel(os.path.join(rdir, lab))} exists", checks=c)
     with open(pcb_path, encoding="utf-8") as fh:
         wrong, typed = V.label_problems(fh.read(), on_board)
-    if wrong:
-        return dict(state="not released: " + "; ".join(wrong), checks=c)
+    if wrong or std["errors"]:
+        return dict(state="not released: " + "; ".join(wrong + std["errors"]) + (STANDARD_HINT if std["errors"] else ""),
+                    checks=c)
     said = why + ((f"; {len(typed)} silkscreen text{'s' * (len(typed) > 1)} with the version typed in "
                    f"({', '.join(typed[:2])}" + (", ..." if len(typed) > 2 else "")
-                   + "): ${REVISION} and ${ISSUE_DATE} follow the title block") if typed else "")
+                   + "): ${REVISION} and ${ISSUE_DATE} follow the title block") if typed else "") \
+        + (f"; {std['said']}" if std["said"] else "")
     if dry:
         return dict(state="would release", version=new, label=lab, checks=c, note=said)
     day = V.today()

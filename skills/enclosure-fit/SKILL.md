@@ -18,8 +18,12 @@ Worked example: `~/Documents/Projects/esp32-s3-ha-node` (`boards/node/enclosure.
    keep-out for tracks, vias and fills under it), keep-outs (lid bosses), cut-outs around bosses (clearance,
    fillet), and reference drawings (lid inside, plateau, connector zones). Write where each number came from.
 3. **Apply:** `pcbkit outline boards/<b>/<b>.kicad_pcb boards/<b>/enclosure.json --fit-check docs/fit-check.pdf`.
-   Rerunnable, but each run first deletes every drawing, text and dimension on Edge.Cuts, Dwgs.User, Cmts.User and
-   User.1, the `keepout:*` zones and the `MountingHole_*` footprints, its own or not.
+   Rerunnable: everything it draws is in one KiCad group, `pcbkit:outline`, and a rerun replaces that group and
+   nothing else, so a cut-out, a note or a hole added by hand stays. A board with an outline but no such group
+   (drawn by hand, or outlined by pcbkit 0.5 or earlier) stops the run with nothing written and a list of what is
+   in the way. `--take-over` then removes, once, every drawing, text and dimension on Edge.Cuts, Dwgs.User,
+   Cmts.User and User.1, the `keepout:*` zones and the `MountingHole_*` footprints without a library, whoever drew
+   them: read the list first, and add to `enclosure.json` any hole in it that the JSON lacks.
 4. **Print and cut.** The user prints at 100 %, measures the 50 mm scale bar and a dimension line, cuts along the
    thick outline and drives the real screws through the holes. Their findings go back into the JSON.
 5. After placement, `--parts` puts the part outlines on the print for a last check of connectors against the walls.

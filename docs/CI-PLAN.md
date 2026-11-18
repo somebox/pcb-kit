@@ -213,7 +213,8 @@ Files only:
 3. Skill and plugin lint: each SKILL.md's frontmatter (name, description length), `claude plugin validate --strict`,
    and a byte scan of images under the plugin folder for shell tokens (the plugin directory flagged
    `docs/images/sim-load-steps.png` for the bytes `IWr`).
-4. `pcbkit --help` and `pcbkit <command> --help` for every command.
+4. `pcbkit --help` and `pcbkit <command> --help` for every command (`tests/test_cli.py`, written 2026-11-18: it
+   also fails when a command starts a process or writes a file while printing its help, as four did).
 
 With KiCad 10:
 
@@ -275,18 +276,20 @@ Agent review, on request (a label or an `@claude` comment), not on every push:
 
 ## New checks to write
 
-In `pcbkit check`, or a new `pcbkit lint`, reading the board, the schematic and `pcbkit.toml`:
+In `pcbkit check`, or beside the checks of `pcbkit standard` (written 2026-11-18 for "What a released board
+carries": the version on the silkscreen, title blocks, labels, test pads, mounting holes, LCSC numbers, Extended
+parts, with waivers in `pcbkit.toml`), reading the board, the schematic and `pcbkit.toml`:
 
 | Check | From | Needs |
 | --- | --- | --- |
-| A test pad on every power rail (a TP footprint or a pad marked as a test point) | pcb-checklist; failure-review's test-points.md, "Measure" | pcbnew |
+| ~~A test pad on every power rail (a TP footprint or a pad marked as a test point)~~ written: `pcbkit standard`, `test-pads` | pcb-checklist; failure-review's test-points.md, "Measure" | pcbnew |
 | Exposed and thermal pads on a net | pcb-checklist | pcbnew |
 | ESD part on every signal net that reaches a connector | kicad-happy `audit_esd_protection`; siebenuhr's unprotected CC, VBUS and LED data | netlist |
 | Pull-ups on open-drain buses; strap and enable pins at a defined level | kicad-happy `validate_pullups`; failure-review's test-points.md, "Pins with a role" | netlist |
 | Decoupling distance per IC supply pin, other side counted | pcb-inspector `HEUR-DEC-001` | pcbnew |
 | Ground reference under signal tracks on the adjacent layer | pcb-inspector `HEUR-GND-001` | pcbnew |
 | Board design rules at or above the fab's capability (track, gap, drill, annular ring, hole spacing, silk) | pcb-checklist "within manufacturer's capability" | `.kicad_pro`, a fab profile in `pcbkit/data/` |
-| Bottom silkscreen text mirrored; the version label on the silkscreen matches releases.toml | pcb-checklist; `pcbkit release` stamps | pcbnew |
+| Bottom silkscreen text mirrored (still to write). ~~The version label on the silkscreen~~ written: `pcbkit standard`, `version` and `date`, which ask for `${REVISION}` and `${ISSUE_DATE}`, so the label is the title block's | pcb-checklist; `pcbkit release` stamps | pcbnew |
 | Capacitor voltage rating against the rail it sits on | pcb-checklist; kicad-happy derating | a voltage field on capacitors |
 | Every polarised placed part listed in `PLACEMENT-<board>.md` | the fab-order skill | fab output |
 | BOM and CPL list the same designators, with matching quantities | nothing maintained does it | fab output |
@@ -309,7 +312,7 @@ In `pcbkit check`, or a new `pcbkit lint`, reading the board, the schematic and 
 3. Fixture boards for `check` and `cleanup`, and the `fab` consistency and determinism test.
 4. The corpus regression script, added to the release steps.
 5. The reusable project workflow, tried on rgb-spotlight; kicad-happy beside it as advisory.
-6. The new checks, starting with test pads on power rails and exposed pads on a net.
+6. The new checks, starting with exposed pads on a net (test pads on power rails are in `pcbkit standard`).
 7. Agent review on request.
 
 ## Sources

@@ -11,7 +11,7 @@ DESIGN.md            requirements, decisions and open questions (dated, numbered
 LAYOUT.md            the PCB: floor plan, stackup and rules, scripted copper, routing, checks, silkscreen
 PRODUCTION.md        how to order: checklist (options, polarity, rotations), bring-up, costs; its overview is generated
 CHANGELOG.md         what changed in each board version and why, newest first, citing DESIGN.md's decisions
-pcbkit.toml          the project's settings for pcbkit release and production (templates/project has the defaults)
+pcbkit.toml          the project's settings for pcbkit release, production and standard (templates/project has the defaults)
 BOM.md               from bomi
 boards/<name>/       one KiCad project per board (<name>.kicad_pro/.kicad_sch/.kicad_pcb, fp-lib-table)
 lib/                 the project's own symbols (<project>.kicad_sym), footprints (.pretty), 3dmodels/
@@ -168,16 +168,32 @@ unsaid. A look never clears an order. What a skill marks **always** holds at eve
 
 ## What a released board carries
 
-The standard a board meets before `pcbkit release` for an order. The failure review checks it, mostly on `pcbkit
-previews`' pictures; a line names the tool where one checks it. A board leaves out only what its line allows (for a
-prototype, or where there is no room), and LAYOUT.md then says what was left out and why. A board reviewed before a
-line was written takes that line up at its next revision, on the user's word. The rest is not waived.
+The standard a board meets before `pcbkit release` for an order. `pcbkit standard` checks what a tool can, and
+prints the rest as lines to look at; a line below names its check in square brackets, with "error" where it stops
+a release. The failure review checks the whole of it, mostly on `pcbkit previews`' pictures.
+
+A board may leave a finding for a later revision: a prototype, or a board with no room for what a line asks. It is
+waived in pcbkit.toml, with a note that says what is left out and why, and LAYOUT.md says the same in prose:
+
+```toml
+[[standard.waive]]
+board = "node"                  # a PCB's key, or a glob on its path or folder; without it, every board
+check = "test-pads"
+items = ["+5V", "VBUS"]         # the references, nets or sheets it covers; without it, the whole check
+note  = "on J7 pins 2 and 3; pads in v1.3"
+```
+
+Every report shows a waived finding with its note. A waiver without a note is an error, and one that matches
+nothing any more is named until it is removed. `v${REVISION}` and `${CURRENT_DATE}` print wrong and are never
+waived. A board reviewed before a line was written takes that line up at its next revision, on the user's word.
 
 - **Name, version, date, author.** On the silkscreen once: the board's name, `${REVISION}` and `${ISSUE_DATE}`,
   never typed (above); and, typed, the author's name with an address where the design is found (the author's site or
-  the repository), or the name alone where there is no room. Release refuses `v${REVISION}` and `${CURRENT_DATE}`
-  but passes a board with no version text, so look. A title block on the board and on every schematic sheet (`pcbkit
-  sch-lint --only title-block`).
+  the repository), or the name alone where there is no room. Release refuses `v${REVISION}` and `${CURRENT_DATE}`,
+  and a board whose silkscreen prints no version [`version`, error]; a version typed in is noted, as is a board with
+  no date or with a date typed where release never updates it [`date`]. The board's name and the author are looked
+  at. A title block with a title on every schematic sheet, and a title on the board or its root schematic, which
+  release gives to the other [`title-block`, error].
 - **Power in.** At each power input: the voltage range and the polarity (+ and -, or the centre-pin symbol at a
   barrel jack). Where the user chooses the supply, also its current limit or the fuse's rating.
 - **Jumpers, switches, solder bridges.** What each position does, in a few words, and the default
@@ -187,13 +203,23 @@ line was written takes that line up at its next revision, on the user's word. Th
   A serial pin is named for the board's own signal: TX is what the board sends. A prototype may name only pin 1
   and the power pins on a header between its own boards.
 - **Buttons and LEDs.** Named for what they do (BOOT, RESET, STATUS, CHG).
+- **Of the four lines above, a tool checks that the label is there** [`labels`]: each connector (J), jumper (JP),
+  switch (SW), battery holder (BT) and LED has a silkscreen text within 2 mm (`[standard] label_distance`) that
+  names it, on its own side, or on either side of a through-hole part. Its reference is not a name. What the text
+  says is looked at.
 - **Test pads.** One on every rail and a GND pad near them, each with its net's name on the silkscreen beside it or
   in a numbered legend, on the side reachable in the enclosure. The failure-review skill's test-points.md says which
   signals and rework links are added; the briefing says which of those were left out and why, and LAYOUT.md repeats
-  it.
+  it. Checked: a test pad on every rail [`test-pads`], the rails being the nets the schematic's power symbols name,
+  ground among them, or `[standard.rails]` for a board whose schematic uses labels instead; and a name at every test
+  pad [`test-pad-labels`]: a text within 2 mm on its side, its value shown, or its reference shown and named in a
+  legend (`TP1 RUN`, `GND TP8,12,13`). A number drawn as a polygon is not read: a board with such badges waives the
+  check and says so.
 - **Mounting.** Holes for the screws that hold it (2.2, 2.7 or 3.2 mm for M2, M2.5, M3), unplated unless DESIGN.md
   says they ground the board, each with a keep-out for the screw head or standoff, which DRC then enforces
-  (`pcbkit outline` draws both from `enclosure.json`). A board with none says in LAYOUT.md how it is held.
+  (`pcbkit outline` draws both from `enclosure.json`). A board with none says in LAYOUT.md how it is held. Checked
+  [`mounting`]: each hole (a footprint whose pads are all unplated, or a `MountingHole`) has a courtyard or a rule
+  area over it, and a board has one at all.
 - **Fiducials.** Three on each side JLC assembles, near three corners of the board (on a round board, spread along
   its edge and not on one line): `Fiducial:Fiducial_1mm_Mask2mm`, a 1 mm copper dot in a 2 mm mask opening, as a
   board-only footprint so parity holds, its centre 4.35 mm or more from the board's edge. JLC asks for fiducials on
@@ -209,9 +235,13 @@ line was written takes that line up at its next revision, on the user's word. Th
 - **Schematic.** `pcbkit erc` with 0 errors, its warnings explained in DESIGN.md. `pcbkit sch-lint --summary` read,
   and each finding fixed or explained: no text over text, references and values beside their parts, small local nets
   wired, each block framed and titled where the sheet is generated. Then `schematic.pdf` looked at.
-- **Parts.** Every placed part has its LCSC number (`pcbkit fab` leaves one without out, silently). A JLC Basic part
-  wherever one does the job; each Extended part has its reason in BOM.md, with the fee it adds for the order's PCBA
-  type, none under Standard (`pcbkit production` counts them). Parts from `library/PARTS.md` first.
+  `pcbkit standard` prints how many findings sch-lint has, as a line to look at.
+- **Parts.** Every placed part has its LCSC number [`lcsc`, error]: `pcbkit fab` leaves one without out of the BOM
+  and the placement file, and names it in its summary. A part soldered by hand is marked "Exclude from position
+  files", and is then not a placed part. A JLC Basic part wherever one does the job; each Extended part has its
+  reason in BOM.md, with the fee it adds for the order's PCBA type, none under Standard (`pcbkit production` counts
+  them) [`extended`: the placed Extended parts, from konnect's parts cache, that BOM.md does not name by LCSC number
+  or MPN]. Parts from `library/PARTS.md` first.
 - **Documents.** Dated status lines, the review's briefing and the bring-up list in PRODUCTION.md; the version's
   section in CHANGELOG.md follows the release (step 7 below).
 
@@ -246,11 +276,14 @@ line was written takes that line up at its next revision, on the user's word. Th
 5. A second opinion from KiCadRoutingTools' checkers (github.com/drandyhaas/KiCadRoutingTools:
    `py_router/check_drc.py`, `check_weird.py`, `check_connected.py`) on a copy of the board, for via-in-paste,
    stacked copper and near-open joints.
-6. `pcbkit previews` regenerated and looked at against "What a released board carries": assembly map, silkscreen,
-   plane coverage; for a board in a box, the paper fit (the enclosure-fit skill, step 4).
+6. `pcbkit standard` with no error, and each note fixed or waived in pcbkit.toml with its reason. Then
+   `pcbkit previews` regenerated and looked at against "What a released board carries", for what the command lists
+   under "to look at": assembly map, silkscreen, plane coverage; for a board in a box, the paper fit (the
+   enclosure-fit skill, step 4).
 7. Stock read live for every placed part, on JLC itself and that day (the bom-cost skill, Rules), each
    questionable figure looked into before going on, and the Extended-part fees reviewed. Then `pcbkit release`
-   (which reruns ERC and DRC and refuses a board with errors), `pcbkit panel` for panels, the version's section
+   (which reruns ERC, DRC and the standard and refuses a board with errors), `pcbkit panel` for panels, the
+   version's section
    in CHANGELOG.md, and an order.toml pinning the released versions, with a first `draft` event;
    `pcbkit production` then fills the order's `upload/` folder from the pinned releases.
 8. **The user signs off before any cart changes, as on a PR.** Put the order to them as a diff: the versions to go

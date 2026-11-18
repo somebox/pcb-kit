@@ -30,7 +30,8 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # [[release.profile]]                  # per PCB, the first whose match (a glob on its path) fits
 # match = "boards/*-panel/*"
 # release = true
-# checks = ["erc", "drc", "parity"]    # a PCB that fails any is a mockup: reported, not released
+# checks = ["erc", "drc", "parity", "standard"]   # the default. A PCB that fails ERC, DRC or parity is a mockup:
+#                                      # reported, not released. "standard": pcbkit standard's errors stop a release
 # assembly = false                     # Gerbers only
 # extra_layers = ["Cmts.User"]         # added to the Gerbers, e.g. V-score lines drawn there
 # keep_silk_in_mask = true             # silkscreen inside mask openings stays in the Gerbers (a face panel's legends)
@@ -48,6 +49,18 @@ folders = ["boards/*"]                 # globs of board folders, relative to thi
 # buy = "Thonk"                        # where it comes from, for the shopping list in each ORDER.md
 # group = ""                           # e.g. "cable": matched apart, so a connector can give a part and a cable
 # replace = false                      # true: the footprint's own hand part is dropped (counted elsewhere)
+
+# [standard]                           # pcbkit standard: "What a released board carries" (docs/CONVENTIONS.md)
+# label_distance = 2.0                 # mm from a part or test pad to a silkscreen text that counts as its label
+# bom = ""                             # the BOM.md Extended parts are looked up in; default: the nearest one upwards
+# [standard.rails]                     # the nets that need a test pad, per PCB; default: the nets its schematic's
+# main = ["+3V3", "+5V", "GND"]        # power symbols name
+# [[standard.waive]]                   # a finding left for a later revision; shown with its note in every report
+# board = "main"                       # a PCB's key, or a glob on its path or folder; without it, every board
+# check = "test-pads"                  # version, date, title-block, labels, test-pads, test-pad-labels, mounting,
+#                                      # lcsc, extended
+# items = ["+5V"]                      # the references, nets or sheets it covers; without it, the whole check
+# note = "on J3 pin 2; a pad in v1.1"  # required: what is left out and why
 
 # [overview]                           # docs/overview.html, the project on one page (pcbkit overview)
 # dir = "docs/overview"                # its rounds, r1.toml, r2.toml, ..., and img/, their pictures

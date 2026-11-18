@@ -196,7 +196,9 @@ apply. A question that applies and was not answered is an open check.
 
 - The board against this kit's `docs/CONVENTIONS.md`, "What a released board carries": its name, version, date and
   author; the power input, jumpers, connectors, pins, buttons and LEDs labelled; every soldered part's reference;
-  test pads named; mounting holes with their keep-outs; fiducials. What is left out is noted in LAYOUT.md, with the
+  test pads named; mounting holes with their keep-outs; fiducials. Run `pcbkit standard` first and take its findings
+  into the briefing: it says whether a label is there, and lists what is left to look at, which is what each label
+  says. What is left out is waived in pcbkit.toml with a note, on the user's word, and noted in LAYOUT.md, with the
   reason.
 - Mated boards: the stack height, what sits under and over each connector, the parts that face each other.
 - Screw heads, stand-offs and the enclosure's ribs over copper and parts (the enclosure-fit skill has the paper

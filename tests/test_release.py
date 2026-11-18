@@ -1231,6 +1231,16 @@ class Release(unittest.TestCase):
         self.assertIn("not released: no silkscreen text prints the version", out)
         self.assertIn("a waiver without a note: say what is left out and why: version", out)
 
+    def test_a_waiver_written_wrongly_stops_the_release_with_its_reason(self):
+        """It is one of the standard's errors, in the line that says the board is not released: a waiver the tool
+        can't read must not end the run without a word, nor let the board out."""
+        root = self.with_standard("standard-bad-waiver", self.WAIVED + '\n[[standard.waive]]\ncheck = "mounting"\n'
+                                  'items = 5\nnote = "held by its connector"\n')
+        edit(root, value("R1", "4.7k"))
+        out = release(root)
+        self.assertIn("not released: a waiver's items are a list of references, nets or sheets: mounting (5)", out)
+        self.assertEqual([e["label"] for e in entries(root)], ["v1.0"])
+
     def test_a_board_that_meets_the_standard_is_released(self):
         root = self.with_standard("standard-met")
         edit(root, silk_text("demo ${REVISION} ${ISSUE_DATE}"))

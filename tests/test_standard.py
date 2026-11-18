@@ -319,6 +319,53 @@ class Waivers(unittest.TestCase):
         self.assertIn("'testpads', which is none of: version, date, title-block", out[-2]["text"])
         self.assertIn("cannot be waived", out[-1]["text"])
 
+    def test_a_waiver_that_is_not_written_as_one_is_an_error_and_stops_nothing(self):
+        """Whatever pcbkit.toml holds, the report is made: a crash here would end `pcbkit standard` without a line,
+        and `pcbkit release` with it."""
+        good = dict(check="title-block", note="generated sheets; titles in v1.1")
+        for bad, text, item in (
+                ("all of them", "not a table", "'all of them'"),
+                (5, "not a table", "5"),
+                (dict(check="test-pads", items=5, note="x"), "items are a list", "test-pads (5)"),
+                (dict(check="test-pads", items="+5V", note="x"), "items are a list", "test-pads ('+5V')"),
+                (dict(check="test-pads", items=["+5V", 3], note="x"), "items are a list", "test-pads (+5V, 3)"),
+                (dict(check=["test-pads"], note="x"), "names the check ['test-pads'], which is none of", ""),
+                (dict(note="x"), "names the check '', which is none of", ""),
+                (dict(check="test-pads", board=7, note="x"), "board is a PCB's key", "test-pads"),
+                (dict(check="test-pads", note=5), "without a note", "test-pads"),
+                (dict(check="test-pads", note=["because"]), "without a note", "test-pads")):
+            ws = S.waivers_for([bad, good], self.pcb)
+            self.assertEqual(len(ws), 2, bad)                          # kept for this board, to be said
+            out = S.apply_waivers(self.found, ws)
+            self.assertEqual([(f["check"], f["level"]) for f in out][:4],
+                             [("test-pads", "note")] * 3 + [("title-block", "waived")], bad)     # the good one works
+            problems = [f for f in out if f["check"] == "waiver"]
+            self.assertEqual([(f["level"], f["item"]) for f in problems], [("error", item)], bad)
+            self.assertIn(text, problems[0]["text"], bad)
+            S.report("boards/node/node.kicad_pcb", out)                # and it can be said
+
+    def test_waivers_as_one_table_or_as_something_else(self):
+        one = dict(check="title-block", note="generated sheets")       # [standard.waive], one table: a list of one
+        self.assertEqual(S.apply_waivers(self.found, S.waivers_for(one, self.pcb))[3]["level"], "waived")
+        out = S.apply_waivers(self.found, S.waivers_for("none", self.pcb))
+        self.assertEqual([(f["level"], f["item"]) for f in out if f["check"] == "waiver"], [("error", "'none'")])
+        self.assertEqual(S.waivers_for([], self.pcb), [])
+
+    def test_a_setting_of_the_wrong_kind_is_an_error_and_its_default_is_used(self):
+        clean, wrong = S.settings(dict(label_distance=3, bom="docs/BOM.md", rails=dict(node=["+5V"]), waive=[]))
+        self.assertEqual((clean["label_distance"], clean["bom"], clean["rails"], wrong), (3, "docs/BOM.md", dict(node=["+5V"]), []))
+        clean, wrong = S.settings(dict(label_distance="2 mm", bom=3, rails=dict(node="+5V", driver=["VLED"], io=[5])))
+        self.assertEqual((clean["label_distance"], clean["bom"], clean["rails"]), (2.0, "", dict(driver=["VLED"])))
+        self.assertEqual([(f["check"], f["level"], f["item"]) for f in wrong],
+                         [("settings", "error", "'2 mm'"), ("settings", "error", "3"), ("settings", "error", "io"),
+                          ("settings", "error", "node")])
+        clean, wrong = S.settings(dict(rails=["+5V"], label_distance=True))
+        self.assertEqual((clean["rails"], clean["label_distance"], len(wrong)), ({}, 2.0, 2))
+        clean, wrong = S.settings("strict")
+        self.assertEqual((clean, [f["item"] for f in wrong]), (S.DEFAULTS, ["'strict'"]))
+        self.assertEqual(S.apply_waivers(wrong, [dict(check="settings", note="x")])[-1]["text"],
+                         "settings cannot be waived: it is fixed")
+
     def test_which_board_a_waiver_is_about(self):
         ws = [dict(board="node", check="a"), dict(board="boards/*", check="b"), dict(board="boards/node/*.kicad_pcb", check="c"),
               dict(check="d"), dict(board="controller", check="e"), dict(board="hardware/*", check="f")]
@@ -705,7 +752,7 @@ class Board(unittest.TestCase):
         self.fiducial("FID1", 70, 10)
         self.part("R4", 80, 10, dnp=True)
         self.part("JP1", 90, 10, "SolderJumper", "X", lcsc="", no_bom=True)
-        self.part("LOGO", 100, 10, "Logo", "", lcsc="", board_only=True)
+        self.part("LOGO", 100, 10, "Logo", "", lcsc="", board_only=True, no_bom=True)
         out = self.references()
         self.assertEqual(found(out), [("references", "note", "J1"), ("references", "note", "R2"), ("references", "note", "R3")])
         for ref in ("J1", "R2", "R3"):
@@ -714,6 +761,9 @@ class Board(unittest.TestCase):
         out = self.references()
         self.assertEqual([(f["level"], f["text"]) for f in out],
                          [("ok", "8 soldered parts, each with its reference on the silkscreen")])
+        # a part drawn on the board alone, in the BOM: soldered like the others, and placed by pcbkit fab
+        self.part("R10", 110, 10, board_only=True)
+        self.assertEqual(found(self.references()), [("references", "note", "R10")])
 
     def fp_text(self, fp, s, layer=None):
         """A text drawn in the footprint, as a library footprint has its ${REFERENCE}."""
@@ -882,6 +932,22 @@ class Command(unittest.TestCase):
         self.assertIn(("mounting", "note"), [(f["check"], f["level"]) for f in r["findings"]])    # not waived here
         code, out = self.standard("boards/demo")
         self.assertIn("waived  generated sheet; a title in v1.1 (waives: no title block: power.kicad_sch)", out)
+
+    def test_a_pcbkit_toml_written_wrongly_is_reported_and_the_report_is_made(self):
+        write(os.path.join(self.root, "pcbkit.toml"), self.TOML + '\n[standard]\nlabel_distance = "wide"\n'
+              'rails = ["+5V"]\n\n[[standard.waive]]\ncheck = "lcsc"\nitems = 5\nnote = "x"\n'
+              '\n[[standard.waive]]\ncheck = ["title-block"]\nnote = "x"\n'
+              '\n[[standard.waive]]\nboard = "demo"\ncheck = "title-block"\nnote = "generated; a title in v1.1"\n')
+        code, out = self.standard("demo", "--json")
+        (r,) = json.loads(out)
+        self.assertEqual(code, 1)
+        said = {(f["check"], f["level"], f["item"]) for f in r["findings"]}
+        self.assertTrue({("waiver", "error", "lcsc (5)"), ("waiver", "error", ""), ("settings", "error", "'wide'"),
+                         ("settings", "error", "['+5V']"), ("lcsc", "error", "R1"),
+                         ("title-block", "waived", "power.kicad_sch")} <= said, said)
+        code, out = self.standard("demo")
+        self.assertIn("  waivers              error   a waiver's items are a list of references, nets or sheets: lcsc (5)", out)
+        self.assertIn("  pcbkit.toml          error   [standard] label_distance is a distance in mm, a number; 2 is used: 'wide'", out)
 
     def test_a_board_outside_any_project_is_read_with_the_defaults(self):
         other = tempfile.TemporaryDirectory()

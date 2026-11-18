@@ -59,7 +59,9 @@ never does. A prototype leaves a finding for a later revision with a waiver in p
   note  = "on J7 pins 2 and 3; pads in v1.3"
 
 The report shows each waived finding with its note, and names a waiver that matches nothing any more. A waiver
-without a note is an error. Exit status 1 when an error is left. The texts and title blocks are read from the files;
+without a note is an error, and so is one that is not written as above (its items not a list, a check that is
+none) or a [standard] setting of the wrong kind: each is said in the report, and stops a release, where a setting
+read wrongly would only have stopped the command. Exit status 1 when an error is left. The texts and title blocks are read from the files;
 the geometry needs pcbnew.
 """
 import argparse
@@ -89,6 +91,7 @@ CHECKS = collections.OrderedDict([
     ("lcsc", ("parts", True)),
     ("extended", ("parts", True)),
     ("waiver", ("waivers", False)),
+    ("settings", ("pcbkit.toml", False)),
 ])
 LEVELS = ("error", "note", "waived", "ok", "look")
 DEFAULTS = {"label_distance": 2.0, "bom": "", "rails": {}, "waive": []}
@@ -313,36 +316,57 @@ def extended_findings(parts, cache, bom_path, root=""):
 # ---- waivers ---------------------------------------------------------------------------------------------------------
 def waivers_for(waive, pcb):
     """The [[standard.waive]] entries that are about this PCB (its key, or a glob on its path or folder; all of them
-    without a board)."""
+    without a board). waive is what pcbkit.toml holds, whatever that is: one table counts as a list of one, and an
+    entry that is no table, or whose board is no text, is kept for every board, so that apply_waivers says what is
+    wrong with it."""
     def about(w):
-        b = w.get("board")
+        b = w.get("board") if isinstance(w, dict) else None
+        if not isinstance(w, dict) or (b is not None and not isinstance(b, str)):
+            return True
         return not b or b == pcb["key"] or fnmatch.fnmatch(pcb["path"], b) or fnmatch.fnmatch(pcb.get("folder", ""), b)
-    return [w for w in waive if about(w)]
+    return [w for w in (waive if isinstance(waive, list) else [waive]) if about(w)]
 
 
 def _waiver_name(w):
-    items = w.get("items") or []
-    return f"{w.get('check', '?')}" + (f" ({', '.join(map(str, items))})" if items else "")
+    """A waiver as a finding about it names it: its check and items, however they were written."""
+    if not isinstance(w, dict):
+        return repr(w)[:60]
+    check, items = w.get("check", "?"), w.get("items")
+    said = check if isinstance(check, str) else repr(check)
+    if isinstance(items, list):
+        return said + (f" ({', '.join(map(str, items))})" if items else "")
+    return said + (f" ({items!r})" if items is not None else "")
+
+
+def waiver_problem(w):
+    """What is wrong with a [[standard.waive]] entry as written, (the finding's text, whether to name the entry), or
+    None. Nothing in pcbkit.toml may stop the report: a waiver that can't be read is an error in it."""
+    if not isinstance(w, dict):
+        return "a [[standard.waive]] entry that is not a table of board, check, items and note", True
+    check, items, board, note = w.get("check", ""), w.get("items"), w.get("board"), w.get("note", "")
+    if not isinstance(check, str) or check not in CHECKS:
+        return (f"a waiver names the check {check!r}, which is none of: "
+                + ", ".join(c for c, (_, can) in CHECKS.items() if can)), False
+    if not CHECKS[check][1]:
+        return f"{check} cannot be waived: it is fixed", True
+    if board is not None and not isinstance(board, str):
+        return "a waiver's board is a PCB's key, or a glob on its path or folder", True
+    if not isinstance(note, str) or not note.strip():
+        return "a waiver without a note: say what is left out and why", True
+    if items is not None and (not isinstance(items, list) or not all(isinstance(i, str) for i in items)):
+        return "a waiver's items are a list of references, nets or sheets", True
+    return None
 
 
 def apply_waivers(findings, waive):
     """The findings with those a waiver covers marked waived (level "waived", its note, and "was", the level it had),
-    then what is wrong with the waivers themselves: one without a note or for a check that is none or can't be waived
-    (errors), one that matches nothing any more (a note)."""
+    then what is wrong with the waivers themselves: one without a note, for a check that is none or can't be waived,
+    or not written as a waiver is (errors), one that matches nothing any more (a note)."""
     out, good = [], []
     for w in waive:
-        check, items = w.get("check", ""), w.get("items")
-        if check not in CHECKS:
-            out.append(finding("waiver", "error", f"a waiver names the check {check!r}, which is none of: "
-                               + ", ".join(c for c, (_, can) in CHECKS.items() if can)))
-        elif not CHECKS[check][1]:
-            out.append(finding("waiver", "error", f"{check} cannot be waived: it is fixed", _waiver_name(w)))
-        elif not str(w.get("note", "")).strip():
-            out.append(finding("waiver", "error", "a waiver without a note: say what is left out and why",
-                               _waiver_name(w)))
-        elif items is not None and (not isinstance(items, list) or not all(isinstance(i, str) for i in items)):
-            out.append(finding("waiver", "error", "a waiver's items are a list of references, nets or sheets",
-                               _waiver_name(w)))
+        problem = waiver_problem(w)
+        if problem:
+            out.append(finding("waiver", "error", problem[0], _waiver_name(w) if problem[1] else ""))
         else:
             good.append(w)
     used = collections.defaultdict(set)        # waiver's index -> the items it covered ("" for a whole check)
@@ -361,6 +385,40 @@ def apply_waivers(findings, waive):
             what = f"{w['check']}" + (f" ({', '.join(stale)})" if stale != [""] else "")
             out.append(finding("waiver", "note", "a waiver that matches nothing any more: remove it", what))
     return done + out
+
+
+def settings(cfg):
+    """[standard] as the checks use it, and what is wrong with it as pcbkit.toml wrote it: (the settings, findings).
+    A value of the wrong kind is an error of the check "settings" and its default is used, so the rest of the report
+    is still made."""
+    out = []
+    if not isinstance(cfg, dict):
+        out.append(finding("settings", "error", "[standard] is a table: label_distance, bom, [standard.rails], "
+                           "[[standard.waive]]", repr(cfg)[:40]))
+        cfg = {}
+    clean = dict(DEFAULTS, **cfg)
+    d = clean["label_distance"]
+    if isinstance(d, bool) or not isinstance(d, (int, float)) or d < 0:
+        out.append(finding("settings", "error", "[standard] label_distance is a distance in mm, a number; "
+                           f"{DEFAULTS['label_distance']:g} is used", repr(d)[:40]))
+        clean["label_distance"] = DEFAULTS["label_distance"]
+    if not isinstance(clean["bom"], str):
+        out.append(finding("settings", "error", "[standard] bom is a path from the project's root, as text; the "
+                           "nearest BOM.md is used", repr(clean["bom"])[:40]))
+        clean["bom"] = ""
+    rails = clean["rails"]
+    if not isinstance(rails, dict):
+        out.append(finding("settings", "error", "[standard.rails] is a table, a list of nets for each PCB's key; "
+                           "the schematic's power symbols are used", repr(rails)[:40]))
+        clean["rails"] = {}
+    else:
+        bad = sorted(str(k) for k, v in rails.items()
+                     if not isinstance(v, list) or not all(isinstance(n, str) for n in v))
+        for key in bad:
+            out.append(finding("settings", "error", "[standard.rails] gives a PCB a list of net names; the "
+                               "schematic's power symbols are used for it", key))
+        clean["rails"] = {k: v for k, v in rails.items() if str(k) not in bad}
+    return clean, out
 
 
 # ---- from the board, in pcbnew --------------------------------------------------------------------------------------
@@ -688,12 +746,14 @@ def fiducial_findings(pcbnew, board, placed, assembly=True):
 
 
 def reference_findings(pcbnew, board, texts):
-    """Every soldered part's reference on the silkscreen: a part with pads that is in the BOM and fitted, and is not a
-    test pad, a fiducial, a mounting hole or a net tie. The reference is printed by its field, by a text of the
+    """Every soldered part's reference on the silkscreen: a part with pads that is in the BOM and fitted, in the
+    schematic or on the board only, and is not a test pad, a fiducial, a mounting hole or a net tie. The reference is printed by its field, by a text of the
     footprint that says ${REFERENCE}, or by a board text that names it ("J1", "JP1 USB->BUS")."""
     shown = {t["owner"] for t in texts if t["kind"] == "reference"} | legend_names(texts)
+    # board-only or not: a part drawn on the board alone is soldered like any other, and pcbkit fab places it. What
+    # is no part is out of the BOM (a logo, a solder jumper), or has no pads
     parts = [fp for fp in board.GetFootprints()
-             if list(fp.Pads()) and not fp.IsBoardOnly() and not fp.IsDNP() and not fp.IsExcludedFromBOM()
+             if list(fp.Pads()) and not fp.IsDNP() and not fp.IsExcludedFromBOM()
              and not fp.IsNetTie() and not is_test_pad(pcbnew, fp) and not is_fiducial(pcbnew, fp)
              and not is_hole(pcbnew, fp)]
     bare = [fp.GetReference() for fp in sorted(parts, key=lambda f: _natural(f.GetReference()))
@@ -749,11 +809,11 @@ def board_findings(pcbnew, board, cfg, placed="not-excluded", assembly=True, rai
 def check(project, pcb, cache=None):
     """Every finding for one PCB (a dict from Project.pcbs(), with abspath), waivers applied. Needs pcbnew."""
     import pcbnew
-    cfg = dict(DEFAULTS, **project.cfg.get("standard", {}))
+    cfg, wrong = settings(project.cfg.get("standard", {}))
     path = pcb["abspath"]
     last = V.current(project.release_dir(pcb))
     out = version_findings(_read(path), last["label"] if last else "") + title_findings(path)
-    rails = (cfg.get("rails") or {}).get(pcb["key"])
+    rails = cfg["rails"].get(pcb["key"])
     if rails is not None:
         rails_from = "pcbkit.toml's [standard.rails]"
     else:
@@ -769,7 +829,7 @@ def check(project, pcb, cache=None):
             from ..production import Cache
             cache = Cache()
         out += extended_findings(parts, cache, find_bom(project.root, path, cfg.get("bom", "")), project.root)
-    out = apply_waivers(out, waivers_for(cfg.get("waive") or [], pcb))
+    out = apply_waivers(out, waivers_for(cfg.get("waive") or [], pcb)) + wrong
     look = [dict(check="", level="look", item="", detail="", text=text, section=section) for section, text in LOOK]
     lint = sch_lint_line(path)
     if lint:

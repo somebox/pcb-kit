@@ -7,6 +7,11 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
+The project overview page, a standard for released boards with its check and release gate, depth and scope for
+every job, orders signed off like a PR, and smaller skills.
+
 ### Added
 - **`pcbkit overview` and the project-overview skill: the project on one page, a round at a time.** The overview
   page of 0.5.0's conventions had no way to be made. A round is now a small file, `docs/overview/r<N>.toml`, that
@@ -109,7 +114,8 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
     longer also a row in a hand-kept table; a quote from an unreleased commit goes under PRODUCTION.md's Costs.
   - Shorter: the skills' descriptions (764 to 591 words), lessons that were told twice now stand once beside their
     check, and the rules that must not be missed are in bold at the top of the pcb-kit and failure-review skills.
-  - What loads when a skill triggers went from 15,618 words to 13,178. Seven passages that are read in one situation
+  - The ten SKILL.md files, which load when a skill triggers, went from 15,618 words before the review to 13,826 at
+    this release (0.5.0's nine had 13,457; project-overview is new). Seven passages that are read in one situation
     moved, word for word, into files beside their skills: the failure review's `briefing.md` and `test-points.md`,
     pcb-kit's `kicad-links.md` and `route-script.md`, fab-order's `old-release.md`, project-overview's
     `pattern.md` and visual-review's `compare-example.md`. The pcb-kit skill's table names the command and points

@@ -172,7 +172,7 @@ only describe the steps.
 - **Claude Code:** the repo is its own plugin marketplace. Add it one of three ways, then
   `claude plugin install pcb-kit@pcb-kit`; the skills are `/pcb-kit:failure-review` and so on. Marketplace names are
   unique, so a machine has one of the three, not two.
-  - `claude plugin marketplace add somebox/pcb-kit#v0.5.0` installs that release and stays on it. To move to a later
+  - `claude plugin marketplace add somebox/pcb-kit#v0.6.0` installs that release and stays on it. To move to a later
     one, `claude plugin marketplace remove pcb-kit`, then add and install again with the new tag.
   - `claude plugin marketplace add somebox/pcb-kit` follows `main`. A fresh install takes `main` as it is, which can
     include commits not released yet under the current version number. Claude Code keeps one copy per version, so

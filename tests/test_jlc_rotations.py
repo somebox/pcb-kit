@@ -94,6 +94,20 @@ class Corrections(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertRegex(checked, r"^(\d{4}-\d{2}-\d{2})?$")
 
+    def test_sj3524_jack_turns_a_quarter(self):
+        # 2026-11-18: no rule matched, and KiCad's 180 left JLC's model a quarter turn out; "Rotate Right" put it right
+        r = self.rule("Jack_3.5mm_CUI_SJ-3524-SMT_Horizontal", "C20182907", ref="J2", value="SJ-3524-SMT-TR")
+        self.assertEqual((r[0], r[1], r[4]), ("^Jack_3.5mm_CUI_SJ-3524-SMT_Horizontal$", -90, "footprint"))
+
+    def test_tqfn16_3x3_turns_a_quarter(self):
+        # 2026-11-18, MAX98357A: KiCad's 270 put JLC's pin-1 dot on the left column's top pad; -90 puts it on pad 1.
+        # The QFN row doesn't match a TQFN name; the thermal-via variant has the same pads
+        for name in ("TQFN-16-1EP_3x3mm_P0.5mm_EP1.23x1.23mm", "TQFN-16-1EP_3x3mm_P0.5mm_EP1.23x1.23mm_ThermalVias"):
+            with self.subTest(name=name):
+                r = self.rule(name, "C910544", ref="U6", value="MAX98357AETE+T")
+                self.assertEqual((r[0], r[1], r[4]), ("^TQFN-16-1EP_3x3mm_P0.5mm_EP1.23x1.23mm", -90, "footprint"))
+        self.assertIsNone(self.rule("TQFN-16-1EP_3x3mm_P0.5mm_EP1.6x1.6mm", "C0", ref="U6"))
+
 
 if __name__ == "__main__":
     unittest.main()

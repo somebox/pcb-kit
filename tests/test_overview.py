@@ -1070,6 +1070,10 @@ class NewRound(Case):
         self.assertEqual([(b["id"], b["version"]) for b in rnd["board"]], [("demo", "v1.0")])
         self.assertEqual(rnd["view"], [dict(board="demo")])
         self.assertIn("label is missing", "\n".join(self.check()[0]))  # it says what is still to write
+        with open(path, encoding="utf-8") as fh:
+            head = fh.read().split("\n\n")[0]
+        self.assertIn("# A summary for the user, made from what the project records", head)
+        self.assertNotIn("briefing", head)       # the briefing is the failure review's document
 
     def test_the_next_round_carries_what_stands(self):
         one = base()
@@ -1141,6 +1145,15 @@ class Seal(Case):
         one["summary"] = "Rewritten later."
         self.put(1, one)
         self.assertIn("changed after the next round began", "\n".join(self.check()[0]))
+
+    def test_an_earlier_rounds_header_is_a_comment_and_may_differ(self):
+        """A round written before the header called it a summary keeps its header, and is not an edited round."""
+        old = "# docs/overview/r1.toml: round 1 of the project's overview page.\n# The briefing for the user.\n"
+        write(os.path.join(self.P["dir"], "r1.toml"), old + overview.write_round(base()))
+        self.put(2, base())
+        self.assertEqual(self.build(), 0, self.said)
+        self.put(1, base())                      # the same round under another header, or none
+        self.assertEqual(self.check()[0], [])
 
     def test_an_earlier_rounds_notes_are_added_to_and_not_changed(self):
         chose_b = dict(date=D(2026, 11, 17), on="antenna", chose="b", text="Decided: u.FL (D2).")

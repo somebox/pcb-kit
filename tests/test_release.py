@@ -1162,9 +1162,10 @@ class Release(unittest.TestCase):
         release(root)
         out = changelog(root, "--all")
         self.assertIn("### demo, since v1.1 (%s)\n\n- no change to the netlist, BOM or layout\n" % V.today(), out)
-        self.assertIn("## demo v1.1 - %s (since v1.0)\n\nreleases.toml: minor after 1.0.0: R1 value 10k -> 4.7k\n\n"
-                      "Circuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n" % V.today(), out)
-        self.assertIn("## demo v1.0 - 2026-11-01\n\n", out)
+        # the heading a project's CHANGELOG.md gives a version (docs/CONVENTIONS.md)
+        self.assertIn("## demo v1.1 (released %s)\n\nSince v1.0.\n\nreleases.toml: minor after 1.0.0: R1 value 10k -> "
+                      "4.7k\n\nCircuit (netlist and BOM):\n- R1 value 10k -> 4.7k\n" % V.today(), out)
+        self.assertIn("## demo v1.0 (released 2026-11-01)\n\n", out)
         # against a board named: an as-built copy kept in the project
         built = os.path.join(root, "archive", "demo-as-built.kicad_pcb")
         os.makedirs(os.path.dirname(built))

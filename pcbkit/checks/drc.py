@@ -1,11 +1,11 @@
 """DRC through kicad-cli, summarised: counts by type, every error, unconnected items by net and footprint.
 
-  pcbkit drc BOARD.kicad_pcb [--refill] [--save] [--parity] [--json OUT] [--full]
+  pcbkit drc BOARD.kicad_pcb [--refill] [--save] [--no-parity] [--json OUT] [--full]
 
 --refill fills the zones first (what the fab sees); --save writes the filled board back, which is how the
-projects keep their boards filled; --parity checks the PCB against the schematic. Exit status 1 on errors or
-unconnected items, and when kicad-cli fails or writes no report. Merged from the projects' drcsum.py and dodeca's
-unrouted.py.
+projects keep their boards filled. The PCB is checked against the schematic unless --no-parity. Exit status 1 on
+errors, unconnected items or parity findings, and when kicad-cli fails or writes no report. Merged from the
+projects' drcsum.py and dodeca's unrouted.py.
 """
 import argparse
 import collections
@@ -70,7 +70,7 @@ def main(argv=None):
     ap.add_argument("board")
     ap.add_argument("--refill", action="store_true")
     ap.add_argument("--save", action="store_true", help="save the board after refilling (implies --refill)")
-    ap.add_argument("--no-parity", action="store_true")
+    ap.add_argument("--no-parity", action="store_true", help="leave out the check of the PCB against the schematic")
     ap.add_argument("--json", help="keep the JSON report here")
     ap.add_argument("--full", action="store_true", help="list warnings too")
     a = ap.parse_args(argv)

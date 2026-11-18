@@ -30,8 +30,8 @@ KiCad's library, a keep-out of your own).
 A board that has an outline, keepout:* zones or MountingHole_* footprints without a library, but no such group, was
 drawn by hand or outlined by pcbkit 0.5 or earlier, which marked nothing. The run then stops, writes nothing and
 lists what is in the way. --take-over removes what those versions removed on every run (every drawing, text and
-dimension on Edge.Cuts, Dwgs.User, Cmts.User and User.1, every keepout:* zone and every MountingHole_* footprint
-without a library), once, then draws; from then on a rerun touches the group only. To keep some of it, delete the
+dimension on Edge.Cuts, Dwgs.User, Cmts.User and User.1, curves and text boxes too, every keepout:* zone and every
+MountingHole_* footprint without a library), once, then draws; from then on a rerun touches the group only. To keep some of it, delete the
 old outline in KiCad instead and run again. Needs pcbnew.
 """
 import argparse
@@ -206,16 +206,20 @@ def legacy_items(text):
     """What `pcbkit outline` removed on every run before it marked its own items (pcbkit 0.5 and earlier), whoever
     drew them: [(start, end, what)] of every top-level drawing, text and dimension on Edge.Cuts, Dwgs.User,
     Cmts.User and User.1 ("lines on Edge.Cuts"), every zone named keepout:* and every MountingHole_* footprint
-    without a library (with its reference as a fourth item)."""
+    without a library (with its reference as a fourth item). Every drawing means every kind KiCad writes there, a
+    Bezier curve and a text box too (gr_curve, gr_text_box) and any it comes to write: those versions knew lines,
+    arcs, circles, rectangles and polygons, so an outline drawn with curves was neither seen nor removed, and a new
+    one would have been drawn beside it."""
     kinds = {"gr_line": "lines", "gr_arc": "arcs", "gr_circle": "circles", "gr_rect": "rectangles",
-             "gr_poly": "polygons", "gr_text": "texts", "dimension": "dimensions"}
+             "gr_poly": "polygons", "gr_curve": "curves", "gr_text": "texts", "gr_text_box": "text boxes",
+             "dimension": "dimensions"}
     out = []
     for s, e, head in top_level_blocks(text):
         blk = text[s:e]
-        if head in kinds:
+        if head in kinds or head.startswith("gr_"):
             layer = next((l for l in LEGACY_LAYERS if f'(layer "{l}")' in blk), None)
             if layer:
-                out.append((s, e, f"{kinds[head]} on {layer}"))
+                out.append((s, e, f"{kinds.get(head, head[3:] + ' drawings')} on {layer}"))
         elif head == "zone" and '(name "keepout:' in blk:
             out.append((s, e, "keepout:* zones"))
         elif head == "footprint" and blk.startswith('(footprint "MountingHole_'):

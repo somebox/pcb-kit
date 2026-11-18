@@ -7,9 +7,9 @@ rgb-spotlight), written down so new ones start the same way. `templates/project/
 
 ```
 README.md            index: what the project is, where things are, naming of versions
-DESIGN.md            requirements, decisions (dated, numbered), block designs, what the last version taught
+DESIGN.md            requirements, decisions and open questions (dated, numbered), block designs, what the last version taught
 LAYOUT.md            the PCB: floor plan, stackup and rules, scripted copper, routing, checks, silkscreen
-PRODUCTION.md        how to order: checklist (polarity, rotations), bring-up, costs; its overview is generated
+PRODUCTION.md        how to order: checklist (options, polarity, rotations), bring-up, costs; its overview is generated
 CHANGELOG.md         what changed in each board version and why, newest first, citing DESIGN.md's decisions
 pcbkit.toml          the project's settings for pcbkit release and production (templates/project has the defaults)
 BOM.md               from bomi
@@ -22,7 +22,7 @@ docs/datasheets/     bomi datasheet summaries (markdown), the PDFs where licensi
 docs/overview.html   the project on one page for the user, a round added after each major design round (below)
 docs/overview/       its rounds, r1.toml, r2.toml, ..., and img/, their pictures as they were (`pcbkit overview`)
 docs/reviews/        failure reviews and failure analyses, dated (`<date>-<board>.md`)
-releases/<board>/    releases.toml and v<version>/ per release: Gerbers, BOMs, placement files, PDFs, kicad/ (committed)
+releases/<board>/    releases.toml and <label>/ per release: Gerbers, BOMs, placement files, PDFs, kicad/ (committed)
 production/          orders/<date>-<what>/order.toml (and its ORDER.md), stock.toml, boards.toml (written by release)
 build/               scratch fab files and panels, git-ignored
 archive/             earlier versions, kept whole
@@ -30,7 +30,7 @@ archive/             earlier versions, kept whole
 
 **A series of boards** (synth-blocks: dozens of small boards of a few kinds) groups the boards by kind and keeps each
 board's files together: `<kind>/<name>/` in place of `boards/<name>/`, with `previews/` and `fab/` inside the board's
-folder (each release in `fab/v<version>/`) in place of `docs/previews/<board>/` and `releases/<board>/`: its
+folder (each release in `fab/<label>/`) in place of `docs/previews/<board>/` and `releases/<board>/`: its
 pcbkit.toml sets `release.dir = "{folder}/fab{sub}"` and `previews_dir = "{folder}/previews{sub}"`. Keep every board
 folder two levels below the root, so the `${KIPRJMOD}/../../lib/` paths that `pcbkit new` writes into its lib tables
 and 3-D models still hold. The project's AGENTS.md says it does this, since the skills default to `docs/previews/`.
@@ -39,17 +39,31 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 
 - The first line under a document's title is its **status with a date**: what is done, what is next.
 - Decisions are **dated and numbered** (D1, D2, ...) in DESIGN.md and never silently rewritten; a reversal is a new
-  entry that names the old one.
+  entry that names the old one. A question still open is numbered too (O1, O2, ...) and closes with the decision
+  that answers it.
 - Positions are in board coordinates, millimetres, top view; say which side a part is on.
 - Every generated artefact says what made it (`pcbkit previews`, `scripts/make_fab.sh`) so it can be regenerated.
-- The order checklist in PRODUCTION.md is the list of things that went wrong before (polarity, rotation, BOM matching
-  by value), each with the fix.
+- The order checklist in PRODUCTION.md holds each board's order options and what went wrong before (polarity,
+  rotation, BOM matching by value), each with the fix.
 - **A prototype says so.** DESIGN.md's requirements name the build as a prototype or a product. For a prototype
   they give the conditions it will be used under: the supply, exactly (its voltage, its current limit, the one
-  adapter), and how it is handled on the bench. A risk those conditions hold (the wrong adapter, a hot-plug, a
-  reversed plug) is noted, on the silkscreen where there is room and in PRODUCTION.md's bring-up section. The
-  part that would remove it is listed in DESIGN.md for the revision that warrants it, and is not designed in yet:
-  that is where a prototype saves its money.
+  adapter), and how it is handled on the bench. What a review does with a risk those conditions hold is in the
+  failure-review skill, "Prototype or product".
+
+## Depth and scope
+
+A skill's steps describe the whole job. Every job has a scope and a depth, said before starting and in its status
+line or the reply's first line:
+
+- **Scope:** which boards and blocks, at which commit, or only what changed since one.
+- **Depth:** a **look** (time-boxed: the project's records and the checks that take seconds; no web research,
+  simulation, sub-agents or browser), the steps **as written**, or **deeper** (as written, plus what the user
+  names).
+
+Take both from the request. Where it leaves them open: before an order, as written; otherwise the smallest that
+answers the question. Ask which depth only when the difference costs money or more than an hour; what a skill says
+to ask or have signed off is asked at every depth. Each step left out is named with its reason; none is dropped
+unsaid. A look never clears an order. What a skill marks **always** holds at every depth.
 
 ## Versions, releases and orders
 
@@ -124,22 +138,23 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
   changelog ("First KiCad version of both boards (CHANGELOG.md, D7-D30)"). releases.toml is written by release and
   never edited; CHANGELOG.md is written by people and agents.
 - Generators that write a board read its version from its releases.toml rather than keeping their own.
-- A release folder is never rewritten: what was ordered stays in git as it was sent. Beside the fab files and PDFs it
-  holds `kicad/`, a frozen copy of the board's KiCad project: the .kicad_pro, every schematic sheet (one from outside
-  the board's folder in `kicad/outside/`), the .kicad_pcb, the .kicad_dru and the library tables (not the .kicad_prl,
-  lock files or `.history/`). Every released version opens in KiCad on its own, beside the working board or another
-  release. Its symbols and footprints are embedded in the
-  files; the paths in its library tables and 3-D models are rewritten to reach the same files from the release
-  folder, so they show the project's `lib/` as it is now, not as it was. MANIFEST.txt lists what the copy names and
-  doesn't find. The board itself stays one project in `boards/<name>/`, edited in place: the versions are the
-  release folders.
-- **A change during the release steps is a new release.** Once a board is released, anything that changes it (a
-  fix from the checks before an order, a part swapped for stock, a rotation rule corrected) goes into the project
-  and comes out as the board's next version: a patch when only the fab output changes, a minor when the netlist
-  or BOM does. The order then pins that version. Nothing is edited in a release folder, and what is ordered is a
-  release: its own files, or, for another split of the sides, the BOM and placement pair `pcbkit fab` makes from
-  the board as released (`pcbkit release --dry-run` gives it no new version). Files for a quote alone need no
-  release. Each such change repeats the order's steps, so the design is settled with the user first.
+- **A release folder is never rewritten**: what was ordered stays in git as it was sent. Beside the fab files and
+  PDFs it holds `kicad/`, a frozen copy of the board's KiCad project: the .kicad_pro, every schematic sheet (one
+  from outside the board's folder in `kicad/outside/`), the .kicad_pcb, the .kicad_dru and the library tables (not
+  the .kicad_prl, lock files or `.history/`). Every released version opens in KiCad on its own, beside the working
+  board or another release. Its symbols and footprints are embedded in the files; the paths in its library tables
+  and 3-D models are rewritten to reach the same files from the release folder, so they show the project's `lib/` as
+  it is now, not as it was. MANIFEST.txt lists what the copy names and doesn't find. The board itself stays one
+  project in `boards/<name>/`, edited in place: the versions are the release folders.
+- **A change after a release is a new release.** Once a board is released, anything that changes it (a fix from the
+  checks before an order, a part swapped for stock, a rotation rule corrected) goes into the project and comes out
+  as the board's next version: a patch when only the fab output changes, a minor when the netlist or BOM does. The
+  order then pins that version. The one exception is a part turned in JLC's viewer for the order at hand (the
+  fab-order skill): its corrected rule comes out with the board's next release. Nothing is edited in a release
+  folder, and what is ordered is a release: its own files, or, for another split of the sides, the BOM and placement
+  pair `pcbkit fab` makes from the board as released (`pcbkit release --dry-run` gives it no new version). Files for
+  a quote alone need no release. Each such change repeats the order's steps, so the design is settled with the user
+  first.
 - An order is a folder under `production/orders/`, named by its date and what it is. Its order.toml pins each
   board's version and records what happened as dated events: draft, submitted (with the order number and price),
   in-production, shipped, received, problem (a stock shortage, a question from the fab), cancelled. Edit it by
@@ -151,13 +166,50 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
 - `production/stock.toml` counts boards by version (bare, assembled, built, tested) and the parts on hand for
   finishing them, by the names the overview uses.
 
+## What a released board carries
+
+The standard a board meets before `pcbkit release` for an order. The failure review checks it, mostly on
+`pcbkit previews`' pictures; a line names the tool where one checks it. A prototype may leave out what its line
+allows, and LAYOUT.md then says what was left out and why. The rest costs nothing and is not waived.
+
+- **Name, version, date.** On the silkscreen once: the board's name, `${REVISION}` and `${ISSUE_DATE}`, never typed
+  (above). Release refuses `v${REVISION}` and `${CURRENT_DATE}` but passes a board with no version text, so look.
+  A title block on the board and on every schematic sheet (`pcbkit sch-lint --only title-block`).
+- **Power in.** At each power input: the voltage range and the polarity (+ and -, or the centre-pin symbol at a
+  barrel jack). Where the user chooses the supply, also its current limit or the fuse's rating.
+- **Jumpers, switches, solder bridges.** What each position does, in a few words, and the default
+  (`JP1 USB->BUS, open by default`, `CUT VUSB-VIN`).
+- **Connectors.** For each one a person plugs: its name or function, pin 1 marked, and every pin's signal beside
+  it, readable with the connector fitted, on both sides where wires come from either. Power pins say + and -.
+  A serial pin is named for the board's own signal: TX is what the board sends. A prototype may name only pin 1
+  and the power pins on a header between its own boards.
+- **Buttons and LEDs.** Named for what they do (BOOT, RESET, STATUS, CHG).
+- **Test pads.** One on every rail and a GND pad near them, each with its net's name on the silkscreen beside it or
+  in a numbered legend, on the side reachable in the enclosure. The failure-review skill ("Test points and rework
+  provisions") says which signals and rework links are added; the briefing says which of those were left out and
+  why, and LAYOUT.md repeats it.
+- **Mounting.** Holes for the screws that hold it (2.2, 2.7 or 3.2 mm for M2, M2.5, M3), unplated unless DESIGN.md
+  says they ground the board, each with a keep-out for the screw head or standoff, which DRC then enforces
+  (`pcbkit outline` draws both from `enclosure.json`). A board with none says in LAYOUT.md how it is held.
+- **Silkscreen.** Text no smaller than the project's DRC minimum (0.8 mm on most of the boards), clear of pads, and
+  of mask openings unless the board prints inside them on purpose (`keep_silk_in_mask`). Every polarised part's mark
+  is visible beside the part.
+- **Schematic.** `pcbkit erc` with 0 errors, its warnings explained in DESIGN.md. `pcbkit sch-lint --summary` read,
+  and each finding fixed or explained: no text over text, references and values beside their parts, small local nets
+  wired, each block framed and titled where the sheet is generated. Then `schematic.pdf` looked at.
+- **Parts.** Every placed part has its LCSC number (`pcbkit fab` leaves one without out, silently). A JLC Basic part
+  wherever one does the job; each Extended part has its reason in BOM.md, with the fee it adds for the order's PCBA
+  type, none under Standard (`pcbkit production` counts them). Parts from `library/PARTS.md` first.
+- **Documents.** Dated status lines, the review's briefing and the bring-up list in PRODUCTION.md; the version's
+  section in CHANGELOG.md follows the release (step 7 below).
+
 ## Checks before an order
 
 1. A failure review (the failure-review skill) of the version being ordered, before the checks below, since the
    changes it leads to need them again: its briefing in `docs/reviews/`, the changes the user accepted as decisions
    in DESIGN.md, its test points on the board, its bench list in PRODUCTION.md under "Bring-up". Once those
    changes are made, a review of the changes at the commit to be ordered: a fix is a new design.
-2. `pcbkit erc` clean, the project's netlist assertions pass.
+2. `pcbkit erc` with 0 errors, its warnings explained in DESIGN.md; the project's netlist assertions pass.
 3. `pcbkit drc --save` with 0 errors, 0 unconnected, 0 parity issues; warnings explained in LAYOUT.md. An error
    that is accepted (a vendor's footprint as it was built, two courtyards closer than KiCad's rule but farther apart
    than the assembler's minimum) is measured, then given a custom rule in the board's `.kicad_dru`: scoped to the
@@ -178,24 +230,37 @@ and 3-D models still hold. The project's AGENTS.md says it does this, since the 
    clear it, but it is kept in the .kicad_pro as the marker (its type, items and place), says no value, and comes
    back when a part moves. Until then `pcbkit release` counts the board as a mockup and names the errors:
    `mockup (drc 2: 2 hole_clearance (USBC1))`.
-4. `pcbkit check` with nothing unexplained; `pcbkit cleanup --dry-run` reports nothing.
-5. A second opinion from KiCadRoutingTools' checkers (`check_drc.py`, `check_weird.py`, `check_connected.py`) on a
-   copy of the board, for via-in-paste, stacked copper and near-open joints.
-6. `pcbkit previews` regenerated and looked at: assembly map, silkscreen, plane coverage.
-7. `pcbkit release` (which reruns ERC and DRC and refuses a board with errors), and `pcbkit panel` for panels; BOM
-   reviewed against bomi for stock and extended-part fees; an order.toml pinning the released versions, then
-   `pcbkit production`, which fills the order's `upload/` folder from the pinned releases.
-8. The user confirms the versions to be ordered and that no design change is open. Nothing goes into a cart before
-   that: the forms, the BOM page and the viewer are many steps, and a change after them means a new release and
-   all of them again.
+4. `pcbkit check` with nothing that LAYOUT.md does not explain; `pcbkit cleanup --dry-run` reports nothing.
+5. A second opinion from KiCadRoutingTools' checkers (github.com/drandyhaas/KiCadRoutingTools:
+   `py_router/check_drc.py`, `check_weird.py`, `check_connected.py`) on a copy of the board, for via-in-paste,
+   stacked copper and near-open joints.
+6. `pcbkit previews` regenerated and looked at against "What a released board carries": assembly map, silkscreen,
+   plane coverage; for a board in a box, the paper fit (the enclosure-fit skill, step 4).
+7. Stock read live for every placed part, on JLC itself and that day (the bom-cost skill, Rules), each
+   questionable figure looked into before going on, and the Extended-part fees reviewed. Then `pcbkit release`
+   (which reruns ERC and DRC and refuses a board with errors), `pcbkit panel` for panels, the version's section
+   in CHANGELOG.md, and an order.toml pinning the released versions, with a first `draft` event;
+   `pcbkit production` then fills the order's `upload/` folder from the pinned releases.
+8. **The user signs off before any cart changes, as on a PR.** Put the order to them as a diff: the versions to go
+   in, what changed since the last review or order, each cart line to add, update or remove with its price (an
+   earlier quote's, or the bom-cost fee table's estimate, named as which), the stock read in step 7, and any design
+   change still open. Nothing is added to, changed in or removed from a cart before their yes: the forms, the BOM
+   page and the viewer are many steps, and a change after them means a new release and all of them again.
 9. The order itself, last and once: the upload from the order's `upload/` folder. The fab-order skill covers the
-   forms, the BOM page and the placement viewer, where every part in the release's placement checklist is checked
-   before the order goes into the cart.
+   forms, the BOM page and the placement viewer, where every line of the placement checklist's "By part" table is
+   checked on at least one part before the order goes into the cart. The report gives the time of the stock reading;
+   before paying on a later day, the user asks for it to be read again.
+
+An order is never a look. A step of 1 to 6 is left out only on the user's word, and named; steps 7 to 9 hold for
+every order. **A quote alone** is not an order: it takes `pcbkit fab`'s files of the board at a named commit (or a
+release's), the PCB form and the BOM page, without a release, a review or the placement viewer's checklist. The
+user's yes comes before its upload too. Its cart line is recorded and reported as a quote, not to be paid; the order
+follows by all nine steps, from the release's files.
 
 ## The overview page
 
-After each major design round (a review and its decisions, a re-layout, a release) the user gets the whole project
-on one HTML page, `docs/overview.html`: brief, well organised, made to be used.
+After each major design round (a review and its decisions, a re-layout, a release, an order) the user gets the whole
+project on one HTML page, `docs/overview.html`: brief, well organised, made to be used.
 
 - **Status** first: the project's, then each board's version and state, and what is next.
 - **A viewer** of the board or the product that the user can turn, or switch layers in.
@@ -210,14 +275,8 @@ on one HTML page, `docs/overview.html`: brief, well organised, made to be used.
 The page is made from what the project already records (the status lines, DESIGN.md's decisions, the reviews,
 BOM.md, PRODUCTION.md's overview) and links to it.
 
-`pcbkit overview` makes it, and the project-overview skill says how. Each round is a small file,
-`docs/overview/r<N>.toml`, written from the project's records: the briefing, with every item naming its source.
-The command draws each board's turntable and layers, lays out the page, and keeps each round's pictures in
-`docs/overview/img/` as they were when it was first built. `pcbkit overview new` starts the next round from the
-last; an earlier round only gains notes (`pcbkit overview note`), and `pcbkit overview --check` says when one was
-edited, when a source is missing and when the page is not what the rounds say. The marks are done, in work, not
-started, needs attention, blocked and your decision, each followed by the project's own word for the state.
-`pcbkit overview --single` writes a copy with its pictures inside, to send or publish.
+`pcbkit overview` makes it from one small file per round, `docs/overview/r<N>.toml`, written from the project's
+records: a summary, with every item naming its source. The project-overview skill says how.
 
 ## Scripting rules
 
@@ -237,4 +296,8 @@ started, needs attention, blocked and your decision, each followed by the projec
   items alone.
 - A `.kicad_dru` syntax error silently disables every custom rule; run DRC after each edit of it.
 - `BOARD.Remove()` on tracks, drawings or zones and `FOOTPRINT.Remove(field)` corrupt the pcbnew bindings mid-run:
-  edit the file text instead (by uuid, or by top-level block as `pcbkit.mech.strip_template` does), in a fresh process.
+  edit the file text instead (by uuid, by top-level block as `pcbkit.mech.strip_template` does, or with
+  `pcbkit.import_easyeda.drop_fields` for fields), in a fresh process. A footprint's graphic can go through pcbnew:
+  `fp.Remove(item)`, then `item.thisown = False`, or Python frees it under the board's caches and pcbnew returns
+  untyped objects a few footprints later.
+- `pcbnew.SaveBoard` aborts headless: use `PCB_IO_MGR.Save`.

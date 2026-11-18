@@ -1,12 +1,12 @@
 ---
 name: visual-review
-description: "Make and read pictures of a KiCad board or design question: net-coloured region views, layout options side by side, 3-D renders, placement mock-ups, ratsnest pictures, one-page design overviews, 1:1 prints, copper checks and simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, when choosing between layout options (where vias go under a part), or when the user would understand a finding faster from an image than from a table."
+description: "Make and read pictures of a KiCad board or design question: region views coloured by net, layout options side by side, 3-D renders, ratsnest pictures, one-sheet overviews, 1:1 prints, simulation plots. Use when reviewing a power stage, a placement, an enclosure fit or a check result, when choosing between layout options, or when a picture would show the user a finding faster than a table."
 ---
 
 # Visual review
 
-A picture is usually the quickest way to agree on what a board looks like and what is wrong with it. Make the
-picture, look at it yourself (read the PNG), say what you see, then send it to the user if it helps them decide.
+Make the picture, look at it yourself (read the PNG), say what you see, then send it to the user if it helps them
+decide.
 
 ## Which picture for which question
 
@@ -18,7 +18,7 @@ picture, look at it yourself (read the PNG), say what you see, then send it to t
 | Which placement tangles less? Where do nets cross? | the ratsnest, crossings circled | `pcbkit place-score BOARD [--study S.py] --svg out.svg --png out.png`; see the placement-study skill |
 | Does it fit the box? | 1:1 print with the outline, holes, dimension lines and a 50 mm scale bar | `pcbkit outline BOARD enclosure.json --fit-check fit.pdf [--parts]`; the user prints, measures the scale bar, cuts and screws it into the box; a photo with a ruler and calipers in it records the result |
 | How does the whole design fit together, for someone new to it? | one sheet: renders of the front and back beside a block diagram, each block in the same colour in all three, plus legends and notes | `kicad-cli pcb render` for the views (`--rotate` for a three-quarter view), composed as an SVG and rasterised with `rsvg-convert`; see synth-blocks' `eurorack/voice/scripts/overview.py` |
-| Where does the whole project stand after a design round? | one HTML page the user can use: status, a viewer of the board, a section per block, open decisions, cost and supply, every round kept | the project-overview skill: `pcbkit overview` makes `docs/overview.html` from a file per round; this kit's `docs/CONVENTIONS.md`, "The overview page", says what it holds |
+| Where does the whole project stand after a design round? | `docs/overview.html`: the project on one page, a round at a time | the project-overview skill (`pcbkit overview`) |
 | What does this DRC or check item actually refer to? | the copper around it, rasterised, with the flagged items marked | a netview of the area, or a small script that plots the layer and the item; crop tight |
 | Does the rail hold up when the load steps? | voltage and inductor current against time, one panel per case | ngspice deck through `pcbkit spice`, `wrdata` to text, matplotlib (`uv run --with numpy --with matplotlib`) |
 | What will the assembler see? | the hand-assembly map and the copper PNGs | `pcbkit previews BOARD docs/previews/<board>` |
@@ -29,14 +29,15 @@ picture, look at it yourself (read the PNG), say what you see, then send it to t
 - Crop before concluding. `pdftoppm -r 250 -x .. -y .. -W .. -H ..` on a PDF, or a tighter netview window, beats
   squinting at a full board.
 - Say what the picture shows in sentences: which part sits where, which gap is tight, which net crosses which.
-  Numbers (gaps, edge use, coverage) come from the board file, not from pixels.
+  **Numbers (gaps, edge use, coverage) come from the board file, not from pixels.**
 - Keep generated pictures in the project under `docs/previews/<board>/` with the command that made them, so they
   can be regenerated; send the ones the user needs to see with the file-sending tool of the harness.
+- The smallest pass is one picture of one region. **Always** say the board's commit, the picture's window and layer,
+  and what it does not draw.
 
 ## Comparing layout options
 
-When there are a few ways to lay something out, build each one and show them side by side: the user chooses faster
-from one sheet than from a table, and the sheet shows what a table hides.
+When there are a few ways to lay something out, build each one and show them side by side on one sheet.
 
 - Each option is a real copy of the board with the change made, saved inside the project folder (a copy elsewhere
   can't resolve `${KIPRJMOD}` in fp-lib-table, and DRC adds library warnings), and run through `pcbkit drc`. Its

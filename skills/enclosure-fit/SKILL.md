@@ -12,20 +12,26 @@ Worked example: `~/Documents/Projects/esp32-s3-ha-node` (`boards/node/enclosure.
 1. **Measure.** Best: the manufacturer's drawing, confirmed with calipers. Next: a photo straight down with a ruler in
    the frame; scale from the millimetre ticks and expect about 0.5 mm accuracy on flat features and over 1 mm
    error on tall ones (bosses, standoffs) from parallax.
-2. **Describe it** in `boards/<b>/enclosure.json`: board size and corner radius, mounting holes (hole and boss
+2. **Describe it** in `boards/<b>/enclosure.json`, x and y in mm from the centre of the mounting pattern with y up
+   (not board coordinates; the centre lands at 100, 100): board size and corner radius, mounting holes (hole and boss
    diameter; `"head"`, the screw head's diameter, when the screws go in from the top: a courtyard ring and an F.Cu
    keep-out for tracks, vias and fills under it), keep-outs (lid bosses), cut-outs around bosses (clearance,
    fillet), and reference drawings (lid inside, plateau, connector zones). Write where each number came from.
 3. **Apply:** `pcbkit outline boards/<b>/<b>.kicad_pcb boards/<b>/enclosure.json --fit-check docs/fit-check.pdf`.
-   Rerunnable; it replaces only what it made.
+   Rerunnable, but each run first deletes every drawing, text and dimension on Edge.Cuts, Dwgs.User, Cmts.User and
+   User.1, the `keepout:*` zones and the `MountingHole_*` footprints, its own or not.
 4. **Print and cut.** The user prints at 100 %, measures the 50 mm scale bar and a dimension line, cuts along the
    thick outline and drives the real screws through the holes. Their findings go back into the JSON.
 5. After placement, `--parts` puts the part outlines on the print for a last check of connectors against the walls.
+
+With `enclosure.json` written, a placement check is step 5 alone. Before an order, step 4 must have been done on the
+outline as it now is, its date and result in LAYOUT.md; if not, it is done again.
 
 ## Lessons
 
 - The first "doesn't fit" was the printer scaling the page. Hence the scale bar and dimension lines on every print.
 - Board-edge notches around lid bosses: straight in, an arc at boss radius plus clearance, straight out, and a fillet
   of at least the router radius (1 mm for a 2 mm cutter) on every inside corner.
-- Keep the cut at least a few millimetres from a mounting hole, or the self-tapping screw splits the corner.
+- Keep board between a boss cut and a mounting hole's edge, or the self-tapping screw splits the corner: the worked
+  example has 4.5 mm beside its 2.7 mm holes, and nothing narrower is proven.
 - Note the free height (standoff to lid) early; it decides terminal blocks, electrolytics and bottom-side parts.

@@ -48,6 +48,28 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
   not yet seen in JLC's viewer, so their Checked dates are empty. A board with a part on one of these footprints
   gets a new CPL, and so its next version from `pcbkit release`.
 
+- **The skills and conventions gone through for consistency, size and scope.** What an agent will notice:
+  - `docs/CONVENTIONS.md` has "What a released board carries", the standard a board meets before its release: its
+    name, version and date on the silkscreen; the power input, jumpers, connectors, pins, buttons and LEDs labelled;
+    named test pads; mounting holes with keep-outs; a schematic that `sch-lint` passes; Basic parts first, each
+    Extended one with its reason. It says what a prototype may leave out, with a note.
+  - "Depth and scope" in the same file: every job says its scope and its depth (a look, as written, deeper) and
+    names each step it left out. The failure review gains a look, and schematic-only and one-block kinds; a quote
+    is the short form of an order, and an order has none.
+  - Orders: every placed part's stock is read live on JLC before the user signs off, with each questionable figure
+    looked into, and again when they are about to pay on a later day. A cart changes only on the user's sign-off,
+    put to them as a diff, as a PR is.
+  - Corrected: `pcbkit <cmd> --help` runs `info`, `link`, `setup-kikit` and `setup-router` instead of printing;
+    a rerun of `pcbkit outline` deletes more than it made; the bomi commands as they must be typed; the release
+    folder and the placement checklist are named by `<label>`, not `v<version>`; a four-layer route takes 40
+    minutes to 3 hours; JLC's placement viewer has one name.
+  - The project template: DESIGN.md has numbered open questions (O1, ...) beside its decisions, and LAYOUT.md's
+    silkscreen line names the board with its version. The skills call PRODUCTION.md's section the order checklist,
+    as the template does, and a quote is a `draft` event in the order's order.toml, no longer also a row in a
+    hand-kept table.
+  - Shorter: the skills' descriptions (764 to 591 words), lessons that were told twice now stand once beside their
+    check, and the rules that must not be missed are in bold at the top of the pcb-kit and failure-review skills.
+
 ## [0.5.0] - 2026-11-16
 
 ### Added

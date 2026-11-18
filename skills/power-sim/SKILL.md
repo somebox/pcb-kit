@@ -32,6 +32,9 @@ measurements, ngspice's output, the `wrdata` files and an `aborted` flag. Keep v
 5. Write the result into the design note with the plot link, and add the simulated deviation to the tolerance
    analysis for worst cases. Say what the model leaves out (switching ripple, temperature).
 
+A look is one question at nominal values with a stand-in model, and its result says so; a decision or an order rests
+on step 3's sweep. **Always:** step 1, `aborted` read, and what the model leaves out.
+
 ## Parts with no model
 
 A controller with a simple control law can be written from its datasheet. Example: rgb-spotlight `sim/channel.py`, a PT4115 hysteretic LED buck.
@@ -47,6 +50,6 @@ A controller with a simple control law can be written from its datasheet. Exampl
 - Switch-level TI models (TPS61178, TPS2121) stall within nanoseconds ("timestep too small"). Averaged models fix it.
 - LM66200 runs only from a powered operating point; ramps from 0 V make it chatter. A floating input needs a bleeder.
 - TPS2116 started with both supplies up can latch either channel: plug the second supply in after start-up.
-- An aborted run still prints `meas = 0`. Trust `aborted`, give the operating point time to settle before measuring.
+- An aborted run still prints `meas = 0`. **Trust `aborted`**, give the operating point time to settle before measuring.
 - B-source brace expansion: `{a - b} * x` becomes `a - b*x`; write `({a - b}) * x`.
 - Instance names from an included file can't be reused in the deck.

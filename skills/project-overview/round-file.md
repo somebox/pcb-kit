@@ -44,7 +44,7 @@ Markdown is rendered, instead of to the files.
 
 ## A round, shortened
 
-From the message sign's second round (2026-11-16), with the notes of the day after:
+From the message sign's second round (2026-11-16):
 
 ```toml
 date = 2026-11-16
@@ -58,7 +58,7 @@ summary = """
 the parts to solder by hand are in an LCSC cart. Both boards were failure-reviewed, and every fix you chose \
 is in."""
 changes = [
-  "Failure reviews of the 5×7 (its first) and of the controller since 10-21; you chose all their fixes (D16–D22)",
+  "Failure reviews of the 5×7 (its first) and of the controller since 10-21; you chose all their fixes (D16–D21)",
   "Every via drilled at 0.3 mm: JLC prices 0.25 mm as high precision (D23)",
   "U7 is TPS259472A after the TPS259470A ran out (D25); port PTCs MF-MSMF150 (D15)",
 ]
@@ -77,20 +77,20 @@ source = "releases/controller/releases.toml"
 id = "power"
 title = "Power in and the ports"
 mark = "attention"
-state = "one accepted weakness"
+state = "one weakness to decide"
 text = """
 Barrel in through an eFuse (U7, TPS259472A: clamps at 5.7 V, auto-retry), four fused module ports with \
 presence sense, USB-C for flashing only. A hard short on one port darkens the whole sign, because U7 limits \
-before the PTC trips (D22)."""
+before the PTC trips (O4)."""
 source = ["DESIGN.md D25", "docs/reviews/2026-11-16-controller.md Controller review"]
 
 [[decision]]
 id = "short"
-ref = "D22"
+ref = "O4"
 question = "A hard port short darkens the whole sign: accept it?"
 recommend = "accept"
 why = "It damages nothing, and a prototype of five can hold it as a bench rule."
-source = "DESIGN.md D22"
+source = "DESIGN.md O4"
 
 [[decision.option]]
 id = "accept"
@@ -120,20 +120,6 @@ source = "PRODUCTION.md Costs"
 
 [[view]]
 board = "controller"
-
-[[note]]
-date = 2026-11-17
-on = "supply"
-mark = "blocked"
-state = "RP2354A out of stock"
-text = "The RP2354A (U4) is gone: 0 at JLC and at LCSC. JLC offers a pre-order (8 minimum, about $10) or Global Sourcing."
-
-[[note]]
-date = 2026-11-17
-on = "status"
-mark = "blocked"
-state = "controller waits for RP2354As"
-text = "The controller can't be paid for. First buy RP2354As into JLC's parts inventory, then pay. The 5×7 is not affected."
 ```
 
 A tab of the project's own pictures, from Orbitchron's fourth round:
@@ -158,5 +144,5 @@ hash of its file without the notes, and a hash of each note it had at the last b
 those and none of them is changed. Don't edit it. A board's pictures are in `img/<board>-<hash>/` under the hash
 of its board file, so two rounds of an unchanged board share one set; a named picture is copied in as
 `img/<hash>-<name>`, as it was that day. A build and `--check` stop when a picture a round was built with is no
-longer there: restore `img/` as it was committed. If an earlier round has to be corrected after all, with the
-user's word, delete its `seal` line (its `notes` line for a note); the next build seals it again.
+longer there: restore `img/` as it was committed. If an earlier round has to be corrected after all, **with the
+user's word**, delete its `seal` line (its `notes` line for a note); the next build seals it again.

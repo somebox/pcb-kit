@@ -1,45 +1,44 @@
 ---
 name: failure-review
-description: "Validate a board before it is ordered: check every block against its datasheets, reference designs and what earlier boards taught, list what could fail after the boards come back and how each failure would show up and be diagnosed, test the doubtful cases by calculation or simulation, plan test points and rework provisions, and write a briefing with evidence before anything is changed. Use when the user asks to validate or review a design, asks what might go wrong or whether a board is ready to order, when a board has changed since its review and the changes need checking, when planning bring-up or test points, and when a built board has failed and needs a cause."
+description: "Review a board for what could fail once it is built, before it is ordered, and write a briefing with evidence before anything is changed. Use when the user asks to validate or review a design, asks what might go wrong or whether a board is ready to order, when a board has changed since its review, when planning bring-up or test points, and when a built board has failed and needs a cause."
 ---
 
 # Failure review
 
-ERC and DRC say the design is legal and the copper matches the schematic. They don't see a divider that sits on a
-threshold at the tolerance corners, an input that powers a chip whose rail is off, or a charger that passes its
-input straight through in one of its modes. This review looks for those, before the order, and plans how each would
-be found on the bench.
+**Read-only until the user has the briefing.** Gather, calculate and simulate, but don't edit the schematic, the
+board or the design data the board is generated from. Changes follow the user's choice among the recommendations.
+
+ERC and DRC don't see a divider that sits on a threshold at the tolerance corners, an input that powers a chip
+whose rail is off, or a charger that passes its input straight through in one of its modes. This review looks for
+those, before the order, and plans how each would be found on the bench. A smaller scope: "Kinds of review". A
+built board that has failed: "When a built board has failed".
 
 Worked examples:
 - dodeca control board v1.3, `~/src/dodeca-v2-hardware/hardware/control-board/v1.3/POWER_REVIEW.md`: two review
-  rounds, simulations in `sim/`, a bench list. A simulation found a test that would have read wrong on a good board,
-  and the part was changed before the order (SPEC D20).
+  rounds, simulations in `sim/`, a bench list.
 - siebenuhr controller-v2, `~/Documents/Projects/siebenuhr/controller-v2/docs/failure-analysis-pd-shutdown.md`: a
   unit that failed in the field. Ranked hypotheses, each with the test that tells it apart, updated as results came in.
 - rp2354-messages-sign controller v3,
   `~/Documents/Projects/rp2354-messages-sign/docs/reviews/2026-11-16-controller.md`:
-  a review of the changes since the first review, with the status of every earlier finding. The eFuse added after
-  the first review had 1 µF ahead of it, and its input rang to 8–10 V in simulation.
-
-**Read-only until the user has the briefing.** Gather, calculate and simulate, but don't edit the schematic, the
-board or the design data the board is generated from. Changes follow the user's choice among the recommendations.
+  a review of the changes since the first review, with the status of every earlier finding.
 
 ## Steps
 
 1. **Scope and ground truth.** Board, revision and commit; which blocks are in scope; which kind of review this is
-   (below). Read the status lines of README, DESIGN, LAYOUT and PRODUCTION, DESIGN's "what the last version taught
-   us", earlier reviews, and this kit's `library/PARTS.md` notes for each part on the board. Ask what is already
-   built and how those units behave: a fault they show is the first finding. Ask what this build is, a prototype
-   or a product, and what a prototype will be used with (below). List the boards that share a circuit
-   with this one (a module and its controller, the same block in another project): a finding in a shared circuit
-   names them in its action.
-   Run `pcbkit erc`, `pcbkit drc`, the project's netlist assertions and `pcbkit nets SCH` yourself, at this commit,
-   and note each result. A result that was handed over ("ERC is clean") is recalled, not checked. Review the netlist
-   as exported, not the design notes' account of it: they drift.
+   and at what depth (below). Read the status lines of README, DESIGN, LAYOUT and PRODUCTION, DESIGN's "what the
+   last version taught us", earlier reviews, and this kit's `library/PARTS.md` notes for each part on the board. Ask
+   what is already built and how those units behave: a fault they show is the first finding. Read in DESIGN.md's
+   requirements what this build is, a prototype or a product, and what a prototype will be used with (below); where
+   they don't say, ask. List the boards that share a circuit with this one (a module and its controller, the same
+   block in another project): a finding in a shared circuit names them in its action. Boards reviewed together get a
+   briefing each. What lies between them (mating connectors, the cable, the stack) is covered in one of them, and
+   the others' status lines point to it. Run `pcbkit erc`, `pcbkit drc`, the project's netlist assertions and
+   `pcbkit nets SCH` yourself, at this commit, and note each result. A result that was handed over ("ERC is clean")
+   is recalled, not checked. Review the netlist as exported, not the design notes' account of it: they drift.
 2. **Gather references.** For every IC: the datasheet and its revision. The PDF is the source: in
    `docs/datasheets/`, in another project (`fd -I -e pdf -i <part> ~/Documents/Projects ~/src`), or from the maker.
    `bomi datasheet LCSC --summary` and the `.md` files beside the PDFs are summaries a model wrote: they find the
-   section, and they are never the evidence (two were wrong in Orbitchron's review, one on which pad of an LED is
+   section, and they are **never the evidence** (two were wrong in Orbitchron's review, one on which pad of an LED is
    the anode). Where the PDF can't be read and a rating rests on a distributor's listing, the finding says so.
    Then the vendor's evaluation-board guide (its schematic, layout and BOM are the reference design), the
    application notes the datasheet points to, and errata. Then designs like this one: earlier versions in
@@ -47,6 +46,8 @@ board or the design data the board is generated from. Changes follow the user's 
    open designs using the part (GitHub, "<part> kicad"), and the vendor's forum (TI E2E and the like), where other
    people's failures with the part are written up. Record each source with its document number, so a finding can
    cite the section.
+   The datasheet is read for every IC in scope. The search beyond it is for the parts a failure would hang on and
+   the parts no built board has proven (`library/PARTS.md`); "Not covered" says for which parts it was not made.
 3. **Check each block.** Pin by pin for every IC: each pin's net against the datasheet's pin table, strap and
    config pins at the level meant, nothing floating that needs a level. Then the values against the datasheet's
    equations and the reference design, and the layout against the datasheet's layout guidance (`pcbkit netview
@@ -84,10 +85,11 @@ board or the design data the board is generated from. Changes follow the user's 
      a proposed 4.7 kΩ failed 7 of 24 simulated corners where the circuit as drawn failed 1, and was withdrawn);
    - that it can be built: the part in stock under its LCSC code, its footprint, room on the board.
    A recommendation that can't be tested before the briefing reads "bench test before deciding".
-8. **Verify before writing.** A separate pass tries to refute every finding, and it is never skipped. Where the
-   harness runs sub-agents, the block checks of step 3 go to one agent each, with the block's datasheets and
-   netlist excerpt. Another agent then gets the findings and the same sources, and attacks each finding. Without
-   sub-agents, do the pass yourself, from the sources again and not from the finding's text.
+8. **Verify before writing.** A separate pass tries to refute every finding. **It is never skipped.** Where the
+   harness runs sub-agents and the review is more than a look, the block checks of step 3 go to one agent each, with
+   the block's datasheets and netlist excerpt. Another agent then gets the findings and the same sources, and
+   attacks each finding. Without sub-agents, do the pass yourself, from the sources again and not from the finding's
+   text.
    - Re-read every datasheet claim against the PDF and quote the table row with its column and test condition.
      Orbitchron's first round read the TLV62569's 3 A current limit as typical. It is the minimum, with no maximum
      given, and the second round's finding of an unlimited short followed from that.
@@ -97,15 +99,14 @@ board or the design data the board is generated from. Changes follow the user's 
    - Keep what was refuted, with the source that refuted it, so it isn't raised again. Round 2 of the dodeca
      review corrected round 1 on when the charger sets BATFET_DIS.
    - If the design has moved since step 1, run the checks again, and the simulations the move touches.
-9. **Write the briefing** (below) as `docs/reviews/<date>-<board>.md` in the project, send it to the user, and stop.
+9. **Write the briefing** (below) as `docs/reviews/<date>-<board>.md` in the project, send it to the user, and **stop**.
 10. **After the user decides,** each accepted change becomes a numbered decision in DESIGN.md, then the edits,
     followed by `pcbkit erc`, the assertions, `pcbkit cleanup`, `pcbkit drc --save` and `pcbkit check`, and the
     simulations the change touches run again on the design as edited. The briefing gets a Decisions table, dated.
-    Test points go into LAYOUT.md, the bench list into PRODUCTION.md's bring-up section. Carry each accepted
-    change to the boards that share the circuit, or give the reason in the Decisions table: the sign's module kept
-    the 33 Ω outputs that the controller had already changed to 100 Ω, until its own review found them. After a
-    major round, bring the project's overview page up to date with the project-overview skill (this kit's
-    `docs/CONVENTIONS.md`, "The overview page").
+    Test points go into LAYOUT.md, the bench list into PRODUCTION.md's bring-up section. Carry each accepted change
+    to the boards that share the circuit, or give the reason in the Decisions table: the sign's module kept the 33 Ω
+    outputs that the controller had already changed to 100 Ω, until its own review found them. A review and its
+    decisions are a round of the project's overview page: bring it up to date with the project-overview skill.
 11. **Review the changes before the order.** In every project with a second round, a change accepted in the first
     caused a finding in the second. Review what changed (below) at the commit that will be ordered, as a new dated
     briefing that links this one: `<date>-<board>-round2.md` when the date is the same, so no briefing is
@@ -128,6 +129,23 @@ and the status line says which:
 - **A design that was imported, or is already built** (an EasyEDA import, a product with units in use): start from
   how the built units behave, and review the import as a change. Footprints, pin maps and rotations are checked
   against the built board, not taken over from the import.
+- **Schematic only,** before the layout is drawn: the steps without the layout part of step 3 and the layout
+  tests of step 5. DRC and the checkers read "not run: no layout"; a layout-only review follows before the order.
+- **One block, or one question** (does this divider hold): the steps for that block and the nets that leave it.
+  The rest of the board is "not covered".
+
+Any kind can be a **look** or go **deeper** (this kit's `docs/CONVENTIONS.md`, "Depth and scope"); the status
+line says which.
+
+- **A look** is time-boxed: step 1's checks, steps 3 and 4 for the blocks named, from the datasheet PDFs (fetching
+  one is not web research), and steps 7 and 8 on what it found; a recommendation that needs a simulation reads
+  "bench test before deciding". Step 2's wider search, step 5's simulations and step 6 are listed under "not
+  covered"; a doubt they would have settled is an open check. It never reads "ready to order". Without a finding it
+  is a reply under the status line; a finding makes it a briefing.
+- **Deeper** adds what the user names: every threshold at its corners, a second refuting pass by a fresh agent,
+  the boards that share a circuit.
+- **Always:** step 1's checks run at this commit, a datasheet claim read from the PDF, steps 7 and 8 for every
+  recommendation and finding, no edit before the briefing, and step 11 before an order.
 
 ## Prototype or product
 
@@ -152,11 +170,12 @@ it links to.
 ```markdown
 # <Board> <rev>: failure review
 
-Status (<date>): reviewed at <commit>; <full review | changes since <review> | layout only | imported or built
-design>; <prototype, used with <supply, handling> | product>; covers <blocks>; not covered: <...>; open checks:
+Status (<date>): reviewed at <commit>; <full review | changes since <review> | schematic only | layout only |
+one block | imported or built design>, <a look | as written | deeper: what was added>; <prototype, used with
+<supply, handling> | product>; covers <blocks>; not covered: <blocks, and steps left out with why>; open checks:
 <...>; shares circuits with: <boards>.
-Checks at this commit: ERC <n>; DRC <errors, unconnected, parity>; assertions <n nets, n failures>; checkers <ran |
-not run, why>. Second pass: <what tried to refute the findings>.
+Checks at this commit: ERC <n>; DRC <errors, unconnected, parity>; assertions <n nets, n failures>;
+KiCadRoutingTools' checkers <ran | not run, why>. Second pass: <what tried to refute the findings>.
 Evidence marks: *ds* datasheet text (document, section, column), *sim*, *calc*, *board* (netlist or layout,
 measured), *meas* (measured on a built unit), *inferred*, *recalled* (not checked).
 
@@ -214,11 +233,11 @@ Added when the boards are built.
   for the life of the board. Use no other prefix: R6 would read as a resistor.
 - Each action names its cost: a pad, a part, a re-route, a firmware duty, or a bench test before deciding. On a
   prototype the cheapest action that holds is often a condition written down (above).
-- "Not covered" is for what was left out of scope on purpose. A check that belongs to the review and wasn't done (a
-  connector's footprint against its drawing, the placement viewer) is an open check: it goes into the status line,
-  and into the verdict when it could kill the board. Orbitchron's first review listed connector mating under "Not
-  covered"; the second called the board ready after four cheap changes, and a fit check the user asked for the next
-  day found both board-to-board footprints mirrored.
+- "Not covered" is for what was left out on purpose: blocks out of scope, and the steps a look leaves out. A check
+  that belongs to the review and wasn't done (a connector's footprint against its drawing, the placement viewer) is
+  an open check: it goes into the status line, and into the verdict when it could kill the board. Orbitchron's first
+  review listed connector mating under "Not covered", and both board-to-board footprints turned out mirrored
+  (checklist.md, "Connectors and anything that leaves the board").
 - Once sent, the briefing is a record. Decisions and bench results are added below, dated, and a later round is a
   new dated file that links it. Nothing is renumbered or rewritten in place.
 
@@ -230,7 +249,7 @@ while it costs a pad:
 - **Measure.** A test pad on every rail, and on each signal a failure is diagnosed by: reset, enable, strap,
   power-good, fault, sense nodes, a switch node for the scope. A GND pad close to each, for a probe's ground
   spring. Pads at both ends of a high-current path measure its drop (siebenuhr v2.2's TP7 and TP14 across R17 and
-  the shunt). The corpus uses `TestPoint:TestPoint_Pad_D1.0mm` (siebenuhr, bottom side) and `TestPoint_Pad_D1.5mm`
+  the shunt). The projects use `TestPoint:TestPoint_Pad_D1.0mm` (siebenuhr, bottom side) and `TestPoint_Pad_D1.5mm`
   (esp32-s3-ha-node); a `TestPoint_Loop_*` takes a scope's ground clip. Put them on the side that can be reached
   with the board in its enclosure, with the net name on silk.
 - **Isolate.** A 0 Ω link (0603 or larger, so it can be lifted with an iron) or a bridged solder jumper
@@ -242,8 +261,8 @@ while it costs a pad:
   QON, JP601 (DNP) to let the INA226 alert cut the LED rail, and C402 to remove if the BATFET trips on wake.
 - **Reach.** A spare GPIO on a pad near the circuit most likely to need firmware help. Any net under a QFN or BGA
   that might need a wire, brought out to a pad or via. The debug UART, boot and reset pins on pads. The I2C bus on
-  a header, so the chips can be read without the product firmware: v1.2's charger fault was found by a register
-  dump.
+  a header, so the chips can be read without the product firmware: v1.2's charger driver wrote 0 mA into the
+  charge-current register, and a register dump told that apart from a hardware fault.
 - **Pins with a role.** A pad on a pin that must float or that the ROM drives at boot is not neutral. dodeca v1.3
   removed v1.2's TP_SCL2/TP_SDA2 from Teensy pins 24/25 for that reason.
 
@@ -252,7 +271,8 @@ which provisions were left out and why.
 
 ## When a built board has failed
 
-The same steps, starting from the symptom; the siebenuhr analysis is the model.
+The same steps, starting from the symptom and kept to the blocks the hypotheses touch; the siebenuhr analysis is the
+model.
 
 1. Write down the report as given and what is known of the unit: variant, firmware, supply, how long it ran. The
    document is `docs/reviews/<date>-<board>.md`, with the ranked hypotheses in place of the findings table.
@@ -261,35 +281,22 @@ The same steps, starting from the symptom; the siebenuhr analysis is the model.
 3. Cheapest tests first: questions to the owner and firmware-only tests before the bench, unpowered resistance
    checks (rails to GND, against a good board) before power, a current-limited supply before a real one.
 4. Update the document as results come in, dated. Keep a ruled-out hypothesis with the result that ruled it out.
+   When the work stops before a cause is shown, the status line says which hypotheses are untested.
 
 ## What earlier reviews and bring-ups found
 
-- **A mode the typical application doesn't show.** dodeca v1.2's BQ25895 passed VBUS to PMID while charging, so
-  more than 5.5 V on VIN reached the LEDs. Read how the power path works in every mode, not only the front page.
-- **A divider on a threshold.** v1.2's TS network sat close to the charger's NTC fault thresholds, and REGN, which
-  fed it, moved with the charger's mode: false NTC faults stopped charging, and it was bodged to a fixed resistor.
-  Check thresholds at the corners, from the reference that actually feeds them.
+Most of it is now a check in [checklist.md](checklist.md) or a step above, with the board named there. Three are
+not:
+
 - **A detector that fired on good boards.** v1.2's uncut-Teensy detector also tripped on correctly cut boards and
-  was bypassed with a bodge wire, using C18's pad for GND. v1.3's replacement was simulated in both states first,
-  which is how its false result was found.
+  was bypassed with a bodge wire. v1.3's replacement was simulated in both states first, which is how its false
+  result was found, and the part was changed before the order (SPEC D20).
 - **Load beyond what the source agreed to.** siebenuhr asked its PD supply for 5 V, where a contract allows 3 A,
-  and drove 476 LEDs (7.6–10.5 A at full brightness) with no firmware cap. Budget the current against the weakest
-  source the board accepts.
-- **A part above its rating for months.** siebenuhr's 0805 0 Ω link, rated 2 A, carried the whole LED current.
-- **Unprotected pins at the connectors.** CC, VBUS, LED data and Qwiic with no ESD part or series resistor, on
-  boards that get hot-plugged and run long cables.
-- **Back-powering.** HCT inputs clamp to their VCC and power the buffer's rail through the input; I2C pull-ups to a
-  rail that stays up while a chip on the bus is off (the CH224A runs from VBUS, so pull-ups to 3.3 V would feed it
-  on DC power); two supplies joined by 0 Ω links (siebenuhr's EXT_5V and USB VBUS).
-- **Inrush.** About 264 µF on siebenuhr's USB-C VBUS at attach; the BQ25890's BATFET connecting the cells into about
-  83 µF of SYS on dodeca v1.3, against a 9 A trip. The second is on its bench list, with C402 as the fix.
-- **The firmware, not the board.** v1.2's charger driver wrote 0 mA into the charge-current register. A register
-  dump told it apart from a hardware fault; the board needs a way to make one.
-- **The review's own errors.** Round 1 of the dodeca review had the BATFET_DIS behaviour wrong. Round 2 caught it
-  by reading the datasheet section again, which is why step 8 exists.
-- **A fix that caused the next finding.** The sign controller's eFuse, added against a wrong adapter, sat ahead of
-  the bulk capacitors: in simulation its input rings past the over-voltage threshold at plug-in, and the board can
-  stay dark until the adapter is power-cycled. dodeca's TPS2116, swapped in by a decision (D20), cuts the Teensy
-  when the 5 V rail sags with USB absent. ESP Candle v1.3.1's VBUS was damped by accident, by a switch contact in
-  series with the bulk capacitor; a decision took that path away, and VBUS rang to as much as 8.6 V in simulation
-  against the mux's 6 V. Steps 7 and 11 exist for these.
+  and drove 476 LEDs (7.6–10.5 A at full brightness) with no firmware cap, for months, through an 0805 0 Ω link
+  rated 2 A. Budget the current against the weakest source the board accepts.
+- **A fix that caused the next finding** (steps 7 and 11). The sign controller's eFuse, added against a wrong
+  adapter, sat ahead of the bulk capacitors, with 1 µF ahead of it: in simulation its input rings to 8–10 V at
+  plug-in, past the over-voltage threshold, and the board can stay dark until the adapter is power-cycled.
+  dodeca's TPS2116, swapped in by a decision (D20), cuts the Teensy when the 5 V rail sags with USB absent. ESP
+  Candle v1.3.1's VBUS was damped by accident, by a switch contact in series with the bulk capacitor; a decision
+  took that path away, and VBUS rang to as much as 8.6 V in simulation against the mux's 6 V.

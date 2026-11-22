@@ -7,6 +7,15 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Fixed
+- **The overview page's title keeps its width when a project has many rounds.** The rounds took the header's row
+  and left the title what was over: with nine rounds, a column 36 px wide from 900 px windows up, the about text a
+  word to a line. They now sit beside the title only while it keeps 30rem; otherwise they go to a row of their own
+  under it, which they fill and scroll sideways in, and the tab of the round shown is scrolled into view (before,
+  the newest round was off the end of the strip on a phone). A single round now also stays beside the title in
+  windows narrower than 860 px, down to about 650-700 px. A page changes when `pcbkit overview` next builds it.
+
+### Changed
 - **More JLC rotations from the preview (2026-11-16).** `^SOT-353` (SC-70-5) is now -90, where its never-checked +180
   put a 74AHCT1G125 (C350557) a quarter turn out. A rule for the XINGLIGHT HD2525 LED footprint
   (`^LED_XINGLIGHT_HD2525$`, 0, seen right on the red C49237857) and part rules of 180 for the green and blue

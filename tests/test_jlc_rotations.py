@@ -3,8 +3,8 @@
   python3 tests/test_jlc_rotations.py
 
 No pcbnew needed: `correction` only reads a footprint's reference, value and footprint name. The cases are parts JLC's
-placement preview showed out on 2026-11-08 and 2026-11-15, and the rules that keep EasyEDA's footprints (already in JLC's
-orientation) from being turned.
+placement preview showed out on 2026-11-08, 2026-11-15 and 2026-11-16, and the rules that keep EasyEDA's footprints
+(already in JLC's orientation) from being turned.
 """
 import os
 import sys
@@ -84,6 +84,19 @@ class Corrections(unittest.TestCase):
         si7904 = self.rule("Vishay_PowerPAK_1212-8_Dual", "C143037", ref="Q2", value="SI7904BDN")
         self.assertEqual((si7904[0], si7904[1], si7904[4], si7904[5]),
                          ("C143037", 0, "LCSC", "^Vishay_PowerPAK_1212-8_Dual"))
+
+    def test_sc70_5_turns_a_quarter(self):
+        # 2026-11-16: the never-checked ^SOT-353 (+180) put a 74AHCT1G125 (C350557) a quarter turn out
+        r = self.rule("SOT-353_SC-70-5", "C350557", ref="U7", value="74AHCT1G125")
+        self.assertEqual((r[0], r[1], r[4]), ("^SOT-353", -90, "footprint"))
+
+    def test_hd2525_leds_by_colour(self):
+        # JLC draws the green and blue XL-HD2525 a half turn from the red, though all three datasheets agree
+        red = self.rule("LED_XINGLIGHT_HD2525", "C49237857", ref="LED1", value="RED")
+        self.assertEqual((red[0], red[1], red[4]), ("^LED_XINGLIGHT_HD2525$", 0, "footprint"))
+        for lcsc in ("C49237859", "C49237860"):
+            r = self.rule("LED_XINGLIGHT_HD2525", lcsc, ref="LED2", value="GREEN")
+            self.assertEqual((r[0], r[1], r[4], r[5]), (lcsc, 180, "LCSC", "^LED_XINGLIGHT_HD2525$"))
 
     def test_part_rule_needs_a_package_rule(self):
         # an LCSC row does nothing for a footprint no rule matches

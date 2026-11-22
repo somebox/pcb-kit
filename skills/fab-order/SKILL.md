@@ -135,11 +135,28 @@ What the viewer has caught so far; the corrected rows and their dates are in `co
   under the never-checked `^TSOT-23`, and a TPS2116 on SOT-583-8 and two BCR421UW6Q on SOT-23-6 under rules checked
   on other parts.
 
+On 2026-11-16 (RGB Spotlight v2.0): a 74AHCT1G125 (C350557) on KiCad's SOT-353_SC-70-5 a quarter turn out under the
+never-checked `^SOT-353` (+180): JLC's model lay with its legs along the pads' length and pin 1 at the far corner, so
+the rule is now -90. And the green and blue XL-HD2525 LEDs (C49237859, C49237860) a half turn from the red (C49237857)
+on the same project footprint, though all three datasheets put the cathode on pad 1: JLC's footprints for them differ.
+Read a two-pad polar part's own + and - in the viewer against the board's silk, colour by colour, not the pink dot
+alone. `^SOT-89` (PT4115, 78L05) and `^SOIC-` were right that day.
+
 On 2026-11-18 (ESP32-S3 Audio Node): two footprints with no rule a quarter turn out, both fixed with "Rotate Right"
 (-90): the SJ-3524 audio jack and the MAX98357A's 3x3 mm TQFN-16 (the QFN rule doesn't match a TQFN name). Under their
-rules, the SOT-23, SOT-23-5, SOT-23-6, TSSOP and HRO USB-C parts were right, and those rows are dated 2026-11-18. The
+rules, the SOT-23, SOT-23-5, SOT-23-6, TSSOP and HRO USB-C parts were right, and those rows were dated 2026-11-18. The
 0603 and 0805 LEDs, the JST SH connector and the TS-1187A switch were right with no rule; the table records only rules,
 so their check is in this note.
+
+On 2026-11-22, after payment (ten PCBA lines of one order): JLC's engineers sent lines back with a "Confirm Parts
+Placement" button on the order and a banner: "confirm parts placement within 2d23h, or your order will be produced
+directly". The button opens the same viewer with their placement. "Show Revised Items" lists what they changed, and a
+Yes or No under it is the user's answer. They had turned the 74AHCT1G125 under the old `^SOT-353` +180 and the green and
+blue HD2525, on boards released before the 2026-11-16 rows. On the spotlight driver they also re-placed every part at
+an angle that isn't a multiple of 90° (14 of its 16 changes), and all were right. Check a revised part like any other.
+Its placement is JLC's, not the CPL's, so it neither confirms nor refutes a rule. Parts they left alone were right under
+`^SOT-89` (PT4115, 78L05), `^SOIC-` (LM13700, TL072), `^SOT-23` (MMBT3906) and `^LED_XINGLIGHT_HD2525$` (the red), now
+dated 2026-11-22.
 
 ## Parts for hand assembly (LCSC)
 

@@ -7,6 +7,14 @@ skill's instructions, and a patch version (0.x.y) is for fixes only. How to cut 
 
 ## [Unreleased]
 
+### Fixed
+- **The overview page's title keeps its width when a project has many rounds.** The rounds took the header's row
+  and left the title what was over: with nine rounds, a column 36 px wide from 900 px windows up, the about text a
+  word to a line. They now sit beside the title only while it keeps 30rem; otherwise they go to a row of their own
+  under it, which they fill and scroll sideways in, and the tab of the round shown is scrolled into view (before,
+  the newest round was off the end of the strip on a phone). A single round now also stays beside the title in
+  windows narrower than 860 px, down to about 650-700 px. A page changes when `pcbkit overview` next builds it.
+
 ## [0.6.0] - 2026-11-18
 
 The project overview page, a standard for released boards with its check and release gate, depth and scope for

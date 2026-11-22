@@ -46,12 +46,16 @@ time { font-variant-numeric: tabular-nums }
 .mk-attention { --c: var(--attention) } .mk-blocked { --c: var(--blocked) } .mk-decision { --c: var(--decision) }
 .mk.small { font-size: 0.94em }
 
-/* title block */
-header.tb { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin-top: 20px; background: var(--sheet); border: 1.5px solid var(--ink) }
-.tb-title { padding: 14px 18px 16px }
+/* title block. The rounds sit beside the title while the title keeps 30rem; past that (many rounds, a narrow
+   window) they wrap onto a row of their own, fill it, and scroll sideways there, the round shown kept in view (the
+   title takes the spare room while they share a row). Their strip draws both rules, pulled 1.5px onto its
+   neighbours, so the one that falls on the sheet's border vanishes. */
+header.tb { display: flex; flex-wrap: wrap; margin-top: 20px; background: var(--sheet); border: 1.5px solid var(--ink) }
+.tb-title { flex: 999 1 30rem; min-width: 0; padding: 14px 18px 16px }
 h1 { font-size: clamp(28px, 4.6vw, 44px); font-weight: 700; letter-spacing: -0.01em; line-height: 1.02 }
 .about { margin: 6px 0 0; color: var(--ink2); max-width: 62ch }
-nav.rev { display: flex; align-items: stretch; border-left: 1.5px solid var(--ink); overflow-x: auto }
+nav.rev { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; margin: -1.5px 0 0 -1.5px;
+  border-left: 1.5px solid var(--ink); border-top: 1.5px solid var(--ink) }
 .rev-h { writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; padding: 8px 5px; font: 600 13px var(--body); color: var(--ink3) }
 nav.rev a { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 104px; max-width: 150px; padding: 8px 14px;
   text-decoration: none; border-left: 1px solid var(--rule) }
@@ -61,7 +65,7 @@ nav.rev a time { font-size: 12.5px; color: var(--ink3) }
 nav.rev a:hover { background: var(--wash) }
 nav.rev a[aria-current="true"] { background: var(--ink); color: var(--sheet) }
 nav.rev a[aria-current="true"] time { color: inherit; opacity: 0.8 }
-ul.legend { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 7px 18px; list-style: none;
+ul.legend { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; padding: 7px 18px; list-style: none;
   border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--ink2) }
 ul.legend .mk { font-weight: 500 }
 
@@ -179,8 +183,6 @@ ul.decided .src { display: inline; margin-left: 6px }
 footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
 
 @media (max-width: 860px) {
-  header.tb { grid-template-columns: minmax(0, 1fr) }
-  nav.rev { border-left: 0; border-top: 1.5px solid var(--ink) }
   .rev-h { display: none }
   nav.rev a:first-of-type { border-left: 0 }
   .st-body, .look, .topics { grid-template-columns: minmax(0, 1fr) }
@@ -446,11 +448,22 @@ footer { margin: 14px 2px 0; font-size: 13px; color: var(--ink3) }
     build();
   }
 
+  // when the rounds scroll sideways, the tab of the round shown is in view (the newest is at the far end)
+  function showTab() {
+    const a = links.find(x => x.hasAttribute("aria-current"));
+    if (!a) return;
+    const nav = a.parentNode, n = nav.getBoundingClientRect(), r = a.getBoundingClientRect();
+    if (r.right > n.right) nav.scrollLeft += r.right - n.right;
+    else if (r.left < n.left) nav.scrollLeft -= n.left - r.left;
+  }
+  window.addEventListener("resize", showTab);
+
   // one round at a time; #r2 shows round 2, #r2-power goes to its item. A round's viewer starts when it is first shown
   function route() {
     const m = /^#(r\d+)(-.+)?$/.exec(location.hash), key = m && D.getElementById(m[1]) ? m[1] : newest;
     rounds.forEach(r => { r.hidden = r.id !== key; });
     links.forEach(a => { if (a.dataset.round === key) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); });
+    showTab();
     D.querySelectorAll(`#${key} .viewer`).forEach(v => { if (!v.dataset.on) { v.dataset.on = "1"; viewer(v); } });
     window.dispatchEvent(new Event("resize"));
     const el = m && m[2] && D.getElementById(m[1] + m[2]);
